@@ -71,3 +71,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Enable credential and project name editing
+
+**Date**: 2026-08-14
+**Task**: Enable credential and project name editing
+**Branch**: `main`
+
+### Summary
+
+Admins can rename a project and update existing credentials in place. Project key, routes, secret ID, and kind stay unchanged. Name-only credential edits keep ciphertext; a supplied replacement re-encrypts atomically. Environment name syncs only when it still equals the old project name. Specs now document the PATCH contracts and omitted-versus-empty value rule.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `88e5128` | (see git log) |
+| `f0e8238` | (see git log) |
+| `2f0094e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
