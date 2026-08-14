@@ -1,0 +1,117 @@
+# Component Guidelines
+
+## Production Route Components
+
+Route components resolve URL params, query the one resource they render, and
+own the screen's loading, empty, error, and mutation states. Route selection
+must be restorable from the URL; do not keep an active project, incident, or
+create/edit mode only in component state.
+
+```text
+/projects
+/projects/new
+/projects/:projectKey/incidents/:incidentId
+/projects/:projectKey/configuration/edit
+```
+
+`AuthenticatedRoute` owns session gating, `ProjectRoute` resolves the project
+from the backend directory, and `AppShell` composes authenticated navigation.
+
+## Shared Production Components
+
+`shared/ui.tsx` owns controls or states with multiple production consumers,
+including `IconButton`, `LoadingState`, `ErrorNotice`, `PageError`, and
+`StatusPill`. Keep feature-specific tables and forms in their feature.
+
+Props are explicitly typed at the component boundary:
+
+```tsx
+export function ErrorNotice({ message, onRetry }: {
+  message: string;
+  onRetry?: () => void;
+}) { /* ... */ }
+```
+
+Do not add a generic component abstraction for a one-off layout.
+
+## Authorization And Sensitive Data
+
+- Render business actions from `project.capabilities`, not role comparisons.
+- Role text may explain access but must not grant it.
+- Secret plaintext may appear only in the active password input and outgoing request.
+- After a successful secret write, clear the input and render only returned metadata.
+- Project identity edits are capability-gated by `manageConfiguration`. The
+  project key is always read-only. Viewers see name and key without edit controls.
+- Extend `CredentialField` and `GitCredentialField` for create and edit. Do not
+  add a third credential editor. Create and edit modes are mutually exclusive.
+  Edit mode shows the immutable kind, pre-fills only the display name, and starts
+  sensitive inputs empty. Switching the selected credential or closing edit mode
+  clears every sensitive draft.
+
+## Styling
+
+- Use stable class names and feature-owned CSS files.
+- Shared controls use `shared/ui.css`; shell selectors use `layouts/AppShell.css`.
+- Tokens and element resets live in `styles/tokens.css` and `styles/base.css`.
+- Keep cards at 6px or less to match the operational console.
+- Fixed navigation and control dimensions must not shift when labels or counts change.
+
+## Accessibility
+
+- Icon-only buttons require an accessible label and tooltip (`IconButton`).
+- Loading states use `role="status"`; request failures use `role="alert"`.
+- Active navigation uses `NavLink` state and semantic anchors.
+- Form fields require accessible labels; native select, radio, and checkbox controls are preferred.
+- Mobile navigation must close after route selection, and the stable state must not overflow the viewport.
+
+## Prototype Reference Patterns
+
+### Paired Diff Views
+
+Keep review fixtures in the data module as paired rows, with an `original`
+and `modified` line (or `null`) for every visual row. A diff component should
+render both panes from the same selected file so additions and removals remain
+vertically aligned. File selection belongs to the viewer's local state; it
+does not need to be promoted outside the remediation view.
+
+For narrow viewports, retain each code pane's horizontal scrolling and stack
+the two panes rather than shrinking code until it becomes unreadable.
+
+### Guided Configuration Flows
+
+Keep new-project creation separate from editing an existing project. A create
+flow owns its draft state and advances through explicit gates for identity,
+repository, credentials, immutable baseline, evidence scope, and final review.
+The Continue action is disabled until the current gate is satisfied.
+
+Source configuration components may expose controlled `source` and trigger
+values plus callbacks such as `onSourceChange` and `onVerified`. When a source
+changes, the parent wizard must clear the prior verification state. Secret
+inputs are cleared after local save and subsequent UI state may render only a
+credential reference and permission summary.
+
+The Git repository step chooses create fields from transport, not from a kind
+select. HTTPS asks for username plus password/token and stores
+`git_credential`. SSH asks for a private-key textarea plus optional passphrase
+and stores `ssh_private_key`. The existing-secret dropdown lists only kinds
+valid for the current transport.
+
+Production branch and deployed commit are not typed. The operator reads them
+from the remote; branch is a select of returned heads and commit is read-only.
+
+For project composition, model required Git separately from the selected
+signal paths. Log source (`ssh`, `cloud`, `mcp`) and trigger mode (`webhook`,
+`custom`) are each single nullable choices rendered as native radio groups.
+Selecting a new value replaces the previous value and only its configuration
+panel is mounted. The final review renders the selected source and trigger
+labels.
+
+The browser path for a guided flow should assert both the blocked/ready state
+of required gates and the absence of the entered secret from rendered text.
+
+## Common Mistakes
+
+- Importing prototype fixtures into a production route to fill a missing backend capability.
+- Making a non-functional icon button appear actionable without a backend or UI contract.
+- Letting a feature failure replace the entire shell instead of its route content.
+- Nesting route-owned business forms inside the app composition layer.
