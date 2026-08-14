@@ -1,0 +1,16 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development checklist and guideline index for the projects module change"}
+{"file": ".trellis/spec/backend/project-guidelines.md", "reason": "Project-admin authorization, encrypted credential, audit, and HTTP contract that the new PATCH routes must preserve"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Module, HTTP, and repository placement for project rename and secret update"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "sqlc query, atomic update, version, and PostgreSQL integration-test conventions"}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Session-authenticated project routes and role/capability checks used by requireAdmin"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Safe API errors for invalid names, empty rotation values, and forbidden updates"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Secret material must stay out of logs, audit metadata, and error diagnostics"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend test, generate, and validation gates for domain/application/HTTP/integration coverage"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend pre-development checklist for configuration UI and API DTO changes"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Feature ownership and stylesheet boundaries for Configuration identity and credential fields"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Capability-gated edit controls and accessibility for Project identity and credential edit modes"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "TanStack Query mutation updates and cache replacement after rename/secret save"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Project-scoped query keys and capabilities-based write access"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed API boundary for updateProjectName and updateSecret request/response DTOs"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer contract for name/secret updates spanning HTTP, application, persistence, and UI cache"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing create-form encoding and credential-field patterns instead of adding a third edit surface"}
