@@ -1,0 +1,306 @@
+package http_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	nethttp "net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
+	authapplication "fixthe/backend/internal/modules/auth/application"
+	authdomain "fixthe/backend/internal/modules/auth/domain"
+	projecthttp "fixthe/backend/internal/modules/projects/adapter/http"
+	projectapplication "fixthe/backend/internal/modules/projects/application"
+	"fixthe/backend/internal/modules/projects/domain"
+	"fixthe/backend/internal/platform/httpserver"
+)
+
+type fakeService struct {
+	project     domain.Project
+	secret      domain.Secret
+	projectKey  string
+	secretID    string
+	secretName  string
+	secretValue []byte
+	updateErr   error
+}
+
+func (f *fakeService) CreateProject(context.Context, authdomain.User, string, string, string) (domain.Project, error) {
+	return f.project, nil
+}
+func (f *fakeService) ListProjects(context.Context, authdomain.User, int32) (projectapplication.ListResult[domain.Project], error) {
+	return projectapplication.ListResult[domain.Project]{Items: []domain.Project{f.project}, Total: 1}, nil
+}
+func (f *fakeService) GetProject(context.Context, authdomain.User, string) (domain.Project, error) {
+	return f.project, nil
+}
+func (f *fakeService) UpdateProjectName(_ context.Context, _ authdomain.User, projectKey, name string) (domain.Project, error) {
+	if f.updateErr != nil {
+		return domain.Project{}, f.updateErr
+	}
+	f.projectKey = projectKey
+	updated := f.project
+	updated.Name = name
+	updated.Version++
+	f.project = updated
+	return updated, nil
+}
+func (*fakeService) ListMembers(context.Context, authdomain.User, string) (projectapplication.ListResult[domain.Member], error) {
+	return projectapplication.ListResult[domain.Member]{Items: []domain.Member{}}, nil
+}
+func (*fakeService) UpsertMember(context.Context, authdomain.User, string, string, string) (domain.Member, error) {
+	return domain.Member{}, nil
+}
+func (*fakeService) DeleteMember(context.Context, authdomain.User, string, string) (domain.Member, error) {
+	return domain.Member{}, nil
+}
+func (f *fakeService) CreateSecret(_ context.Context, _ authdomain.User, projectKey, _, _ string, value []byte) (domain.Secret, error) {
+	f.projectKey, f.secretValue = projectKey, append([]byte(nil), value...)
+	return f.secret, nil
+}
+func (f *fakeService) UpdateSecret(_ context.Context, _ authdomain.User, projectKey, secretID, name string, value []byte) (domain.Secret, error) {
+	if f.updateErr != nil {
+		return domain.Secret{}, f.updateErr
+	}
+	f.projectKey, f.secretID, f.secretName = projectKey, secretID, name
+	if value != nil {
+		f.secretValue = append([]byte(nil), value...)
+	} else {
+		f.secretValue = nil
+	}
+	updated := f.secret
+	updated.Name = name
+	updated.Version++
+	f.secret = updated
+	return updated, nil
+}
+func (f *fakeService) ListSecrets(context.Context, authdomain.User, string) (projectapplication.ListResult[domain.Secret], error) {
+	return projectapplication.ListResult[domain.Secret]{Items: []domain.Secret{f.secret}, Total: 1}, nil
+}
+func (*fakeService) GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error) {
+	return domain.Configuration{}, nil
+}
+func (*fakeService) PutConfiguration(context.Context, authdomain.User, string, domain.Configuration) (domain.Configuration, error) {
+	return domain.Configuration{}, nil
+}
+func (*fakeService) ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (projectapplication.RepositoryRefs, error) {
+	return projectapplication.RepositoryRefs{DefaultBranch: "main", DeployedCommit: "0123456789abcdef0123456789abcdef01234567", Branches: []projectapplication.GitRef{{Name: "main", Commit: "0123456789abcdef0123456789abcdef01234567"}}}, nil
+}
+func (*fakeService) ListAuditEvents(context.Context, authdomain.User, string, int32) (projectapplication.ListResult[domain.AuditEvent], error) {
+	return projectapplication.ListResult[domain.AuditEvent]{Items: []domain.AuditEvent{}}, nil
+}
+
+type fakeAuthService struct{ user authdomain.User }
+
+func (*fakeAuthService) Login(context.Context, string, []byte, string) (authapplication.LoginResult, error) {
+	return authapplication.LoginResult{}, nil
+}
+func (f *fakeAuthService) Authenticate(context.Context, string) (authdomain.User, error) {
+	if !f.user.Enabled {
+		return authdomain.User{}, authapplication.ErrUnauthenticated
+	}
+	return f.user, nil
+}
+func (*fakeAuthService) Logout(context.Context, string) error { return nil }
+
+func TestProjectResponseExposesServerCapabilities(t *testing.T) {
+	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleOperator, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments", nil)
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || !strings.Contains(response.Body.String(), `"writeIncidents":true`) || !strings.Contains(response.Body.String(), `"manageMembers":false`) {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestSecretCreateAndListNeverDiscloseSensitiveMaterial(t *testing.T) {
+	now := time.Now().UTC()
+	service := &fakeService{secret: domain.Secret{ID: "secret-id", Name: "git-token", Kind: domain.SecretGitCredential, KeyVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	handler := newHandler(t, service)
+	const plaintext = "unique-plaintext-secret"
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/secrets", strings.NewReader(`{"name":"git-token","kind":"git_credential","value":"`+plaintext+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusCreated || service.projectKey != "payments" || string(service.secretValue) != plaintext {
+		t.Fatalf("create response = %d %q, input = %q", response.Code, response.Body.String(), service.secretValue)
+	}
+	for _, forbidden := range []string{plaintext, "ciphertext", "nonce", `"value"`} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("create response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+
+	request = httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/secrets", nil)
+	request.AddCookie(sessionCookie())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK {
+		t.Fatalf("list response = %d %q", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data []map[string]any `json:"data"`
+		Meta struct {
+			Total int64 `json:"total"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil || len(body.Data) != 1 || body.Meta.Total != 1 {
+		t.Fatalf("body = %#v, error = %v", body, err)
+	}
+	for _, field := range []string{"value", "ciphertext", "nonce", "projectId"} {
+		if _, ok := body.Data[0][field]; ok {
+			t.Fatalf("list response leaked field %q: %#v", field, body.Data[0])
+		}
+	}
+}
+
+func TestUpdateProjectReturnsSafeDTOAndPreservesKey(t *testing.T) {
+	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleAdmin, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments", strings.NewReader(`{"name":"Payments Platform"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" || service.project.Name != "Payments Platform" {
+		t.Fatalf("response = %d %q, project = %#v", response.Code, response.Body.String(), service.project)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"key":"payments"`) || !strings.Contains(body, `"name":"Payments Platform"`) || !strings.Contains(body, `"manageConfiguration":true`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestUpdateProjectMapsForbiddenAndInvalidErrors(t *testing.T) {
+	now := time.Now().UTC()
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleAdmin, Version: 1, CreatedAt: now, UpdatedAt: now}, updateErr: projectapplication.ErrForbidden}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments", strings.NewReader(`{"name":"Payments Platform"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("forbidden response = %d %q", response.Code, response.Body.String())
+	}
+	service.updateErr = projectapplication.ErrInvalidInput
+	request = httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments", strings.NewReader(`{"name":""}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("invalid response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestUpdateSecretNameOnlyOmitsValueAndNeverDisclosesMaterial(t *testing.T) {
+	now := time.Now().UTC()
+	service := &fakeService{secret: domain.Secret{ID: "secret-id", Name: "git-token", Kind: domain.SecretGitCredential, KeyVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments/secrets/secret-id", strings.NewReader(`{"name":"git-token-renamed"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.secretID != "secret-id" || service.secretName != "git-token-renamed" || service.secretValue != nil {
+		t.Fatalf("name-only update = %d %q service=%#v", response.Code, response.Body.String(), service)
+	}
+	body := response.Body.String()
+	for _, forbidden := range []string{"ciphertext", "nonce", `"value"`, "projectId"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("update response leaked %q: %s", forbidden, body)
+		}
+	}
+}
+
+func TestUpdateSecretRotationClearsPlaintextAndRejectsEmptyValue(t *testing.T) {
+	now := time.Now().UTC()
+	service := &fakeService{secret: domain.Secret{ID: "secret-id", Name: "git-token", Kind: domain.SecretGitCredential, KeyVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	handler := newHandler(t, service)
+	const plaintext = "unique-replacement-secret"
+	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments/secrets/secret-id", strings.NewReader(`{"name":"git-token","value":"`+plaintext+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || string(service.secretValue) != plaintext {
+		t.Fatalf("rotation response = %d %q value=%q", response.Code, response.Body.String(), service.secretValue)
+	}
+	if strings.Contains(response.Body.String(), plaintext) || strings.Contains(response.Body.String(), `"value"`) {
+		t.Fatalf("rotation response leaked secret material: %s", response.Body.String())
+	}
+
+	request = httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments/secrets/secret-id", strings.NewReader(`{"name":"git-token","value":""}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("empty value response = %d %q", response.Code, response.Body.String())
+	}
+
+	service.updateErr = projectapplication.ErrConflict
+	request = httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments/secrets/secret-id", strings.NewReader(`{"name":"duplicate"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusConflict || !strings.Contains(response.Body.String(), `"code":"project_conflict"`) {
+		t.Fatalf("conflict response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestProbeRepositoryRefsReturnsBranchesWithoutSecretMaterial(t *testing.T) {
+	handler := newHandler(t, &fakeService{})
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/repository/refs", strings.NewReader(`{"remoteUrl":"https://git.example.internal/app.git","transport":"https","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"defaultBranch":"main"`) || !strings.Contains(body, `"deployedCommit":"0123456789abcdef0123456789abcdef01234567"`) {
+		t.Fatalf("body = %s", body)
+	}
+	for _, forbidden := range []string{"value", "ciphertext", "nonce", "deploy:token"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("probe response leaked %q: %s", forbidden, body)
+		}
+	}
+}
+
+func newHandler(t *testing.T, service *fakeService) nethttp.Handler {
+	t.Helper()
+	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: &fakeAuthService{user: authdomain.User{ID: "user", Enabled: true, Role: authdomain.RoleViewer}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := projecthttp.NewHandler(projecthttp.HandlerOptions{Service: service, Authentication: authHandler})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := nethttp.NewServeMux()
+	handler.Register(mux)
+	boundary, err := httpserver.Boundary(httpserver.BoundaryOptions{Handler: mux, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxBodyBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return boundary
+}
+
+func sessionCookie() *nethttp.Cookie {
+	return &nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"}
+}
