@@ -1,0 +1,23 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and generated output
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/*.tsbuildinfo
+
+# Backend build and test output
+backend/bin/
+backend/coverage/
+backend/*.out
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
