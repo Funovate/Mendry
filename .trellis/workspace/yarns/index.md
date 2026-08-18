@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-08-14
+- **Total Sessions**: 4
+- **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~108 | Active |
+| `journal-1.md` | ~141 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-08-18 | PostgreSQL query debug SQL | `34fde54` | `main` |
 | 3 | 2026-08-14 | Enable credential and project name editing | `88e5128`, `f0e8238`, `2f0094e` | `main` |
 | 2 | 2026-08-13 | 补齐数据库和结构体字段注释 | `43429c9` | `main` |
 | 1 | 2026-08-13 | 补齐本地配置字段注释 | `742d3ef` | `main` |

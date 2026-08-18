@@ -106,3 +106,36 @@ Admins can rename a project and update existing credentials in place. Project ke
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: PostgreSQL query debug SQL
+
+**Date**: 2026-08-18
+**Task**: PostgreSQL query debug SQL
+**Branch**: `main`
+
+### Summary
+
+Added FIXTHE_POSTGRES_QUERY_DEBUG so query logs can emit one interpolated, copy-pasteable SQL statement. Console timestamps now include the date, and debug SQL is written on following physical lines instead of a quoted sql= field.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34fde54` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
