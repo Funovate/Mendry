@@ -1,0 +1,50 @@
+.member-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 15px;
+  background: #f9fbfb;
+  border: 1px solid #dce5e8;
+  border-radius: var(--radius-panel);
+}
+
+.member-form label {
+  display: grid;
+  gap: 6px;
+  color: #586c77;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.member-form input,
+.member-form select {
+  width: 100%;
+  min-width: 0;
+  height: 37px;
+  padding: 0 10px;
+  color: #304955;
+  background: var(--color-surface);
+  border: 1px solid #cad7dd;
+  border-radius: var(--radius-control);
+  outline-color: #238173;
+  font-size: 12px;
+}
+
+.table-action {
+  float: right;
+  padding: 0;
+  color: #a0444a;
+  background: transparent;
+  border: 0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .member-form {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}

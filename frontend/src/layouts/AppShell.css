@@ -1,0 +1,272 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+
+.app-shell > main {
+  min-width: 0;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 12px 14px;
+  color: #dce5eb;
+  background: var(--color-ink);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 20px;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 720;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: #1d7267;
+  border-radius: var(--radius-panel);
+}
+
+.brand .icon-button {
+  display: none;
+  margin-left: auto;
+}
+
+.project-switcher {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 11px;
+  color: #ffffff;
+  background: #24313e;
+  border: 1px solid #354656;
+  border-radius: var(--radius-panel);
+  text-align: left;
+}
+
+.project-switcher small,
+.project-switcher strong {
+  display: block;
+}
+
+.project-switcher small {
+  color: #9fb0bf;
+  font-size: 11px;
+}
+
+.project-switcher strong {
+  font-size: 13px;
+}
+
+.sidebar nav {
+  display: grid;
+  gap: 3px;
+  margin-top: 20px;
+}
+
+.sidebar nav a {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  color: #b9c6d0;
+  background: transparent;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.sidebar nav a:hover,
+.sidebar nav a.nav-active {
+  color: #ffffff;
+  background: #2b3b4a;
+}
+
+.nav-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  color: #ffffff;
+  background: #40586b;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 14px 7px 0;
+  border-top: 1px solid #314252;
+}
+
+.environment {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #acbac6;
+  font-size: 12px;
+}
+
+.env-dot {
+  width: 7px;
+  height: 7px;
+  background: #49b988;
+  border-radius: 50%;
+}
+
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #342200;
+  background: #d7a649;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-card strong,
+.user-card small {
+  display: block;
+}
+
+.user-card strong {
+  color: #f5f8fa;
+  font-size: 12px;
+}
+
+.user-card small {
+  margin-top: 2px;
+  color: #98aab9;
+  font-size: 11px;
+}
+
+.topbar {
+  height: var(--topbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  background: var(--color-surface);
+  border-bottom: 1px solid #dbe1e6;
+}
+
+.topbar-left,
+.topbar-right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-left > .icon-button {
+  display: none;
+}
+
+.breadcrumbs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #71808e;
+  font-size: 13px;
+}
+
+.breadcrumbs span:first-child,
+.breadcrumbs strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbs strong {
+  color: #253441;
+}
+
+.role-control {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  color: #627382;
+  border: 1px solid #dce3e8;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+
+.backdrop {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    width: 250px;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: 8px 0 25px rgba(17, 31, 42, 0.18);
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .brand .icon-button,
+  .topbar-left > .icon-button {
+    display: inline-grid;
+  }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    display: block;
+    background: rgba(12, 24, 34, 0.42);
+    border: 0;
+  }
+
+  .topbar {
+    padding: 0 13px;
+  }
+
+  .topbar-right > .icon-button {
+    display: none;
+  }
+
+  .role-control span {
+    display: none;
+  }
+}
