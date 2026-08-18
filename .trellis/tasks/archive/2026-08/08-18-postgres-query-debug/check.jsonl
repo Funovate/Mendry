@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for the quality pass"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify default-off SQL/args rule plus the documented debug exception"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify tracer still never leaks SQL/args when the switch is off"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Config, comments, and test isolation checks"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check config/tracer/logger field names stay aligned"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reject a new bool helper or ad-hoc log keys if existing patterns suffice"}
