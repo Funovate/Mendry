@@ -82,6 +82,23 @@ See `.trellis/spec/backend/project-guidelines.md` and
 
 **Good**: Each layer only knows its neighbors
 
+### Mistake 3b: Generic Error Responses Destroy Server Diagnostics
+
+**Bad**: An HTTP adapter maps every unknown `error` directly to a safe generic
+500 response and discards the original value. The client contract is safe, but
+the request/trace logs only show `status=500`, so operators cannot identify the
+failing boundary or cause.
+
+**Good**: Split the two contracts before returning. Preserve the original error
+at the owning transport/process boundary, then return only the generic error to
+the client. In this backend, unknown HTTP errors use
+`httpserver.WriteInternalError`; expected 4xx categories continue to use
+`WriteError`. See `.trellis/spec/backend/error-handling.md` and
+`.trellis/spec/backend/logging-guidelines.md`.
+
+**Review question**: When a boundary intentionally hides an internal error from
+its caller, where does the original cause remain diagnosable?
+
 ### Mistake 4: Every Consumer Parses The Same Payload
 
 **Bad**: A command reads JSONL events and casts fields inline:
@@ -126,6 +143,8 @@ After implementation:
 
 - [ ] Tested with edge cases (null, empty, invalid)
 - [ ] Verified error handling at each boundary
+- [ ] Verified that generic client errors preserve the original cause in the
+      owning server/process diagnostic channel
 - [ ] Checked data survives round-trip
 - [ ] Checked that consumers import shared decoders / projections instead of
       casting payload fields locally
