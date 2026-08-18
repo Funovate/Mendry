@@ -31,6 +31,7 @@ Current shared and operational contracts are:
 ```go
 func config.LoadPostgreSQL(config.Lookup) (config.PostgreSQL, error)
 func postgres.Open(context.Context, postgres.PoolOptions) (*postgres.Pool, error)
+func postgres.NewQueryTracer(*slog.Logger, trace.Tracer, metric.Meter, time.Duration, bool) (*postgres.QueryTracer, error)
 func (*postgres.Pool) Health(context.Context) error
 func (*postgres.Pool) Close(context.Context) error
 
@@ -47,11 +48,13 @@ func (*authdb.Queries).GetUserByID(context.Context, pgtype.UUID) (authdb.User, e
 func (*authdb.Queries).GetUserByUsername(context.Context, string) (authdb.User, error)
 
 func (*incidentdb.Queries).CreateIncident(context.Context,
-    incidentdb.CreateIncidentParams) (incidentdb.Incident, error)
-func (*incidentdb.Queries).GetIncidentByNumber(context.Context, int64) (incidentdb.Incident, error)
-func (*incidentdb.Queries).ListIncidents(context.Context, int32) ([]incidentdb.Incident, error)
+    incidentdb.CreateIncidentParams) (incidentdb.CreateIncidentRow, error)
+func (*incidentdb.Queries).GetIncidentByNumber(context.Context,
+    incidentdb.GetIncidentByNumberParams) (incidentdb.GetIncidentByNumberRow, error)
+func (*incidentdb.Queries).ListIncidents(context.Context,
+    incidentdb.ListIncidentsParams) ([]incidentdb.ListIncidentsRow, error)
 func (*incidentdb.Queries).UpdateIncidentStatus(context.Context,
-    incidentdb.UpdateIncidentStatusParams) (incidentdb.Incident, error)
+    incidentdb.UpdateIncidentStatusParams) (incidentdb.UpdateIncidentStatusRow, error)
 ```
 
 `TransactionRunner.Within` is an infrastructure primitive. A feature adapter
@@ -75,6 +78,7 @@ only feature repository contracts, not `pgx.Tx`.
 | `FIXTHE_POSTGRES_MAX_CONN_IDLE_TIME` | `5m` | 30 seconds through 1 hour |
 | `FIXTHE_POSTGRES_HEALTH_CHECK_PERIOD` | `30s` | 1 second through 10 minutes |
 | `FIXTHE_POSTGRES_SLOW_QUERY_THRESHOLD` | `500ms` | 10 ms through 1 minute |
+| `FIXTHE_POSTGRES_QUERY_DEBUG` | `false` | `true` or `false`; when true, emitted query logs include one interpolated SQL statement |
 | `FIXTHE_POSTGRES_MIGRATION_LOCK_TIMEOUT` | `30s` | 1 second through 10 minutes; migrate only |
 
 All process configuration validates before pool construction. The API performs a
@@ -89,9 +93,30 @@ ownership, such as the migration advisory lock.
 
 Adapters declare a stable low-cardinality operation with
 `postgres.WithOperation`. The pgx tracer records operation, sanitized SQL verb
-fallback, duration, outcome, rows affected, and trace correlation. It never
-records SQL text, bind values, connection strings, database error messages,
-returned rows, or high-cardinality identifiers.
+fallback, duration, outcome, rows affected, and trace correlation. By default
+it never records SQL text, bind values, connection strings, database error
+messages, returned rows, or high-cardinality identifiers.
+
+`FIXTHE_POSTGRES_QUERY_DEBUG=true` is the only exception. `LoadPostgreSQL`
+parses it with `enumValue` (`true`/`false`, default `false`) into
+`config.PostgreSQL.QueryDebug`. `buildPoolConfig` passes that flag to
+`NewQueryTracer`. When enabled, `TraceQueryStart` interpolates `$n`
+placeholders into one executable statement and `TraceQueryEnd` attaches it as
+`db.query.text`. Console writes that text on following physical lines; JSON
+keeps the same string with escaped newlines. Levels stay unchanged, and
+spans/metrics stay statement-free.
+
+Interpolation replaces the complete placeholder (`$10` is not truncated by
+`$1`). Strings are quoted and single-quotes doubled; `nil` and invalid
+`pgtype` values become `NULL`; booleans become `TRUE`/`FALSE`; UUIDs and
+timestamps become quoted literals. Bind values are not redacted.
+
+PostgreSQL `safeError` values capture an `errtrace.Trace` when pool acquisition,
+health, parse, ping, or close operations fail. Feature `repositoryError` values do
+the same when adding repository operation context. These traces preserve the
+active driver/pool/repository call path for the final HTTP/process boundary; lower
+packages still return the error without logging it. Constructors are mandatory so
+a direct struct literal cannot silently omit the trace.
 
 #### Transactions
 
@@ -142,7 +167,7 @@ source-comment rule; the package still has a hand-written Chinese `doc.go`.
 Each target enables `omit_unused_structs`, so an auth query package does not also
 export incident rows, or vice versa.
 
-#### MVP Users, Incidents, And Seed
+#### MVP Users, Project Scope, Incidents, And Seed
 
 Migration `000002_create_mvp_data.up.sql` owns the first product schema:
 
@@ -157,12 +182,30 @@ Migration `000002_create_mvp_data.up.sql` owns the first product schema:
 - Incident status is `Open`, `Recovered`, or `Closed`; priority is `Info`, `P2`,
   or `P1`. Named checks enforce non-empty bounded text, ordered timestamps,
   positive counts, `host_count <= occurrence_count`, and positive versions.
-- Username, incident number, and fingerprint are unique. The list index follows
-  `last_seen DESC, incident_number DESC`; no speculative indexes are added.
+- Username and incident number are globally unique; incident fingerprints are unique
+  per project. The project list index follows `project_id, last_seen DESC,
+  incident_number DESC`; no speculative indexes are added.
+
+Migration `000004_project_scope.up.sql` adds projects, environments, memberships,
+encrypted secrets, repositories, sources, triggers, Observations, and audit events.
+It adds non-null project/environment/source ownership to incidents, backfills any
+legacy rows through a deterministic legacy scope, and replaces global incident
+queries and fingerprint uniqueness with project-scoped contracts. Migrations
+`000001` through `000003` remain immutable.
+
+Migrations `000005` through `000007` add incident coupling columns and the
+remediation series/run/decision/plan/artifact/tool-invocation tables, then the
+review-surface columns. Those files remain immutable after apply. Migration
+`000008_document_remediation_schema.up.sql` adds only table and column comments
+for the remediation relations; it does not change types, constraints, or
+queries. Schema comments stay the source of truth for sqlc-generated models.
 
 `dev/seed.sql` is an explicit, idempotent developer action invoked by `make seed`
-after migrations. It may insert stable incident fixtures but must never insert a
-user or credential. API and migrate startup never execute it. Because the old,
+after migrations. It may insert a stable demo project, configuration, and
+project-owned incident fixtures but must never insert a user, membership, password,
+or credential. `cmd/seed` embeds and executes this SQL in one transaction through
+the existing PostgreSQL runtime, so no system `psql` binary is required. API and
+migrate startup never execute it. Because the old,
 unreleased outbox migration also used version 000002, a local database that
 applied that file must be recreated rather than accepting mismatched history.
 
@@ -187,8 +230,13 @@ applied that file must be recreated rather than accepting mismatched history.
 | Condition | Required behavior |
 |---|---|
 | Missing/invalid PostgreSQL setting | Fail startup naming only the key and constraint |
+| `FIXTHE_POSTGRES_QUERY_DEBUG` unset | Default `false`; query logs stay statement-free |
+| `FIXTHE_POSTGRES_QUERY_DEBUG` is `true`/`TRUE` | Emitted `db.query.completed` records include interpolated `db.query.text` |
+| `FIXTHE_POSTGRES_QUERY_DEBUG` is any other value | Fail `LoadPostgreSQL` naming the key; never echo the raw value |
+| `FIXTHE_LOG_LEVEL=debug` with query debug off | Successful queries stay `DEBUG` and still omit SQL |
 | URL parse/connect/ping failure | Return a stable safe wrapper; never echo URL or database message |
 | Pool acquire or health timeout | Respect the earlier caller deadline and return a classified safe error |
+| PostgreSQL error reaches an unknown HTTP 500 | Private log selects the deepest captured pool/repository stack |
 | Callback returns an error | Roll back and preserve the callback error even if rollback also fails |
 | Callback panics | Roll back with an independent cleanup deadline, then re-panic |
 | Commit fails | Return commit error because durability is unknown |
@@ -196,7 +244,7 @@ applied that file must be recreated rather than accepting mismatched history.
 | Non-serialization/deadlock failure | Never retry automatically |
 | Migration lock times out | Fail without applying a migration |
 | Applied checksum differs | Fail before applying later migrations |
-| UUID is not version 7 | Reject the user or incident row at the database boundary |
+| UUID is not version 7 | Reject application-owned aggregate rows at the database boundary |
 | Unknown user role, incident status, or incident priority | Reject the row through a named check constraint |
 | Incident timestamps/counts violate ordering or positivity | Reject the row through a named check constraint |
 | Seed is run repeatedly | Keep existing stable fixtures and complete successfully |
@@ -208,11 +256,14 @@ applied that file must be recreated rather than accepting mismatched history.
   maps rows into domain values, and exposes a use-case-specific repository.
 - Base: API loads explicit PostgreSQL configuration, passes startup
   health, reports readiness, and closes its own pool on shutdown.
-- Base: `make seed` loads only incident fixtures after an explicit migration and
-  can be repeated without changing credentials.
-- Bad: application code imports generated rows, a query logs raw SQL/arguments,
-  API runs migrations on startup, or an integration test silently skips because
-  isolation proof is missing.
+- Base: `make seed` loads a demo project/configuration and incident fixtures after
+  an explicit migration and can be repeated without changing users or credentials.
+- Good: `FIXTHE_POSTGRES_QUERY_DEBUG=true` plus `FIXTHE_LOG_LEVEL=debug` prints
+  one interpolated statement after the query event so it can be pasted into
+  `psql`.
+- Bad: application code imports generated rows, a query logs raw SQL/arguments
+  without the debug switch, API runs migrations on startup, or an integration
+  test silently skips because isolation proof is missing.
 - Bad: generated `models.go` is hand-edited to add field comments, or a custom
   post-generation script duplicates comments into query-specific structs.
 - Bad: migration/API startup seeds rows, a seed creates a default password, or a
@@ -223,20 +274,29 @@ applied that file must be recreated rather than accepting mismatched history.
 - Configuration: defaults, overrides, bounds, required URL, min/max relation,
   and proof that raw secret values never enter diagnostics.
 - Pool: explicit limits/runtime params, startup health, acquire/health bounds,
-  safe errors, readiness recovery, and bounded idempotent close.
+  safe errors with captured call sites, readiness recovery, and bounded idempotent
+  close.
 - Tracing: declared operation and verb fallback, trace correlation, latency and
-  outcome, rows affected, error class, and absence of SQL/args/error messages.
+  outcome, rows affected, error class, and absence of SQL/args/error messages
+  when query debug is off. When it is on: interpolated `db.query.text`, no
+  separate args field, success stays `DEBUG`, and spans/metrics stay
+  statement-free. Console asserts physical newlines and no quoted `sql=`.
+- Query debug config: default `false`, `true`/`TRUE` accepted, invalid values
+  fail without echoing the raw input, and `.env.example` documents the key
+  once.
 - Transactions: begin/commit/rollback, panic cleanup, callback-error priority,
   isolation/read-only mapping, retry classification/attempt limits, and parent
   cancellation.
 - Migrations: filename ordering/gaps, checksums, advisory locking, typed history
-  list/record, atomic migration metadata, rollback, connection release, three
+  list/record, atomic migration metadata, rollback, connection release, four
   embedded versions, required MVP tables/checks, complete table/column comments,
   and absence of `job_outbox`.
-- Seed: contains idempotent incident insertion and no user/password insertion.
+- Seed: contains idempotent demo project/configuration/incident insertion and no
+  user/membership/password/credential insertion.
 - Integration: explicit test target validation, empty-history migration,
-  idempotent rerun, typed history read, users/incidents existence, outbox absence,
-  generated create/update query behavior, and owned cleanup in dependency order.
+  idempotent rerun, typed history read, all 11 business relations, outbox absence,
+  config/Observation/incident/audit behavior, project isolation, and owned cleanup
+  in dependency order.
 - Quality: `go vet ./...`, `go test ./...`, `go test -race ./...`,
   `go build ./cmd/...`, and `make generate-check`.
 
@@ -252,6 +312,24 @@ func (s *Service) Load(ctx context.Context) (pgx.Row, error) {
     return pool.QueryRow(ctx, "SELECT * FROM incidents WHERE id = $1", s.id), nil
 }
 ```
+
+#### Wrong
+
+```text
+sql="-- name: GetProjectAccess :one\nSELECT ... WHERE token = $1" args=[secret]
+```
+
+Quoted `sql=` hides newlines and leaves `$n` for the operator to substitute.
+
+#### Correct
+
+```text
+2026-08-18 09:52:40 DBG [postgres] query completed operation=project.resolve_access
+-- name: GetProjectAccess :one
+SELECT ... WHERE token = 'secret'
+```
+
+Console writes the interpolated statement on following physical lines.
 
 #### Correct
 
@@ -277,7 +355,7 @@ Development data follows the same explicit boundary:
 -- Wrong: hidden startup credentials create an unsafe implicit account.
 INSERT INTO users (username, password_hash) VALUES ('admin', 'plaintext');
 
--- Correct: dev/seed.sql contains stable incidents only and remains repeatable.
+-- Correct: dev/seed.sql contains stable project-owned demo data and remains repeatable.
 INSERT INTO incidents (...) VALUES (...)
 ON CONFLICT DO NOTHING;
 ```
@@ -285,7 +363,11 @@ ON CONFLICT DO NOTHING;
 ## Common Mistakes
 
 - Do not log raw SQL, bind arguments, connection strings, credentials, database
-  error messages, or row values.
+  error messages, or row values unless `FIXTHE_POSTGRES_QUERY_DEBUG` is
+  explicitly enabled, and then only as one interpolated `db.query.text`.
+- Do not replace `$1` before `$10`; match the complete placeholder.
+- Do not leave debug SQL in a tint-quoted attribute. Console must write
+  physical newlines so the statement can be copied.
 - Do not construct a pool outside a composition root or keep mutable global
   database clients.
 - Do not expose generated or pgx types through application/domain contracts.
