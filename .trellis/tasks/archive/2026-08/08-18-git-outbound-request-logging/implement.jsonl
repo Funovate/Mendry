@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Outbound LLM contract to mirror, plus the explicit Git ls-remote instrumentation gap this task closes."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Comment, constructor, and test isolation rules for the new observability helper and adapter hook."}
+{"file": ".trellis/spec/backend/project-guidelines.md", "reason": "Repository probe authorization and credential isolation; ListRefs must not leak tokens into logs or client errors."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Adapters keep returning ErrGitUnreachable; outbound logs classify the original exec error without interpolating secrets."}
