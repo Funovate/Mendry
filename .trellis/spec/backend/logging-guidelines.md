@@ -67,9 +67,13 @@ and its following stack or SQL are not interleaved with another slog record.
 - Process start, ready, stopping, and stopped boundaries.
 - One completion record per HTTP request with method, matched route pattern,
   status, and duration. Log the route pattern, never the raw URL/query string.
+  Public ingest is `POST /hooks/{token}`; the pattern placeholder is required
+  so the capability token never appears in completed or failed records.
 - One additional failure snapshot record when the final status is `>= 400`,
-  except the expected `499` client-closed outcome. See
-  [Error Request Snapshots](#error-request-snapshots).
+  except the expected `499` client-closed outcome, and except when
+  `FIXTHE_HTTP_REQUEST_DEBUG` is on. See
+  [Error Request Snapshots](#error-request-snapshots) and
+  [Inbound HTTP Request Debug](#inbound-http-request-debug).
 - One `http.request.error` record when an HTTP adapter maps an unknown error to
   `500 internal_error`. See [Internal Server Error Diagnostics](#internal-server-error-diagnostics).
 - PostgreSQL query, transaction, pool-state, migration, and lock-cleanup
@@ -95,7 +99,7 @@ strings, request/response bodies, database arguments, user source, evidence, or
 arbitrary high-cardinality identifiers. A redacted string representation is
 defense in depth, not permission to pass a secret to the logger.
 
-There are three explicit exceptions:
+There are four explicit exceptions:
 
 - The failure-only request snapshot described in
   [Error Request Snapshots](#error-request-snapshots) covers a redacted,
@@ -110,11 +114,17 @@ There are three explicit exceptions:
   with PostgreSQL literals so the field can be copied into `psql`. The switch
   is independent of `FIXTHE_LOG_LEVEL`, does not change query levels, and
   never copies SQL onto spans or metrics. Bind values are not redacted.
+- `FIXTHE_HTTP_REQUEST_DEBUG=true` attaches the complete inbound request and
+  response to the existing INFO `http.request.completed` record. See
+  [Inbound HTTP Request Debug](#inbound-http-request-debug).
 
 Neither of the first two exceptions permits independently attaching headers,
 cookies, response bodies, raw SQL, bind values, Redis key/value data, or
 success-path payloads. The query-debug switch is the only permission to log
-raw SQL or bind values, and it applies only to `db.query.text`.
+raw SQL or bind values, and it applies only to `db.query.text`. The HTTP
+request-debug switch is the only permission to log inbound headers, cookies,
+response bodies, or unredacted success-path payloads, and it applies only to
+`http.request.completed`.
 
 PostgreSQL query records otherwise never contain raw SQL, bind values, returned
 rows, connection URLs, credentials, or database error messages. Query events
@@ -137,9 +147,10 @@ diagnostics.
 
 Session cookies, raw session tokens, password material, and Redis session values
 must never be independently attached to startup diagnostics, structured logs,
-spans, or metrics. The original-error exception below does not inspect or enrich
-third-party error text, so callers must not construct errors by interpolating
-these values.
+spans, or metrics, except the inbound request-debug dump on
+`http.request.completed`. The original-error exception below does not inspect
+or enrich third-party error text, so callers must not construct errors by
+interpolating these values.
 
 ## Internal Server Error Diagnostics
 
@@ -244,6 +255,190 @@ Truncation:
   4KB on a UTF-8 boundary.
 - When a field is truncated, set `body_truncated` or `query_truncated` to
   `true`. Never write the discarded tail.
+
+## Inbound HTTP Request Debug
+
+This is an explicit, unsafe debug exception. It exists so operators can
+reproduce a console or API call from logs the same way
+`FIXTHE_POSTGRES_QUERY_DEBUG` exposes interpolated SQL. Default remains
+off. `FIXTHE_LOG_LEVEL=debug` alone does not attach payloads.
+
+Trigger:
+
+- `FIXTHE_HTTP_REQUEST_DEBUG=true` on the API process. migrate, seed, and
+  bootstrap-admin do not read the switch. Outbound LLM / Git, PostgreSQL,
+  and Redis keep their current contracts.
+- Accepted values are `true` and `false` (case-insensitive). Invalid values
+  fail `LoadAPI` / `loadHTTP` without echoing the raw value.
+
+When off:
+
+- `http.request.completed` stays identity-only: method, matched route
+  pattern, status, duration, and request id.
+- `http.request.failed` remains the only, redacted, 4KB-truncated
+  body/query exception on `status >= 400` except client-closed `499`.
+- Headers, cookies, and response bodies stay absent.
+
+When on:
+
+- Every `http.request.completed` INFO record includes the unredacted
+  inbound request and outbound response. Do not invent a second event.
+  Do not change the completed level.
+- Fields:
+  - `http.request_headers`: canonical `Name: value` lines, sorted by
+    name, including `Cookie` and `Authorization`. Always present.
+  - `http.request_query`: raw `url.RawQuery`. Omitted when empty.
+  - `http.request` / `http.request_truncated`: raw request body. Empty
+    bodies omit `http.request`. Truncated is set only when the captured
+    prefix hit `FIXTHE_HTTP_MAX_BODY_BYTES`.
+  - `http.response_headers`: includes `Set-Cookie`. Always present.
+  - `http.response` / `http.response_truncated`: raw response body with
+    the same omit/truncate rules.
+- Do not reuse failure-snapshot names (`request_body`, `request_query`,
+  `body_truncated`) on the completed record.
+- Do not redact field names or values. Secret-bearing fields are logged
+  as received.
+- Capture is still bounded by `FIXTHE_HTTP_MAX_BODY_BYTES` (default 1 MiB,
+  max 10 MiB) for both request and response. That ceiling is not the 4KB
+  failure-snapshot cap.
+- Do not emit `http.request.failed`. Completed already has the unredacted
+  dump. Search `http.request.completed` while the switch is on.
+- `http.request.error` and panic records stay unchanged.
+- Debug fields are written only to the application logger. OpenTelemetry
+  spans and metrics never receive bodies, headers, cookies, or query
+  strings.
+
+Console projection treats `http.request`, `http.response`,
+`http.request_headers`, `http.response_headers`, and `http.request_query`
+like `db.query.text`: strip them from tint's quoted attributes and write
+each as a labeled following block under the shared output mutex. Outbound
+`llm.request.completed` / `git.request.completed` records reuse
+`http.request` / `http.response` and must keep their quoted
+`request=` / `response=` aliases; branch on `event`.
+
+```text
+2026-08-18 10:43:18 INF [httpserver] request completed trace=cbad87f9 req=b8dc3be5 method=GET route="GET /api/v1/projects/{projectKey}/configuration" status=200 took=121ms
+request_headers:
+Cookie: fixthe_session=...
+Authorization: Bearer ...
+request_query:
+env=prod
+request:
+{"name":"..."}
+response_headers:
+Content-Type: application/json
+response:
+{"data":{...}}
+```
+
+JSON keeps the same values as structured string fields.
+
+### 1. Scope / Trigger
+
+Use this contract when changing inbound AccessLog fields, `BoundaryOptions`,
+`FIXTHE_HTTP_REQUEST_DEBUG`, or console projection of
+`http.request.completed`. Feature HTTP adapters stay unaware of the switch.
+Outbound LLM / Git reuse `http.request` / `http.response` on different
+events and must keep their quoted console aliases.
+
+### 2. Signatures
+
+```go
+func config.LoadAPI(config.Lookup) (config.API, error)
+func httpserver.Boundary(httpserver.BoundaryOptions) (http.Handler, error)
+func httpserver.AccessLog(*slog.Logger, int64, bool, http.Handler) http.Handler
+```
+
+`config.HTTP.RequestDebug` and `httpserver.BoundaryOptions.RequestDebug`
+are the only surfaces. `bootstrap.RunAPI` copies the config bool into
+`Boundary`. migrate / seed / bootstrap-admin do not load HTTP.
+
+### 3. Contracts
+
+| Key | Default | Constraint |
+|---|---|---|
+| `FIXTHE_HTTP_REQUEST_DEBUG` | `false` | `true` or `false`, case-insensitive; invalid values fail `LoadAPI` / `loadHTTP` without echoing the raw value |
+
+Completed dump fields when the switch is on:
+
+| JSON field | Required | Content |
+|---|---|---|
+| `http.request_headers` | always | Sorted canonical `Name: value` lines, including `Cookie` and `Authorization` |
+| `http.request_query` | if `url.RawQuery` is non-empty | Raw query string, not a redacted map |
+| `http.request` | if captured request body is non-empty | Raw bytes as text |
+| `http.request_truncated` | only when the request capture hit `FIXTHE_HTTP_MAX_BODY_BYTES` | `true` |
+| `http.response_headers` | always | Includes `Set-Cookie` |
+| `http.response` | if captured response body is non-empty | Raw bytes as text |
+| `http.response_truncated` | only when the response capture hit `FIXTHE_HTTP_MAX_BODY_BYTES` | `true` |
+
+Do not reuse failure-snapshot names (`request_body`, `request_query`,
+`body_truncated`) on the completed record. Do not log `request.URL.String()`.
+The route field stays the mux pattern.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Unset / `false` | Identity-only completed; redacted 4KB `http.request.failed` on `status >= 400` except `499` |
+| `true` | INFO completed carries the dump; skip `http.request.failed` |
+| Invalid value such as `pretty-secret-marker` | Config load fails with a field error that does not echo the raw value |
+| `FIXTHE_LOG_LEVEL=debug` and switch off | No payloads, headers, or cookies |
+| Body larger than `FIXTHE_HTTP_MAX_BODY_BYTES` | Prefix only plus the matching truncated flag; secrets in the prefix stay plaintext |
+| Unknown application 500 while debug is on | `http.request.error` still emits; client envelope stays `500 internal_error` |
+| Client-closed `499` | Only the INFO completed record, with or without the dump |
+
+### 5. Good / Base / Bad Cases
+
+- Good: local `.env` sets `FIXTHE_HTTP_REQUEST_DEBUG=true` at default
+  `info` and a failed login log contains the plaintext password and
+  `fixthe_session` cookie.
+- Base: unset switch keeps today's identity-only completed record and
+  the redacted failure snapshot.
+- Bad: attaching the dump because log level is `debug`; putting Cookie /
+  Authorization on spans or metrics; emitting both plaintext completed
+  and `[redacted]` `http.request.failed`; logging the raw URL.
+
+### 6. Tests Required
+
+- Default-off success with a password body and Cookie header emits one
+  completed record and no payload / header fields.
+- Default-off 4xx still emits `http.request.failed` with redacted
+  fields and the 4KB cap.
+- Debug-on success is INFO and contains Cookie, Authorization,
+  Set-Cookie, raw query, and plaintext bodies.
+- Debug-on 4xx/5xx omits `http.request.failed`; `WriteInternalError`
+  still emits `http.request.error`.
+- A body larger than `MaxBodyBytes` sets the truncated flag and keeps
+  a secret that landed in the prefix.
+- Empty GET omits body/query fields and still writes header maps.
+- Invalid switch values fail `LoadAPI` without echoing the raw value.
+- Console inbound debug uses labeled following-line blocks; outbound
+  LLM/Git keep quoted `request=` / `response=` aliases.
+- HTTP spans / metrics never receive dump fields.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+AccessLog(logger, maxBodyBytes, next) // missing requestDebug
+observability.Log(ctx, logger, slog.LevelInfo, EventHTTPCompleted, "request completed",
+    slog.String(FieldRequestBody, raw), // failure-snapshot name on completed
+    slog.String("url", request.URL.String()),
+)
+```
+
+#### Correct
+
+```go
+AccessLog(logger, options.MaxBodyBytes, options.RequestDebug, next)
+if requestDebug {
+    attrs = append(attrs, slog.String(FieldHTTPRequestHeaders, formatHeaderDump(request.Header)))
+    if request.URL.RawQuery != "" {
+        attrs = append(attrs, slog.String(FieldHTTPRequestQuery, request.URL.RawQuery))
+    }
+}
+```
 
 ## Outbound LLM Requests
 

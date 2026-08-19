@@ -113,6 +113,15 @@ Selecting a new value replaces the previous value and only its configuration
 panel is mounted. The final review renders the selected source and trigger
 labels.
 
+The production Trigger step for `signed_webhook` shows a read-only inbound
+URL plus copy and generate/regenerate. Do not render HMAC, event-types, or
+deduplication fields. Do not let the operator edit the URL. Show the URL
+only when the configuration API returned `trigger.inboundUrl` (project
+admin). Viewers and operators never see the token. Generate calls
+`POST /api/v1/projects/{projectKey}/configuration/webhook-token` after the
+configuration exists; an unsaved project 404s until the first save, which
+also creates the token. `custom_rule` does not show an inbound URL.
+
 The browser path for a guided flow should assert both the blocked/ready state
 of required gates and the absence of the entered secret from rendered text.
 

@@ -69,8 +69,13 @@ Environment groups:
 - Common: `FIXTHE_ENVIRONMENT`, `FIXTHE_LOG_LEVEL`, `FIXTHE_LOG_FORMAT`, and
   bounded shutdown timeout.
 - API HTTP: bind address plus read-header/read/write/idle timeouts.
-- HTTP boundary: `FIXTHE_HTTP_MAX_BODY_BYTES` (default 1 MiB) and optional exact
-  `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`.
+- HTTP boundary: `FIXTHE_HTTP_MAX_BODY_BYTES` (default 1 MiB), optional exact
+  `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`, and default-off
+  `FIXTHE_HTTP_REQUEST_DEBUG` (unsafe inbound request/response dump on
+  `http.request.completed`; migrate / seed / bootstrap-admin do not read it).
+- Public URL: API-required `FIXTHE_PUBLIC_URL` is the absolute `http`/`https`
+  origin used to derive `/hooks/{token}`; no credentials, query, fragment, or
+  trailing slash; migrate / seed / bootstrap-admin do not read it.
 - Auth: bounded `FIXTHE_AUTH_SESSION_TTL`; command-only
   `FIXTHE_BOOTSTRAP_ADMIN_PASSWORD` is never read by API startup.
 - Project credentials: API-required `FIXTHE_ENCRYPTION_KEY` decodes from standard
@@ -94,7 +99,7 @@ backend/
     bootstrap/
     commands/migrate/{migrations,migratedb}/
     platform/{buildinfo,config,errtrace,httpserver,observability,postgres,redis}/
-    modules/{auth,projects,observations,incidents,remediation,system}/
+    modules/{auth,projects,observations,incidents,hooks,remediation,system}/
   tests/integration/
   tools/
 ```
@@ -114,6 +119,7 @@ packages do not depend on transport diagnostics.
 |---|---|
 | Missing PostgreSQL URL | API and migrate fail before resource construction; raw value is never echoed |
 | Missing Redis URL | API fails with a safe error naming `FIXTHE_REDIS_URL` |
+| Missing/invalid `FIXTHE_PUBLIC_URL` | API fails before resource construction; raw value is never echoed |
 | Invalid HTTP/pool/timeout value | Fail before opening clients or listener |
 | Invalid body limit or CORS origin | Fail before opening clients or listener |
 | PostgreSQL or Redis startup health fails | Close partial resources and fail safely |

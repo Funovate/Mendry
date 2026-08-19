@@ -16,6 +16,7 @@ maps only safe application categories and never serializes concrete error text.
 
 ```go
 func httpserver.Boundary(httpserver.BoundaryOptions) (http.Handler, error)
+func httpserver.AccessLog(*slog.Logger, int64, bool, http.Handler) http.Handler
 func httpserver.WriteJSON(http.ResponseWriter, int, any) error
 func httpserver.WriteListJSON(http.ResponseWriter, int, any, int64) error
 func httpserver.WriteError(http.ResponseWriter, *http.Request,
@@ -69,8 +70,14 @@ exactly this envelope:
   8-64 ASCII alphanumeric, dash, underscore, or dot characters; otherwise a random
   128-bit hex value is generated.
 - `FIXTHE_HTTP_MAX_BODY_BYTES` defaults to 1 MiB and accepts 1 KiB through 10 MiB.
+  The same ceiling bounds inbound request-debug body capture.
 - `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN` is empty for same-origin use or one exact
   `http`/`https` origin without credentials, path, query, or fragment.
+- `FIXTHE_HTTP_REQUEST_DEBUG` defaults to `false`. When true, AccessLog
+  attaches the unredacted request/response dump to INFO
+  `http.request.completed` and skips `http.request.failed`. Client
+  envelopes are unchanged. See
+  `.trellis/spec/backend/logging-guidelines.md`.
 - CORS permits credentials and only the configured origin. With no configured
   cross-origin value, a browser `Origin` must match request scheme and host.
 - `DecodeJSON` requires `application/json`, rejects unknown fields, empty bodies,
@@ -78,7 +85,9 @@ exactly this envelope:
 - `net/http` mux default plaintext 404 and 405 responses are normalized into this
   envelope while preserving headers such as `Allow`. A feature handler that has
   already declared an `application/json` 404/405 keeps its feature-specific code
-  and body; normalization must not rewrite `incident_not_found` into `not_found`.
+  and body; normalization must not rewrite `incident_not_found` or
+  `webhook_not_found` into `not_found`. Unknown, disabled, and incomplete
+  webhook tokens all use `webhook_not_found`.
 - An HTTP adapter maps expected application categories with `WriteError`. Its
   unknown/default branch calls `WriteInternalError` with the original `error`.
   The client still receives only `500 internal_error`; the shared access boundary

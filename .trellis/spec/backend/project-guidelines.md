@@ -15,8 +15,10 @@ resource that can reveal one customer's operational data.
 - Project is the mandatory ownership and authorization boundary.
 - PostgreSQL stores project configuration and business data; Redis never stores it.
 - The authenticated user's system role and membership role are independent.
-- Connector execution, polling, public webhook ingress, and automatic rule evaluation
-  are not implemented yet. The stored configuration is future runtime input.
+- Connector execution, polling, and custom-rule evaluation are not implemented
+  yet. Public signed-webhook ingress is implemented: a path token identifies the
+  project and opens or updates a `P2` incident. Log search stays in the
+  remediation harness.
 
 ### 2. Signatures
 
@@ -39,11 +41,22 @@ func (*projects.Service).PutConfiguration(context.Context, authdomain.User,
     string, projectdomain.Configuration) (projectdomain.Configuration, error)
 func (*projects.Service).ProbeRepositoryRefs(context.Context, authdomain.User,
     string, string, string, string) (application.RepositoryRefs, error)
+func (*projects.Service).ProbeLLMModels(context.Context, authdomain.User,
+    string, string, string) (application.LLMModels, error)
+func (*projects.Service).RotateWebhookToken(context.Context, authdomain.User,
+    string) (string, error)
+func (*projects.Service).LookupWebhookToken(context.Context, string)
+    (application.WebhookIngress, error)
 
 func (*observations.Service).List(context.Context, authdomain.User, string, int32)
     (observations.ListResult, error)
 func (*observations.Service).Create(context.Context, authdomain.User, string,
     observations.CreateInput) (observationdomain.Observation, error)
+func (*observations.Service).CreateInbound(context.Context, string, string,
+    string, string, time.Time) (observationdomain.Observation, error)
+
+func (*hooks.Service).Ingest(context.Context, string, string)
+    (hooks.Result, error)
 ```
 
 HTTP routes:
@@ -56,8 +69,12 @@ PUT|DELETE /api/v1/projects/{projectKey}/members/{username}
 GET|POST /api/v1/projects/{projectKey}/secrets
 PATCH    /api/v1/projects/{projectKey}/secrets/{secretId}
 GET|PUT  /api/v1/projects/{projectKey}/configuration
+POST     /api/v1/projects/{projectKey}/configuration/webhook-token
+POST     /api/v1/projects/{projectKey}/llm/models
+POST     /api/v1/projects/{projectKey}/llm/chat
 GET|POST /api/v1/projects/{projectKey}/observations
 GET      /api/v1/projects/{projectKey}/audit-events
+POST     /hooks/{token}
 ```
 
 ### 3. Contracts
@@ -99,8 +116,14 @@ plus item-addressed API contracts; table names alone do not imply that support.
 - Cloud source: provider, region, and resource.
 - MCP source: HTTP endpoint, transport, allowlisted non-secret headers, evidence
   profile, query scope, and capabilities.
-- Signed webhook: signing-secret reference, event types, and deduplication key.
+- Signed webhook: server-generated inbound path token. `signingSecretId` is
+  optional leftover HMAC metadata and is not required to save or ingest.
+  Compatibility config may still store `eventTypes` / `deduplicationKey`;
+  runtime ignores them. The inbound URL is derived as
+  `{FIXTHE_PUBLIC_URL}/hooks/{token}` and is never a user-supplied field.
 - Custom rule: grouping window and match expression.
+- LLM provider: OpenAI-compatible `baseUrl`, same-project `http_bearer`
+  credential reference, and a required model ID selected from `/v1/models`.
 
 Source and trigger JSON is strictly decoded into connector-specific version-1
 structures. Secret references are relational columns and must belong to the same
@@ -112,6 +135,13 @@ project. Arbitrary request JSON and secret values never enter config documents.
 base64 to exactly 32 bytes. AES-256-GCM uses a fresh random nonce per write and
 associated data containing key version, project ID, secret ID, and kind. Read APIs
 return only ID, name, kind, key version, record version, and timestamps.
+
+Trusted remediation adapters decrypt the same rows internally and wipe
+plaintext after use. They must not add a public plaintext-secret method on
+`projects.Service`. The OpenAI-compatible key is a same-project `http_bearer`
+secret referenced by `project_llm_providers.credential_secret_id`; do not add
+an `openai_api_key` kind. See
+[Remediation Adapter Guidelines](./remediation-adapter-guidelines.md).
 
 `UpdateSecret` treats a nil value as name-only and a non-nil value as rotation.
 HTTP must pass nil when `value` is omitted and reject an explicit empty string
@@ -125,14 +155,54 @@ still equals the old project name.
 
 Observations are immutable project Event Stream records owned by project,
 environment, and source. Lists are bounded to 1..100 and newest first. Attributes
-are a bounded scalar object with allowlisted keys. Authenticated Observation POST is
-temporary connector/development ingestion, not a public webhook.
+are a bounded scalar object with allowlisted keys. Authenticated Observation POST
+remains the temporary connector/development ingestion boundary. Public ingest is
+`POST /hooks/{token}` only.
+
+#### Inbound webhook token
+
+`FIXTHE_PUBLIC_URL` is required by API startup. It must be an absolute
+`http`/`https` URL without credentials, query, fragment, or a trailing slash;
+an optional path prefix is allowed. Missing or invalid values fail `LoadAPI`
+naming only the key. migrate / seed / bootstrap-admin do not read it.
+
+A `signed_webhook` trigger stores three columns together or not at all:
+`ingress_token_hash` (SHA-256 of the 43-character raw-url token),
+`ingress_token_ciphertext`, and `ingress_token_nonce`. AES-256-GCM associated
+data is `projectID + triggerID + "webhook_token"`. Do not store the token in
+`project_secrets` or reuse `webhook_hmac`.
+
+`PutConfiguration` generates a token when kind is `signed_webhook` and the
+row has none. Later saves keep the existing token. Switching to `custom_rule`
+clears the three columns. `RotateWebhookToken` creates or replaces the token
+and writes audit `project.trigger.webhook_token` with metadata `{rotated}`.
+
+`GetConfiguration` sets `trigger.inboundUrl` only for a project admin. Operator
+and viewer receive `null`. List, log, and audit records never include the
+plaintext token. `LookupWebhookToken` hashes the path value and returns
+project ID plus the enabled same-project source, or not found.
+
+`POST /hooks/{token}` has no Session. The body is opaque UTF-8
+(`text/plain`, `application/json`, form, or omitted Content-Type). Empty or
+invalid UTF-8 is `400 invalid_request`. The first non-empty line, whitespace
+collapsed and truncated, becomes title and fingerprint. The raw body becomes
+the Observation message (`error`, attributes `{}`). Source and environment
+come from the saved project configuration. Success is `202` with
+`{incidentId, created}`.
+
+Unknown hash, disabled trigger, wrong kind, missing source, and missing
+configuration all return `404 webhook_not_found`. Do not distinguish those
+cases. Hooks must not call Git, SSH, CLS, or LLM adapters; a new `P2`
+incident uses the existing `RemediationTrigger`.
 
 Project creation, rename, member mutation, credential creation/update,
-configuration replacement, incident creation, and incident status changes create
-project audit events. Summaries are application-owned and metadata is
-allowlisted; request bodies are never copied. `project.renamed` metadata is
-`{projectKey}`. `project.secret.updated` metadata is `{name, kind, rotated}`.
+configuration replacement, webhook-token rotate, incident creation, incident
+occurrence, and incident status changes create project audit events.
+Summaries are application-owned and metadata is allowlisted; request bodies
+are never copied. `project.renamed` metadata is `{projectKey}`.
+`project.secret.updated` metadata is `{name, kind, rotated}`.
+`project.trigger.webhook_token` metadata is `{rotated}`. Inbound incident
+audits use a null `actor_user_id`.
 
 ### 4. Validation & Error Matrix
 
@@ -153,6 +223,11 @@ allowlisted; request bodies are never copied. `project.renamed` metadata is
 | Environment name is distinct | Rename leaves the environment name unchanged |
 | Source ID belongs to another project | Not found; never infer its existence |
 | Missing/invalid encryption key | Fail API startup naming only the environment key |
+| Missing/invalid `FIXTHE_PUBLIC_URL` | Fail API startup naming only the environment key |
+| Empty `PublicURL` in `projects.NewService` | Constructor fails; do not assemble a blank inbound URL |
+| Non-admin reads configuration | `trigger.inboundUrl` is null |
+| Unknown, disabled, or incomplete webhook token | `404 webhook_not_found`; no Observation or Incident |
+| Empty or invalid UTF-8 webhook body | `400 invalid_request` |
 
 ### 5. Good/Base/Bad Cases
 
@@ -160,19 +235,26 @@ allowlisted; request bodies are never copied. `project.renamed` metadata is
   and append an allowlisted audit event in the same SQL statement/transaction.
 - Base: an authorized viewer reads an empty Event Stream and receives a success
   envelope with `data: []` and `meta.total: 0`.
+- Good: first `signed_webhook` save generates a token; admin copy shows
+  `{publicURL}/hooks/{token}`; rotate invalidates the previous hash.
+- Base: an operator GET configuration returns the trigger without `inboundUrl`.
 - Bad: a global query, UI-only role switch, credential value in JSON, connector
-  headers copied blindly, or distinguishing a private project from an unknown key.
+  headers copied blindly, distinguishing a private project from an unknown key,
+  logging the raw `/hooks/{token}` path, requiring HMAC to save a webhook, or
+  returning a different error for a disabled trigger than for an unknown token.
 
 ### 6. Tests Required
 
 - Domain: project keys/roles, URL/commit rules, each typed source/trigger payload,
   same-project UUID references, secret kinds, and Observation attribute allowlist.
 - Application: system-admin and membership matrices, non-member masking, last-admin
-  guard, secret encryption context, generated IDs, name-only vs rotation, and
-  preserved project key / secret ID / kind.
+  guard, secret encryption context, generated IDs, name-only vs rotation,
+  preserved project key / secret ID / kind, webhook token generate/keep/clear,
+  admin reveal vs operator omit, and rotate invalidating the previous hash.
 - HTTP: route nesting, capabilities, strict JSON, success envelope metadata and
-  list totals, role denials, stable errors, omitted vs empty secret `value`, and
-  credential non-disclosure.
+  list totals, role denials, stable errors, omitted vs empty secret `value`,
+  credential non-disclosure, admin-only `inboundUrl`, and unauthenticated
+  `POST /hooks/{token}` 202 / 404 collapsing.
 - PostgreSQL integration: all 11 business tables and comments, configuration
   round-trip, encrypted-secret metadata, members, Observations, incidents, audit
   events, cross-project source/Observation/incident isolation, project rename,
@@ -220,7 +302,15 @@ secret, err := service.UpdateSecret(ctx, principal, projectKey, secretID, name, 
 - Do not add global fallback queries when project context is absent.
 - Do not log source config, Observation messages, secret values, encrypted material,
   request headers, or audit request bodies.
-- Do not describe persisted connector configuration as an active connector runtime.
+- Do not describe SSH / Cloud / MCP configuration as an active connector
+  runtime. Signed webhook is the one trigger that now has a public ingest
+  route.
+- Do not require `webhook_hmac` to save or receive a signed webhook. Do not
+  put the inbound token in `project_secrets` or add a public plaintext-secret
+  method for it.
+- Do not log, audit, or return the raw webhook token except as the admin-only
+  derived `inboundUrl`. AccessLog must use `POST /hooks/{token}`, never
+  `RequestURI`.
 - Do not treat an explicit empty credential `value` as preserve. Only a missing
   field is name-only. Incomplete Git replacement drafts must not omit `value`.
 - Do not accept `kind` on credential update. Secret ID and kind stay unchanged so
