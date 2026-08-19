@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSourceConfig, buildTriggerConfig, compatibleGitSecretId, composeGitSecretReplacement, composeHttpsGitCredentialValue, composeSshPrivateKeyValue, filterGitSecrets } from "../src/features/configuration/configuration";
+import { buildSourceConfig, buildTriggerConfig, compatibleGitSecretId, composeGitSecretReplacement, composeHttpsGitCredentialValue, composeSshPrivateKeyValue, filterGitSecrets, inspectSshPrivateKeyDraft, inspectSshPrivateKeyFile, SSH_PRIVATE_KEY_MAX_BYTES, sshPrivateKeyInspectionMessage } from "../src/features/configuration/configuration";
 
 const input = {
   endpoint: " https://mcp.internal/mcp ",
@@ -81,5 +81,55 @@ describe("git credential composition", () => {
     expect(composeGitSecretReplacement("git_credential", { ...empty, username: "deploy" })).toEqual({ complete: false });
     expect(composeGitSecretReplacement("ssh_password", { ...empty, username: "deploy" })).toEqual({ complete: false });
     expect(composeGitSecretReplacement("ssh_private_key", { ...empty, passphrase: "phrase" })).toEqual({ complete: false });
+  });
+});
+
+const opensshPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----";
+const rsaPem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----";
+const pkcs8Pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj\n-----END PRIVATE KEY-----";
+
+describe("SSH private key inspection", () => {
+  it("accepts OpenSSH, RSA, and PKCS#8 PEM private keys", () => {
+    expect(inspectSshPrivateKeyDraft(opensshPem)).toEqual({ ok: true, text: opensshPem });
+    expect(inspectSshPrivateKeyDraft(rsaPem)).toEqual({ ok: true, text: rsaPem });
+    expect(inspectSshPrivateKeyDraft(pkcs8Pem)).toEqual({ ok: true, text: pkcs8Pem });
+  });
+
+  it("rejects empty, public-key, and PuTTY drafts without interpolating contents", () => {
+    expect(inspectSshPrivateKeyDraft("   ")).toEqual({ ok: false, reason: "empty" });
+    expect(inspectSshPrivateKeyDraft("-----BEGIN OPENSSH PUBLIC KEY-----\nabc\n-----END OPENSSH PUBLIC KEY-----")).toEqual({ ok: false, reason: "not_pem" });
+    expect(inspectSshPrivateKeyDraft("PuTTY-User-Key-File-2: ssh-rsa\nPrivate-Lines: 1\n")).toEqual({ ok: false, reason: "not_pem" });
+    expect(sshPrivateKeyInspectionMessage("not_pem")).toBe("The selected content is not a PEM or OpenSSH private key.");
+    expect(sshPrivateKeyInspectionMessage("empty")).not.toMatch(/BEGIN|PuTTY|abc/);
+  });
+
+  it("rejects an oversized key and a Git compose that exceeds the stored-secret limit", () => {
+    const oversized = `-----BEGIN OPENSSH PRIVATE KEY-----\n${"a".repeat(SSH_PRIVATE_KEY_MAX_BYTES)}\n-----END OPENSSH PRIVATE KEY-----`;
+    expect(inspectSshPrivateKeyDraft(oversized)).toEqual({ ok: false, reason: "oversized" });
+
+    const almostLimit = `-----BEGIN OPENSSH PRIVATE KEY-----\n${"b".repeat(SSH_PRIVATE_KEY_MAX_BYTES - 80)}\n-----END OPENSSH PRIVATE KEY-----`;
+    expect(inspectSshPrivateKeyDraft(almostLimit).ok).toBe(true);
+    expect(inspectSshPrivateKeyDraft(composeSshPrivateKeyValue(almostLimit, "x".repeat(80)))).toEqual({ ok: false, reason: "oversized" });
+  });
+
+  it("reads a PEM file as the same draft text as paste", async () => {
+    const file = new File([opensshPem], "id_ed25519", { type: "text/plain" });
+    await expect(inspectSshPrivateKeyFile(file)).resolves.toEqual({ ok: true, text: opensshPem });
+  });
+
+  it("rejects a PuTTY file without converting it", async () => {
+    const file = new File(["PuTTY-User-Key-File-2: ssh-rsa\nPrivate-Lines: 1\n"], "id_rsa.ppk", { type: "text/plain" });
+    await expect(inspectSshPrivateKeyFile(file)).resolves.toEqual({ ok: false, reason: "not_pem" });
+  });
+
+  it("rejects empty, oversized, and unreadable files without interpolating contents", async () => {
+    await expect(inspectSshPrivateKeyFile(new File([], "empty.pem", { type: "text/plain" }))).resolves.toEqual({ ok: false, reason: "empty" });
+    await expect(inspectSshPrivateKeyFile(new File(["x".repeat(SSH_PRIVATE_KEY_MAX_BYTES + 1)], "too-large.pem", { type: "text/plain" }))).resolves.toEqual({ ok: false, reason: "oversized" });
+
+    const unreadable = new File([opensshPem], "unreadable.pem", { type: "text/plain" });
+    Object.defineProperty(unreadable, "text", { value: () => Promise.reject(new Error("disk error")) });
+    await expect(inspectSshPrivateKeyFile(unreadable)).resolves.toEqual({ ok: false, reason: "unreadable" });
+    expect(sshPrivateKeyInspectionMessage("unreadable")).not.toMatch(/BEGIN|disk error|unreadable\.pem/);
+    expect(sshPrivateKeyInspectionMessage("oversized")).not.toMatch(/too-large|BEGIN/);
   });
 });

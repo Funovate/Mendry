@@ -414,3 +414,20 @@
   color: #4b6571;
   background: #f5f8f9;
 }
+
+.ssh-key-draft {
+  display: grid;
+  gap: 10px;
+}
+
+.ssh-key-file input[type="file"] {
+  height: auto;
+  min-height: 37px;
+  padding: 7px 10px;
+}
+
+.ssh-key-file-name {
+  margin: 0;
+  color: #4b6571;
+  font-size: 11px;
+}

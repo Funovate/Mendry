@@ -56,6 +56,14 @@ function configuration(overrides: { environmentName?: string } = {}) {
       enabled: true,
       version: 1,
     },
+    llm: {
+      id: "llm-id",
+      provider: "openai",
+      baseUrl: "https://api.openai.com",
+      credentialSecretId: "secret-source",
+      model: "gpt-5.6",
+      version: 1,
+    },
   };
 }
 
@@ -274,6 +282,14 @@ async function mockApi(page: Page, options: MockOptions = {}) {
         ],
       });
     }
+    if (path === "/api/v1/projects/real-estate/llm/models" && method === "POST") {
+      writes.push({ method, path, body });
+      return json({ models: ["gpt-4.1", "gpt-5.6"] });
+    }
+    if (path === "/api/v1/projects/real-estate/llm/chat" && method === "POST") {
+      writes.push({ method, path, body });
+      return json({ status: "ok" });
+    }
 
     return error(404, "not_found", `No mock for ${method} ${path}`);
   });
@@ -360,7 +376,7 @@ test("administrator persists credentials, configuration, members, and incident l
   await expect(page.getByLabel("Git credential reference")).toHaveValue("");
   await page.getByRole("button", { name: "New credential" }).click();
   await page.getByLabel("Git credential name").fill("git-ssh-ci");
-  await page.getByLabel("SSH private key").fill("-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----");
+  await page.getByLabel("SSH private key", { exact: true }).fill("-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----");
   await page.getByLabel("SSH passphrase").fill("key-passphrase");
   await page.getByRole("button", { name: "Store git credential" }).click();
   await expect(page.getByLabel("Git credential reference")).toHaveValue("secret-git-ssh-ci");
@@ -374,10 +390,25 @@ test("administrator persists credentials, configuration, members, and incident l
   await expect(page.getByLabel("Deployed commit")).toHaveValue("0123456789abcdef0123456789abcdef01234567");
   await page.getByLabel("Production branch").selectOption("production");
   await expect(page.getByLabel("Deployed commit")).toHaveValue("abcdef0123456789abcdef0123456789abcdef01");
+
+  await page.getByRole("tab", { name: "LLM provider" }).click();
+  await expect(page.getByLabel("LLM base URL")).toHaveValue("https://api.openai.com");
+  await page.getByRole("button", { name: "New credential" }).click();
+  await page.getByLabel("LLM credential name").fill("openai-prod");
+  await page.getByLabel("LLM credential value").fill("sk-e2e-openai-key");
+  await page.getByRole("button", { name: "Store llm credential" }).click();
+  await expect(page.getByLabel("API key credential")).toHaveValue("secret-openai-prod");
+  await expect(page.getByText("sk-e2e-openai-key", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load models" }).click();
+  await page.getByLabel("LLM model").selectOption("gpt-5.6");
+  await expect(page.getByLabel("LLM model")).toHaveValue("gpt-5.6");
+  await page.getByRole("button", { name: "Test with hi" }).click();
+  await expect(page.getByText("Chat probe succeeded.", { exact: true })).toBeVisible();
+
   await page.getByRole("button", { name: "Save configuration" }).click();
   await expect(page.getByText("Configuration saved.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save configuration" })).toBeVisible();
-  await expect(page.getByLabel("Git remote URL")).toBeVisible();
+  await expect(page.getByLabel("LLM model")).toHaveValue("gpt-5.6");
 
   await page.getByRole("link", { name: "Members" }).click();
   await page.getByLabel("Member username").fill("oncall");
@@ -392,11 +423,119 @@ test("administrator persists credentials, configuration, members, and incident l
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-ci", kind: "ssh_private_key", value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----\nkey-passphrase" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/members/oncall", body: { role: "operator" } },
     { method: "POST", path: "/api/v1/projects/real-estate/repository/refs", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", transport: "https", credentialSecretId: "secret-git" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "openai-prod", kind: "http_bearer", value: "sk-e2e-openai-key" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6" } },
   ]));
   expect(state.writes.some((write) => write.method === "PUT" && write.path.endsWith("/configuration"))).toBeTruthy();
   expect(state.getConfiguration()?.repository.productionBranch).toBe("production");
   expect(state.getConfiguration()?.repository.deployedCommit).toBe("abcdef0123456789abcdef0123456789abcdef01");
   expect(state.getConfiguration()?.source.config).toEqual({ schemaVersion: 1, endpoint: "https://mcp.internal/mcp", transport: "streamable_http", headers: {}, evidenceProfile: "errors-context", queryScope: "project" });
+});
+
+const gitImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nfile-imported-secret-key\n-----END OPENSSH PRIVATE KEY-----";
+const sourceImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nsource-imported-secret-key\n-----END OPENSSH PRIVATE KEY-----";
+
+test("imports an SSH PEM file on Git and source credentials and rejects non-key files", async ({ page }) => {
+  const state = await mockApi(page, { role: "admin" });
+  await page.goto("/projects/real-estate/configuration/edit");
+
+  await page.getByRole("button", { name: "New credential" }).click();
+  await expect(page.getByLabel("SSH private key file", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel new credential" }).click();
+
+  await page.getByLabel("Git transport").selectOption("ssh");
+  await page.getByRole("button", { name: "New credential" }).click();
+  await page.getByLabel("Git credential name").fill("git-ssh-pem");
+  await page.getByLabel("SSH private key file", { exact: true }).setInputFiles({
+    name: "deploy.pem",
+    mimeType: "text/plain",
+    buffer: Buffer.from(gitImportedPem),
+  });
+  await expect(page.getByLabel("SSH private key", { exact: true })).toHaveValue(gitImportedPem);
+  await expect(page.getByText("deploy.pem", { exact: true })).toBeVisible();
+  await page.getByLabel("SSH passphrase").fill("imported-passphrase");
+  await page.getByRole("button", { name: "Store git credential" }).click();
+  await expect(page.getByLabel("Git credential reference")).toHaveValue("secret-git-ssh-pem");
+  await expect(page.getByText("file-imported-secret-key", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("imported-passphrase", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("deploy.pem", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit credential" }).click();
+  await expect(page.getByLabel("Git credential type")).toHaveValue("ssh_private_key");
+  await expect(page.getByLabel("Replacement SSH private key", { exact: true })).toHaveValue("");
+  const gitReplacementPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nfile-replaced-secret-key\n-----END OPENSSH PRIVATE KEY-----";
+  await page.getByLabel("Replacement SSH private key file").setInputFiles({
+    name: "deploy-rotated.pem",
+    mimeType: "text/plain",
+    buffer: Buffer.from(gitReplacementPem),
+  });
+  await expect(page.getByLabel("Replacement SSH private key", { exact: true })).toHaveValue(gitReplacementPem);
+  await page.getByRole("button", { name: "Save git credential" }).click();
+  await expect(page.getByLabel("Git credential reference")).toHaveValue("secret-git-ssh-pem");
+  await expect(page.getByText("file-replaced-secret-key", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("deploy-rotated.pem", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit credential" }).click();
+  await page.getByLabel("Git credential name").fill("git-ssh-pem-renamed");
+  await expect(page.getByLabel("Replacement SSH private key", { exact: true })).toHaveValue("");
+  await page.getByRole("button", { name: "Save git credential" }).click();
+  await expect(page.getByLabel("Git credential reference")).toHaveValue("secret-git-ssh-pem");
+  await expect(page.getByRole("option", { name: "git-ssh-pem-renamed · ssh_private_key" })).toHaveCount(1);
+
+  await page.getByRole("button", { name: "New credential" }).click();
+  await page.getByLabel("Git credential name").fill("git-ssh-rejected");
+  await page.getByLabel("SSH private key file", { exact: true }).setInputFiles({
+    name: "id_rsa.ppk",
+    mimeType: "text/plain",
+    buffer: Buffer.from("PuTTY-User-Key-File-2: ssh-rsa\nPrivate-Lines: 1\n"),
+  });
+  await expect(page.getByText("The selected content is not a PEM or OpenSSH private key.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("SSH private key", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Store git credential" })).toBeDisabled();
+  await expect(page.getByText("PuTTY-User-Key-File-2", { exact: true })).toHaveCount(0);
+  await page.getByLabel("SSH private key", { exact: true }).fill("not-a-private-key");
+  await page.getByRole("button", { name: "Store git credential" }).click();
+  await expect(page.getByText("The selected content is not a PEM or OpenSSH private key.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel new credential" }).click();
+
+  await page.getByRole("tab", { name: "Collection source" }).click();
+  await page.getByLabel("Source type").selectOption("ssh");
+  await page.getByRole("button", { name: "New credential" }).click();
+  await expect(page.getByLabel("Source credential type")).toHaveValue("ssh_private_key");
+  await expect(page.getByLabel("Source SSH private key file")).toBeVisible();
+  await page.getByLabel("Source credential type").selectOption("ssh_password");
+  await expect(page.getByLabel("Source SSH private key file")).toHaveCount(0);
+  await expect(page.getByLabel("Source credential value")).toHaveAttribute("type", "password");
+  await page.getByLabel("Source credential type").selectOption("ssh_private_key");
+  await page.getByLabel("Source credential name").fill("source-ssh-pem");
+  await page.getByLabel("Source SSH private key file").setInputFiles({
+    name: "collector.pem",
+    mimeType: "text/plain",
+    buffer: Buffer.from(sourceImportedPem),
+  });
+  await expect(page.getByLabel("Source credential value")).toHaveValue(sourceImportedPem);
+  await page.getByRole("button", { name: "Store source credential" }).click();
+  await expect(page.getByLabel("Source credential reference")).toHaveValue("secret-source-ssh-pem");
+  await expect(page.getByText("source-imported-secret-key", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("collector.pem", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Trigger" }).click();
+  await page.getByLabel("Trigger type").selectOption("signed_webhook");
+  await page.getByRole("button", { name: "New credential" }).click();
+  await expect(page.getByLabel("Webhook credential value")).toBeVisible();
+  await expect(page.getByLabel("Webhook SSH private key file")).toHaveCount(0);
+  await expect(page.getByLabel("SSH private key file", { exact: true })).toHaveCount(0);
+
+  expect(state.writes).toEqual(expect.arrayContaining([
+    { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-pem", kind: "ssh_private_key", value: `${gitImportedPem}\nimported-passphrase` } },
+    { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git-ssh-pem", body: { name: "git-ssh-pem", value: gitReplacementPem } },
+    { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git-ssh-pem", body: { name: "git-ssh-pem-renamed" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "source-ssh-pem", kind: "ssh_private_key", value: sourceImportedPem } },
+  ]));
+  expect(state.writes.some((write) => write.method === "POST" && write.path.endsWith("/secrets") && JSON.stringify(write.body).includes("git-ssh-rejected"))).toBeFalsy();
+  expect(state.writes.some((write) => write.method === "POST" && write.path.endsWith("/secrets") && JSON.stringify(write.body).includes("not-a-private-key"))).toBeFalsy();
+  expect(state.writes.some((write) => JSON.stringify(write.body).includes("PuTTY-User-Key-File"))).toBeFalsy();
 });
 
 test("administrator renames a project and refreshes a derived environment name", async ({ page }) => {

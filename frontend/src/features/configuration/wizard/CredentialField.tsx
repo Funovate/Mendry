@@ -1,6 +1,8 @@
 import { LoaderCircle, LockKeyhole, Pencil, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { messageFromError, type ProjectSecret } from "../../../api";
+import { inspectSshPrivateKeyDraft, sshPrivateKeyInspectionMessage } from "../configuration";
+import { SshPrivateKeyDraftField } from "./SshPrivateKeyDraftField";
 
 export function CredentialField({
   label, value, onChange, secrets, required = false,
@@ -27,21 +29,43 @@ export function CredentialField({
   const [draftValue, setDraftValue] = useState("");
   const [editName, setEditName] = useState("");
   const [editValue, setEditValue] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const selected = secrets.find((secret) => secret.id === value);
+  const allowedKindValues = allowedCreateKinds.map((option) => option.value);
+  const allowedKindsKey = allowedKindValues.join(",");
+  const createKind = allowedKindValues.includes(kind) ? kind : (allowedCreateKinds[0]?.value ?? "git_credential");
+  const createDraft = createKind === kind ? draftValue : "";
+  const createUsesSshKey = createKind === "ssh_private_key";
+  const editUsesSshKey = selected?.kind === "ssh_private_key";
+
+  useEffect(() => {
+    const allowed = allowedKindsKey.split(",").filter(Boolean) as ProjectSecret["kind"][];
+    if (allowed.includes(kind)) return;
+    setKind(allowed[0] ?? "git_credential");
+    setDraftValue("");
+    setKeyError(null);
+  }, [allowedKindsKey, kind]);
 
   const resetCreate = () => {
     setName("");
     setDraftValue("");
     setKind(allowedCreateKinds[0]?.value ?? "git_credential");
+    setKeyError(null);
   };
   const resetEdit = () => {
     setEditName("");
     setEditValue("");
+    setKeyError(null);
   };
   const closeForms = () => {
     resetCreate();
     resetEdit();
     setMode("idle");
+  };
+  const changeKind = (next: ProjectSecret["kind"]) => {
+    setKind(next);
+    setDraftValue("");
+    setKeyError(null);
   };
   const changeSelection = (next: string) => {
     closeForms();
@@ -67,13 +91,32 @@ export function CredentialField({
     setMode("edit");
   };
   const submitCreate = async () => {
-    const created = await onCreate({ name: name.trim(), kind, value: draftValue });
+    let valueToStore = createDraft;
+    if (createUsesSshKey) {
+      const inspection = inspectSshPrivateKeyDraft(createDraft);
+      if (!inspection.ok) {
+        setKeyError(sshPrivateKeyInspectionMessage(inspection.reason));
+        return;
+      }
+      valueToStore = inspection.text;
+    }
+    const created = await onCreate({ name: name.trim(), kind: createKind, value: valueToStore });
     onChange(created.id);
     closeForms();
   };
   const submitEdit = async () => {
     if (!selected) return;
     const replacement = editValue.trim();
+    if (editUsesSshKey && replacement) {
+      const inspection = inspectSshPrivateKeyDraft(editValue);
+      if (!inspection.ok) {
+        setKeyError(sshPrivateKeyInspectionMessage(inspection.reason));
+        return;
+      }
+      await onUpdate({ secretId: selected.id, name: editName.trim(), value: inspection.text });
+      closeForms();
+      return;
+    }
     await onUpdate({
       secretId: selected.id,
       name: editName.trim(),
@@ -98,14 +141,22 @@ export function CredentialField({
     {mode === "create" && <div className="credential-inline-form">
       <div className="source-form">
         <label>{createLabelPrefix} credential name<input aria-label={`${createLabelPrefix} credential name`} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>{createLabelPrefix} credential type<select aria-label={`${createLabelPrefix} credential type`} value={kind} onChange={(event) => setKind(event.target.value as ProjectSecret["kind"])}>
+        <label>{createLabelPrefix} credential type<select aria-label={`${createLabelPrefix} credential type`} value={createKind} onChange={(event) => changeKind(event.target.value as ProjectSecret["kind"])}>
           {allowedCreateKinds.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
         </select></label>
       </div>
-      <label>{createLabelPrefix} credential value<input aria-label={`${createLabelPrefix} credential value`} type="password" autoComplete="off" value={draftValue} onChange={(event) => setDraftValue(event.target.value)} /></label>
-      <button className="secondary-button" type="button" disabled={creating || !name.trim() || !draftValue} onClick={() => void submitCreate()}>
+      {createUsesSshKey
+        ? <SshPrivateKeyDraftField
+            value={createDraft}
+            onChange={(next) => { setKeyError(null); setDraftValue(next); }}
+            textareaLabel={`${createLabelPrefix} credential value`}
+            fileLabel={`${createLabelPrefix} SSH private key file`}
+          />
+        : <label>{createLabelPrefix} credential value<input aria-label={`${createLabelPrefix} credential value`} type="password" autoComplete="off" value={createDraft} onChange={(event) => setDraftValue(event.target.value)} /></label>}
+      <button className="secondary-button" type="button" disabled={creating || !name.trim() || !createDraft} onClick={() => void submitCreate()}>
         {creating ? <LoaderCircle className="spin" size={16} /> : <LockKeyhole size={16} />}Store {createLabelPrefix.toLowerCase()} credential
       </button>
+      {keyError !== null && <p className="credential-field-error">{keyError}</p>}
       {createError !== undefined && createError !== null && <p className="credential-field-error">{messageFromError(createError)}</p>}
     </div>}
     {mode === "edit" && selected && <div className="credential-inline-form">
@@ -113,10 +164,19 @@ export function CredentialField({
         <label>{createLabelPrefix} credential name<input aria-label={`${createLabelPrefix} credential name`} value={editName} onChange={(event) => setEditName(event.target.value)} /></label>
         <label>{createLabelPrefix} credential type<input aria-label={`${createLabelPrefix} credential type`} value={selected.kind} readOnly /></label>
       </div>
-      <label>{createLabelPrefix} replacement value<input aria-label={`${createLabelPrefix} replacement value`} type="password" autoComplete="off" value={editValue} onChange={(event) => setEditValue(event.target.value)} placeholder="Leave empty to keep the current secret" /></label>
+      {editUsesSshKey
+        ? <SshPrivateKeyDraftField
+            value={editValue}
+            onChange={(next) => { setKeyError(null); setEditValue(next); }}
+            textareaLabel={`${createLabelPrefix} replacement value`}
+            fileLabel={`${createLabelPrefix} replacement SSH private key file`}
+            placeholder="Leave empty to keep the current secret"
+          />
+        : <label>{createLabelPrefix} replacement value<input aria-label={`${createLabelPrefix} replacement value`} type="password" autoComplete="off" value={editValue} onChange={(event) => setEditValue(event.target.value)} placeholder="Leave empty to keep the current secret" /></label>}
       <button className="secondary-button" type="button" disabled={updating || !editName.trim()} onClick={() => void submitEdit()}>
         {updating ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}Save {createLabelPrefix.toLowerCase()} credential
       </button>
+      {keyError !== null && <p className="credential-field-error">{keyError}</p>}
       {updateError !== undefined && updateError !== null && <p className="credential-field-error">{messageFromError(updateError)}</p>}
     </div>}
   </div>;

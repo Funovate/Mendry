@@ -120,6 +120,58 @@ export function composeSshPrivateKeyValue(privateKey: string, passphrase: string
   return trimmedPassphrase ? `${key}\n${trimmedPassphrase}` : key;
 }
 
+export const SSH_PRIVATE_KEY_MAX_BYTES = 65519;
+
+export type SshPrivateKeyInspectionReason = "empty" | "unreadable" | "oversized" | "not_pem";
+
+export type SshPrivateKeyInspection =
+  | { ok: true; text: string }
+  | { ok: false; reason: SshPrivateKeyInspectionReason };
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function looksLikePemPrivateKey(text: string): boolean {
+  const begin = /-----BEGIN [^\n]*PRIVATE KEY-----/.exec(text);
+  if (!begin || begin.index === undefined) return false;
+  return /-----END [^\n]*PRIVATE KEY-----/.test(text.slice(begin.index + begin[0].length));
+}
+
+export function inspectSshPrivateKeyDraft(raw: string): SshPrivateKeyInspection {
+  if (raw.trim() === "") return { ok: false, reason: "empty" };
+  if (!looksLikePemPrivateKey(raw)) return { ok: false, reason: "not_pem" };
+  if (utf8ByteLength(raw) > SSH_PRIVATE_KEY_MAX_BYTES) return { ok: false, reason: "oversized" };
+  return { ok: true, text: raw };
+}
+
+export function sshPrivateKeyInspectionMessage(reason: SshPrivateKeyInspectionReason): string {
+  if (reason === "empty") return "The SSH private key is empty.";
+  if (reason === "unreadable") return "The SSH private key file could not be read.";
+  if (reason === "oversized") return "The SSH private key exceeds the 65519-byte limit.";
+  return "The selected content is not a PEM or OpenSSH private key.";
+}
+
+function readFileText(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("unreadable"));
+    reader.readAsText(file);
+  });
+}
+
+export async function inspectSshPrivateKeyFile(file: File): Promise<SshPrivateKeyInspection> {
+  if (file.size === 0) return { ok: false, reason: "empty" };
+  if (file.size > SSH_PRIVATE_KEY_MAX_BYTES) return { ok: false, reason: "oversized" };
+  try {
+    return inspectSshPrivateKeyDraft(await readFileText(file));
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+}
+
 export type GitSecretReplacement = {
   complete: boolean;
   value?: string;

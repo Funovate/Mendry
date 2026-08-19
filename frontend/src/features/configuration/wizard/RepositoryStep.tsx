@@ -1,5 +1,5 @@
 import { GitBranch, LoaderCircle, LockKeyhole, Pencil, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { messageFromError, type ProjectConfiguration, type ProjectSecret } from "../../../api";
 import {
   compatibleGitSecretId,
@@ -7,7 +7,10 @@ import {
   composeHttpsGitCredentialValue,
   composeSshPrivateKeyValue,
   filterGitSecrets,
+  inspectSshPrivateKeyDraft,
+  sshPrivateKeyInspectionMessage,
 } from "../configuration";
+import { SshPrivateKeyDraftField } from "./SshPrivateKeyDraftField";
 
 export function RepositoryStep({
   remoteUrl, setRemoteUrl, scmProvider, setScmProvider, transport, setTransport,
@@ -107,6 +110,7 @@ function GitCredentialField({
   const [passphrase, setPassphrase] = useState("");
   const [sshPassword, setSshPassword] = useState("");
   const [editName, setEditName] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const selected = secrets.find((item) => item.id === value);
 
   const resetDraft = () => {
@@ -117,11 +121,23 @@ function GitCredentialField({
     setPassphrase("");
     setSshPassword("");
     setEditName("");
+    setKeyError(null);
   };
   const closeForms = () => {
     resetDraft();
     setMode("idle");
   };
+  useEffect(() => {
+    setMode("idle");
+    setName("");
+    setUsername("");
+    setSecret("");
+    setPrivateKey("");
+    setPassphrase("");
+    setSshPassword("");
+    setEditName("");
+    setKeyError(null);
+  }, [transport]);
   const changeSelection = (next: string) => {
     closeForms();
     onChange(next);
@@ -154,6 +170,13 @@ function GitCredentialField({
   const canSaveEdit = editName.trim().length > 0 && replacement.complete;
 
   const submitCreate = async () => {
+    if (createKind === "ssh_private_key") {
+      const inspection = inspectSshPrivateKeyDraft(composedCreateValue);
+      if (!inspection.ok) {
+        setKeyError(sshPrivateKeyInspectionMessage(inspection.reason));
+        return;
+      }
+    }
     const created = await onCreate({
       name: name.trim(),
       kind: createKind,
@@ -164,6 +187,13 @@ function GitCredentialField({
   };
   const submitEdit = async () => {
     if (!selected) return;
+    if (selected.kind === "ssh_private_key" && replacement.value !== undefined) {
+      const inspection = inspectSshPrivateKeyDraft(replacement.value);
+      if (!inspection.ok) {
+        setKeyError(sshPrivateKeyInspectionMessage(inspection.reason));
+        return;
+      }
+    }
     await onUpdate({
       secretId: selected.id,
       name: editName.trim(),
@@ -187,10 +217,11 @@ function GitCredentialField({
     </div>
     {mode === "create" && <div className="credential-inline-form">
       <label>Git credential name<input aria-label="Git credential name" value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <GitSecretInputs kind={createKind} username={username} setUsername={setUsername} secret={secret} setSecret={setSecret} privateKey={privateKey} setPrivateKey={setPrivateKey} passphrase={passphrase} setPassphrase={setPassphrase} sshPassword={sshPassword} setSshPassword={setSshPassword} />
+      <GitSecretInputs kind={createKind} username={username} setUsername={setUsername} secret={secret} setSecret={setSecret} privateKey={privateKey} setPrivateKey={(next) => { setKeyError(null); setPrivateKey(next); }} passphrase={passphrase} setPassphrase={setPassphrase} sshPassword={sshPassword} setSshPassword={setSshPassword} />
       <button className="secondary-button" type="button" disabled={creating || !canStore} onClick={() => void submitCreate()}>
         {creating ? <LoaderCircle className="spin" size={16} /> : <LockKeyhole size={16} />}Store git credential
       </button>
+      {keyError !== null && <p className="credential-field-error">{keyError}</p>}
       {createError !== undefined && createError !== null && <p className="credential-field-error">{messageFromError(createError)}</p>}
     </div>}
     {mode === "edit" && selected && <div className="credential-inline-form">
@@ -198,10 +229,11 @@ function GitCredentialField({
         <label>Git credential name<input aria-label="Git credential name" value={editName} onChange={(event) => setEditName(event.target.value)} /></label>
         <label>Git credential type<input aria-label="Git credential type" value={selected.kind} readOnly /></label>
       </div>
-      <GitSecretInputs kind={selected.kind} username={username} setUsername={setUsername} secret={secret} setSecret={setSecret} privateKey={privateKey} setPrivateKey={setPrivateKey} passphrase={passphrase} setPassphrase={setPassphrase} sshPassword={sshPassword} setSshPassword={setSshPassword} replacement />
+      <GitSecretInputs kind={selected.kind} username={username} setUsername={setUsername} secret={secret} setSecret={setSecret} privateKey={privateKey} setPrivateKey={(next) => { setKeyError(null); setPrivateKey(next); }} passphrase={passphrase} setPassphrase={setPassphrase} sshPassword={sshPassword} setSshPassword={setSshPassword} replacement />
       <button className="secondary-button" type="button" disabled={updating || !canSaveEdit} onClick={() => void submitEdit()}>
         {updating ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}Save git credential
       </button>
+      {keyError !== null && <p className="credential-field-error">{keyError}</p>}
       {updateError !== undefined && updateError !== null && <p className="credential-field-error">{messageFromError(updateError)}</p>}
     </div>}
   </div>;
@@ -240,9 +272,15 @@ function GitSecretInputs({
     </>;
   }
   return <>
-    <label className="secret-input"><span>{replacement ? "Replacement SSH private key" : "SSH private key"}</span>
-      <textarea aria-label={replacement ? "Replacement SSH private key" : "SSH private key"} value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} placeholder={replacement ? "Leave empty to keep the current secret" : "Paste private key; stored encrypted and never displayed again"} />
-    </label>
+    <SshPrivateKeyDraftField
+      value={privateKey}
+      onChange={setPrivateKey}
+      textareaLabel={replacement ? "Replacement SSH private key" : "SSH private key"}
+      fileLabel={replacement ? "Replacement SSH private key file" : "SSH private key file"}
+      placeholder={replacement ? "Leave empty to keep the current secret" : "Paste private key; stored encrypted and never displayed again"}
+      passphrase={passphrase}
+      includePassphraseInSize
+    />
     <label className="secret-input"><span>SSH passphrase (optional)</span>
       <input aria-label="SSH passphrase" type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
     </label>
