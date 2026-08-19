@@ -173,3 +173,38 @@ Added client-side PEM/OpenSSH file import and paste inspection on Git SSH and SS
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Signed inbound webhook URL and ingress
+
+**Date**: 2026-08-19
+**Task**: Signed inbound webhook URL and ingress
+**Branch**: `main`
+
+### Summary
+
+Added a server-generated path token and public POST /hooks/{token} so alert systems can open or bump a P2 incident from opaque notification text. Configuration shows an admin-only copyable URL; HMAC is no longer required. Log search stays in the existing remediation harness.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2142337` | (see git log) |
+| `4de0001` | (see git log) |
+| `537ee64` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
