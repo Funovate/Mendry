@@ -22,6 +22,8 @@ type fakeRepository struct {
 	secret        domain.EncryptedSecret
 	rotated       bool
 	configuration domain.Configuration
+	ingress       WebhookIngress
+	lookupHash    []byte
 	userID        string
 	systemAdmin   bool
 	projectKey    string
@@ -77,12 +79,29 @@ func (f *fakeRepository) GetEncryptedSecret(context.Context, string, string) (do
 	}
 	return f.secret, f.error
 }
-func (*fakeRepository) GetConfiguration(context.Context, string) (domain.Configuration, error) {
-	return domain.Configuration{}, nil
+func (f *fakeRepository) GetConfiguration(context.Context, string) (domain.Configuration, error) {
+	if f.configuration.Trigger.ID == "" && f.configuration.Environment.ID == "" {
+		return domain.Configuration{}, ErrConfigurationNotFound
+	}
+	return f.configuration, f.error
 }
 func (f *fakeRepository) UpsertConfiguration(_ context.Context, projectID string, configuration domain.Configuration, _, _ string) (domain.Configuration, error) {
 	f.projectID, f.configuration = projectID, configuration
 	return configuration, f.error
+}
+func (f *fakeRepository) LookupWebhookToken(_ context.Context, hash []byte) (WebhookIngress, error) {
+	f.lookupHash = append([]byte(nil), hash...)
+	if f.ingress.ProjectID == "" {
+		return WebhookIngress{}, ErrNotFound
+	}
+	return f.ingress, f.error
+}
+func (f *fakeRepository) UpdateWebhookToken(_ context.Context, projectID string, hash, ciphertext, nonce []byte, _, _ string, rotated bool) error {
+	f.projectID, f.rotated = projectID, rotated
+	f.configuration.Trigger.IngressTokenHash = append([]byte(nil), hash...)
+	f.configuration.Trigger.IngressTokenCiphertext = append([]byte(nil), ciphertext...)
+	f.configuration.Trigger.IngressTokenNonce = append([]byte(nil), nonce...)
+	return f.error
 }
 func (*fakeRepository) ListAuditEvents(context.Context, string, int32) (ListResult[domain.AuditEvent], error) {
 	return ListResult[domain.AuditEvent]{Items: []domain.AuditEvent{}}, nil
@@ -92,6 +111,8 @@ type fakeCipher struct {
 	plaintext           []byte
 	projectID, secretID string
 	kind                domain.SecretKind
+	token               []byte
+	triggerID           string
 }
 
 func (f *fakeCipher) Encrypt(projectID, secretID string, kind domain.SecretKind, plaintext []byte) ([]byte, []byte, int32, error) {
@@ -102,6 +123,15 @@ func (f *fakeCipher) Encrypt(projectID, secretID string, kind domain.SecretKind,
 func (f *fakeCipher) Decrypt(projectID, secretID string, kind domain.SecretKind, _, _ []byte) ([]byte, error) {
 	f.projectID, f.secretID, f.kind = projectID, secretID, kind
 	return append([]byte(nil), f.plaintext...), nil
+}
+func (f *fakeCipher) EncryptWebhookToken(projectID, triggerID string, plaintext []byte) ([]byte, []byte, error) {
+	f.projectID, f.triggerID = projectID, triggerID
+	f.token = append([]byte(nil), plaintext...)
+	return []byte("encrypted-webhook-token"), []byte("webhooknonce"), nil
+}
+func (f *fakeCipher) DecryptWebhookToken(projectID, triggerID string, _, _ []byte) ([]byte, error) {
+	f.projectID, f.triggerID = projectID, triggerID
+	return append([]byte(nil), f.token...), nil
 }
 
 func TestOnlySystemAdminCreatesProjectAndListsAllProjects(t *testing.T) {
@@ -237,7 +267,7 @@ func TestConfigurationWriteRequiresProjectAdminAndAssignsOwnedIDs(t *testing.T) 
 	if err != nil {
 		t.Fatalf("PutConfiguration() error = %v", err)
 	}
-	if repository.projectID != projectID || result.Environment.ID == "" || result.Repository.ID == "" || result.Source.ID == "" || result.Trigger.ID == "" {
+	if repository.projectID != projectID || result.Environment.ID == "" || result.Repository.ID == "" || result.Source.ID == "" || result.Trigger.ID == "" || result.LLM == nil || result.LLM.ID == "" {
 		t.Fatalf("configuration = %#v", result)
 	}
 	repository.project.Role = domain.RoleOperator
@@ -248,9 +278,12 @@ func TestConfigurationWriteRequiresProjectAdminAndAssignsOwnedIDs(t *testing.T) 
 
 func newService(t *testing.T, repository Repository, cipher Cipher) *Service {
 	t.Helper()
-	ids := []string{"019ff544-405c-7d31-9f10-cb3fc579605c", "019ff544-405c-7d32-9f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c", "019ff544-405c-7d35-9f10-cb3fc579605c"}
+	ids := []string{"019ff544-405c-7d31-9f10-cb3fc579605c", "019ff544-405c-7d32-9f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c", "019ff544-405c-7d35-9f10-cb3fc579605c", "019ff544-405c-7d36-9f10-cb3fc579605c"}
 	index := 0
-	service, err := NewService(Options{Repository: repository, Cipher: cipher, NewID: func() (string, error) { id := ids[index%len(ids)]; index++; return id, nil }})
+	service, err := NewService(Options{
+		Repository: repository, Cipher: cipher, PublicURL: "http://127.0.0.1:8080",
+		NewID: func() (string, error) { id := ids[index%len(ids)]; index++; return id, nil },
+	})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -267,6 +300,7 @@ func validConfiguration() domain.Configuration {
 			Capabilities: []string{"pull_collection"}, Enabled: true},
 		Trigger: domain.Trigger{Name: "error-events", Kind: "signed_webhook", SigningSecretID: &secretID,
 			Config: json.RawMessage(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true},
+		LLM: &domain.LLMProvider{Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretID, Model: "gpt-5.6"},
 	}
 }
 
@@ -292,7 +326,7 @@ func TestProbeRepositoryRefsDecryptsOwnedSecret(t *testing.T) {
 	}
 	cipher := &fakeCipher{plaintext: []byte("deploy:token")}
 	git := &fakeGit{output: "ref: refs/heads/main\tHEAD\n0123456789abcdef0123456789abcdef01234567\trefs/heads/main\n"}
-	service, err := NewService(Options{Repository: repository, Cipher: cipher, Git: git, NewID: func() (string, error) { return secretID, nil }})
+	service, err := NewService(Options{Repository: repository, Cipher: cipher, Git: git, PublicURL: "http://127.0.0.1:8080", NewID: func() (string, error) { return secretID, nil }})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -314,5 +348,124 @@ func TestProbeRepositoryRefsRejectsInvalidRemoteWithoutCallingGit(t *testing.T) 
 	}
 	if git.remoteURL != "" {
 		t.Fatal("git lister was called")
+	}
+}
+
+func TestPutConfigurationGeneratesWebhookTokenOnFirstSave(t *testing.T) {
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin}}
+	cipher := &fakeCipher{}
+	service := newService(t, repository, cipher)
+	service.newWebhookToken = func() (string, error) { return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", nil }
+	result, err := service.PutConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", validConfiguration())
+	if err != nil {
+		t.Fatalf("PutConfiguration() error = %v", err)
+	}
+	if len(repository.configuration.Trigger.IngressTokenHash) != 32 || string(cipher.token) != "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" {
+		t.Fatalf("token material = %#v cipher=%#v", repository.configuration.Trigger, cipher)
+	}
+	if result.Trigger.InboundURL != "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" {
+		t.Fatalf("inbound URL = %q", result.Trigger.InboundURL)
+	}
+}
+
+func TestPutConfigurationKeepsExistingWebhookToken(t *testing.T) {
+	existing := validConfiguration()
+	existing.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
+	existing.Trigger.IngressTokenHash = []byte("existing-hash-32-bytes-aaaaaaaa")
+	existing.Trigger.IngressTokenCiphertext = []byte("existing-cipher")
+	existing.Trigger.IngressTokenNonce = []byte("existingnonce")
+	repository := &fakeRepository{
+		project:       domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin},
+		configuration: existing,
+	}
+	cipher := &fakeCipher{token: []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")}
+	service := newService(t, repository, cipher)
+	service.newWebhookToken = func() (string, error) { return "SHOULD-NOT-GENERATE-TOKEN-VALUE-AAAAAAAAAAA", nil }
+	result, err := service.PutConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", validConfiguration())
+	if err != nil {
+		t.Fatalf("PutConfiguration() error = %v", err)
+	}
+	if string(repository.configuration.Trigger.IngressTokenHash) != "existing-hash-32-bytes-aaaaaaaa" || result.Trigger.ID != existing.Trigger.ID {
+		t.Fatalf("token rotated on save: %#v", repository.configuration.Trigger)
+	}
+}
+
+func TestGetConfigurationRevealsInboundURLOnlyForAdmin(t *testing.T) {
+	configuration := validConfiguration()
+	configuration.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
+	configuration.Trigger.IngressTokenHash = []byte("existing-hash-32-bytes-aaaaaaaa")
+	configuration.Trigger.IngressTokenCiphertext = []byte("existing-cipher")
+	configuration.Trigger.IngressTokenNonce = []byte("existingnonce")
+	repository := &fakeRepository{
+		project:       domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin},
+		configuration: configuration,
+	}
+	cipher := &fakeCipher{token: []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")}
+	service := newService(t, repository, cipher)
+	admin, err := service.GetConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments")
+	if err != nil || admin.Trigger.InboundURL != "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" {
+		t.Fatalf("admin GetConfiguration() = %#v, %v", admin.Trigger, err)
+	}
+	repository.project.Role = domain.RoleOperator
+	operator, err := service.GetConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments")
+	if err != nil || operator.Trigger.InboundURL != "" {
+		t.Fatalf("operator GetConfiguration() = %#v, %v", operator.Trigger, err)
+	}
+}
+
+func TestRotateWebhookTokenReplacesHash(t *testing.T) {
+	configuration := validConfiguration()
+	configuration.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
+	configuration.Trigger.IngressTokenHash = []byte("existing-hash-32-bytes-aaaaaaaa")
+	configuration.Trigger.IngressTokenCiphertext = []byte("old-cipher")
+	configuration.Trigger.IngressTokenNonce = []byte("old-nonce-12")
+	repository := &fakeRepository{
+		project:       domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin},
+		configuration: configuration,
+	}
+	cipher := &fakeCipher{}
+	service := newService(t, repository, cipher)
+	service.newWebhookToken = func() (string, error) { return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", nil }
+	url, err := service.RotateWebhookToken(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments")
+	if err != nil || url != "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" || !repository.rotated {
+		t.Fatalf("RotateWebhookToken() = %q rotated=%t err=%v", url, repository.rotated, err)
+	}
+	if len(repository.configuration.Trigger.IngressTokenHash) != 32 || string(repository.configuration.Trigger.IngressTokenCiphertext) == "old-cipher" {
+		t.Fatalf("token columns = %#v", repository.configuration.Trigger)
+	}
+}
+
+func TestPutConfigurationClearsWebhookTokenWhenKindChanges(t *testing.T) {
+	existing := validConfiguration()
+	existing.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
+	existing.Trigger.IngressTokenHash = []byte("existing-hash-32-bytes-aaaaaaaa")
+	existing.Trigger.IngressTokenCiphertext = []byte("existing-cipher")
+	existing.Trigger.IngressTokenNonce = []byte("existingnonce")
+	repository := &fakeRepository{
+		project:       domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin},
+		configuration: existing,
+	}
+	service := newService(t, repository, &fakeCipher{})
+	next := validConfiguration()
+	next.Trigger.Kind = "custom_rule"
+	next.Trigger.Config = json.RawMessage(`{"schemaVersion":1,"groupingWindowSeconds":60,"matchExpression":"level=ERROR"}`)
+	result, err := service.PutConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", next)
+	if err != nil {
+		t.Fatalf("PutConfiguration() error = %v", err)
+	}
+	if len(repository.configuration.Trigger.IngressTokenHash) != 0 || result.Trigger.InboundURL != "" {
+		t.Fatalf("token columns survived kind change: %#v", repository.configuration.Trigger)
+	}
+}
+
+func TestLookupWebhookTokenHashesBeforeRepository(t *testing.T) {
+	repository := &fakeRepository{ingress: WebhookIngress{ProjectID: projectID, SourceID: "019ff544-405c-7d23-9f10-cb3fc579605c"}}
+	service := newService(t, repository, &fakeCipher{})
+	ingress, err := service.LookupWebhookToken(context.Background(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")
+	if err != nil || ingress.ProjectID != projectID || len(repository.lookupHash) != 32 {
+		t.Fatalf("LookupWebhookToken() = %#v hash=%x err=%v", ingress, repository.lookupHash, err)
+	}
+	if _, err := service.LookupWebhookToken(context.Background(), "short"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("malformed token error = %v", err)
 	}
 }

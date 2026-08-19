@@ -48,6 +48,7 @@ func validConfiguration() Configuration {
 		Source:      Source{Name: "production-mcp", Kind: "mcp", Config: json.RawMessage(`{"schemaVersion":1,"endpoint":"https://mcp.example.com","transport":"http","headers":{"X-Tenant":"payments"},"evidenceProfile":"default","queryScope":"logs"}`), Capabilities: []string{"pull_collection", "context_collection"}, Enabled: true},
 		Trigger: Trigger{Name: "error-events", Kind: "signed_webhook", Config: json.RawMessage(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true,
 			SigningSecretID: stringPointer("019ff544-405c-7d24-9f10-cb3fc579605c")},
+		LLM: &LLMProvider{Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: "019ff544-405c-7d24-9f10-cb3fc579605c", Model: "gpt-5.6"},
 	}
 }
 
@@ -72,5 +73,38 @@ func TestValidateSecretRejectsMissingPlaintextAndInvalidMetadata(t *testing.T) {
 	}
 	if err := ValidateSecretMetadata(Secret{Name: "git-token", Kind: "not-a-kind"}); err == nil {
 		t.Fatal("ValidateSecretMetadata() accepted an unknown kind")
+	}
+}
+
+func TestValidateConfigurationAcceptsWebhookWithoutSigningSecret(t *testing.T) {
+	configuration := validConfiguration()
+	configuration.Trigger.SigningSecretID = nil
+	if err := ValidateConfiguration(configuration); err != nil {
+		t.Fatalf("ValidateConfiguration() error = %v", err)
+	}
+}
+
+func TestValidateWebhookTokenColumns(t *testing.T) {
+	if err := ValidateWebhookTokenColumns(nil, nil, nil); err != nil {
+		t.Fatalf("empty columns error = %v", err)
+	}
+	hash := make([]byte, 32)
+	nonce := make([]byte, 12)
+	if err := ValidateWebhookTokenColumns(hash, []byte("cipher"), nonce); err != nil {
+		t.Fatalf("complete columns error = %v", err)
+	}
+	if err := ValidateWebhookTokenColumns(hash, nil, nonce); err == nil {
+		t.Fatal("partial columns accepted")
+	}
+	if _, err := ParseWebhookToken("short"); err == nil {
+		t.Fatal("short token accepted")
+	}
+	token := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+	if _, err := ParseWebhookToken(token); err != nil {
+		t.Fatalf("ParseWebhookToken() error = %v", err)
+	}
+	url, err := InboundWebhookURL("http://127.0.0.1:8080", token)
+	if err != nil || url != "http://127.0.0.1:8080/hooks/"+token {
+		t.Fatalf("InboundWebhookURL() = %q, %v", url, err)
 	}
 }

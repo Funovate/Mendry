@@ -31,7 +31,10 @@ type service interface {
 	ListSecrets(context.Context, authdomain.User, string) (application.ListResult[domain.Secret], error)
 	GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error)
 	PutConfiguration(context.Context, authdomain.User, string, domain.Configuration) (domain.Configuration, error)
+	RotateWebhookToken(context.Context, authdomain.User, string) (string, error)
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
+	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
+	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
 	ListAuditEvents(context.Context, authdomain.User, string, int32) (application.ListResult[domain.AuditEvent], error)
 }
 
@@ -65,7 +68,10 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("PATCH /api/v1/projects/{projectKey}/secrets/{secretId}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.updateSecret)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getConfiguration)))
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfiguration)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/webhook-token", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.rotateWebhookToken)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/repository/refs", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeRepositoryRefs)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/llm/models", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMModels)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/llm/chat", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMChat)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/audit-events", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.listAuditEvents)))
 }
 
@@ -105,6 +111,25 @@ type configurationRequest struct {
 	Repository  repositoryRequest  `json:"repository"`
 	Source      sourceRequest      `json:"source"`
 	Trigger     triggerRequest     `json:"trigger"`
+	LLM         *llmRequest        `json:"llm"`
+}
+
+type llmRequest struct {
+	Provider           string `json:"provider"`
+	BaseURL            string `json:"baseUrl"`
+	CredentialSecretID string `json:"credentialSecretId"`
+	Model              string `json:"model"`
+}
+
+type llmModelsRequest struct {
+	BaseURL            string `json:"baseUrl"`
+	CredentialSecretID string `json:"credentialSecretId"`
+}
+
+type llmChatRequest struct {
+	BaseURL            string `json:"baseUrl"`
+	CredentialSecretID string `json:"credentialSecretId"`
+	Model              string `json:"model"`
 }
 
 type environmentRequest struct {
@@ -193,6 +218,20 @@ type configurationResponse struct {
 	Repository  repositoryResponse  `json:"repository"`
 	Source      sourceResponse      `json:"source"`
 	Trigger     triggerResponse     `json:"trigger"`
+	LLM         *llmResponse        `json:"llm"`
+}
+
+type llmResponse struct {
+	ID                 string `json:"id"`
+	Provider           string `json:"provider"`
+	BaseURL            string `json:"baseUrl"`
+	CredentialSecretID string `json:"credentialSecretId"`
+	Model              string `json:"model"`
+	Version            int64  `json:"version"`
+}
+
+type llmModelsResponse struct {
+	Models []string `json:"models"`
 }
 
 type environmentResponse struct {
@@ -230,9 +269,14 @@ type triggerResponse struct {
 	Name            string          `json:"name"`
 	Kind            string          `json:"kind"`
 	SigningSecretID *string         `json:"signingSecretId"`
+	InboundURL      *string         `json:"inboundUrl"`
 	Config          json.RawMessage `json:"config"`
 	Enabled         bool            `json:"enabled"`
 	Version         int64           `json:"version"`
+}
+
+type webhookTokenResponse struct {
+	InboundURL string `json:"inboundUrl"`
 }
 
 type auditEventResponse struct {
@@ -447,6 +491,39 @@ func (h *Handler) probeRepositoryRefs(writer nethttp.ResponseWriter, request *ne
 	writeJSON(writer, request, nethttp.StatusOK, mapRepositoryRefs(refs))
 }
 
+func (h *Handler) probeLLMModels(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload llmModelsRequest
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	models, err := h.service.ProbeLLMModels(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, llmModelsResponse{Models: models.Models})
+}
+
+func (h *Handler) probeLLMChat(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload llmChatRequest
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	if err := h.service.ProbeLLMChat(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, payload.Model); err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (h *Handler) getConfiguration(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	principal, ok := currentUser(request)
 	if !ok {
@@ -478,12 +555,31 @@ func (h *Handler) putConfiguration(writer nethttp.ResponseWriter, request *netht
 			Config: payload.Source.Config, Capabilities: payload.Source.Capabilities, Enabled: payload.Source.Enabled},
 		Trigger: domain.Trigger{Name: payload.Trigger.Name, Kind: payload.Trigger.Kind, SigningSecretID: payload.Trigger.SigningSecretID,
 			Config: payload.Trigger.Config, Enabled: payload.Trigger.Enabled},
+		LLM: mapLLMRequest(payload.LLM),
 	})
 	if err != nil {
 		writeApplicationError(writer, request, err)
 		return
 	}
 	writeJSON(writer, request, nethttp.StatusOK, mapConfiguration(configuration))
+}
+
+func (h *Handler) rotateWebhookToken(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	// 空对象保持与其它 JSON POST 一致的 DecodeJSON 边界，避免无 body 的 rotate 绕过 media type 检查。
+	if decodeError := httpserver.DecodeJSON(request, &struct{}{}); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	inboundURL, err := h.service.RotateWebhookToken(request.Context(), principal, request.PathValue("projectKey"))
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, webhookTokenResponse{InboundURL: inboundURL})
 }
 
 func (h *Handler) listAuditEvents(writer nethttp.ResponseWriter, request *nethttp.Request) {
@@ -547,8 +643,29 @@ func mapConfiguration(configuration domain.Configuration) configurationResponse 
 			CredentialSecretID: configuration.Source.CredentialSecretID, Config: configuration.Source.Config,
 			Capabilities: configuration.Source.Capabilities, Enabled: configuration.Source.Enabled, Version: configuration.Source.Version},
 		Trigger: triggerResponse{ID: configuration.Trigger.ID, Name: configuration.Trigger.Name, Kind: configuration.Trigger.Kind,
-			SigningSecretID: configuration.Trigger.SigningSecretID, Config: configuration.Trigger.Config,
-			Enabled: configuration.Trigger.Enabled, Version: configuration.Trigger.Version},
+			SigningSecretID: configuration.Trigger.SigningSecretID, InboundURL: optionalString(configuration.Trigger.InboundURL),
+			Config: configuration.Trigger.Config, Enabled: configuration.Trigger.Enabled, Version: configuration.Trigger.Version},
+		LLM: mapLLMResponse(configuration.LLM),
+	}
+}
+
+func mapLLMRequest(payload *llmRequest) *domain.LLMProvider {
+	if payload == nil {
+		return nil
+	}
+	return &domain.LLMProvider{
+		Provider: payload.Provider, BaseURL: payload.BaseURL,
+		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model,
+	}
+}
+
+func mapLLMResponse(provider *domain.LLMProvider) *llmResponse {
+	if provider == nil {
+		return nil
+	}
+	return &llmResponse{
+		ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL,
+		CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, Version: provider.Version,
 	}
 }
 
@@ -604,20 +721,22 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusConflict, Code: "member_change_rejected", Message: "The project must retain an administrator."})
 	case errors.Is(err, application.ErrGitUnreachable):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "git_unreachable", Message: "The Git remote could not be read."})
+	case errors.Is(err, application.ErrLLMUnreachable):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "llm_unreachable", Message: "The LLM provider could not be reached."})
 	default:
-		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusInternalServerError, Code: "internal_error", Message: "An internal error occurred."})
+		httpserver.WriteInternalError(writer, request, err)
 	}
 }
 
 func writeJSON(writer nethttp.ResponseWriter, request *nethttp.Request, status int, value any) {
 	if err := httpserver.WriteJSON(writer, status, value); err != nil {
-		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusInternalServerError, Code: "internal_error", Message: "An internal error occurred."})
+		httpserver.WriteInternalError(writer, request, err)
 	}
 }
 
 func writeListJSON(writer nethttp.ResponseWriter, request *nethttp.Request, status int, value any, total int64) {
 	if err := httpserver.WriteListJSON(writer, status, value, total); err != nil {
-		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusInternalServerError, Code: "internal_error", Message: "An internal error occurred."})
+		httpserver.WriteInternalError(writer, request, err)
 	}
 }
 
@@ -625,4 +744,11 @@ func clear(value []byte) {
 	for index := range value {
 		value[index] = 0
 	}
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

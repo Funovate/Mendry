@@ -180,16 +180,22 @@ The current MVP persists one coherent configuration snapshot per project:
 | Environment | stable key, name, optional service |
 | Git repository | remote URL, SCM provider, `https`/`ssh` transport, credential reference, production branch, deployed commit |
 | Source | `ssh`, `cloud`, or `mcp`; typed config, credential reference, capabilities, enabled state |
-| Trigger | `signed_webhook` or `custom_rule`; typed config, signing-secret reference, enabled state |
+| Trigger | `signed_webhook` or `custom_rule`; typed config, optional signing-secret reference, enabled state; signed webhook also stores a hashed inbound token |
 | Credential | stable ID/name/kind and AES-256-GCM ciphertext/nonce; reads expose metadata only |
 
 SSH configuration stores host, port, user, project folder, log path, and
 `tail`/`snapshot` mode. MCP configuration stores endpoint, transport, safe headers,
 evidence profile, query scope, and capabilities. Trigger configuration stores
 webhook event types/deduplication key or a custom match expression/grouping window.
-These records survive restart, but this milestone does not connect to SSH, Cloud,
-or MCP, execute rules, poll logs, or accept public webhooks. Authenticated
-`POST observations` is the temporary connector/development ingestion boundary.
+These records survive restart. This milestone still does not connect to SSH, Cloud,
+or MCP, execute custom rules, or poll logs. Signed webhook ingress is live:
+`POST /hooks/{token}` accepts the alert body without a Session and opens or
+updates a `P2` incident. Authenticated `POST observations` remains the
+temporary connector/development ingestion boundary.
+
+Set `FIXTHE_PUBLIC_URL` to the absolute public origin used to display
+`{publicURL}/hooks/{token}`. Project admins copy that URL from configuration;
+rotate it with `POST /api/v1/projects/{projectKey}/configuration/webhook-token`.
 
 Main project routes are:
 
@@ -199,11 +205,13 @@ GET      /api/v1/projects/{projectKey}
 GET|PUT|DELETE /api/v1/projects/{projectKey}/members[/{username}]
 GET|POST /api/v1/projects/{projectKey}/secrets
 GET|PUT  /api/v1/projects/{projectKey}/configuration
+POST     /api/v1/projects/{projectKey}/configuration/webhook-token
 GET|POST /api/v1/projects/{projectKey}/observations
 GET|POST /api/v1/projects/{projectKey}/incidents
 GET      /api/v1/projects/{projectKey}/incidents/{incidentId}
 PATCH    /api/v1/projects/{projectKey}/incidents/{incidentId}/status
 GET      /api/v1/projects/{projectKey}/audit-events
+POST     /hooks/{token}
 ```
 
 After logging in as the system administrator, create a project and grant the

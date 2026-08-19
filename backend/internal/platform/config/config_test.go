@@ -27,7 +27,7 @@ func TestLoadAPIDefaults(t *testing.T) {
 	if configuration.HTTP.Address != "127.0.0.1:8080" {
 		t.Fatalf("Address = %q", configuration.HTTP.Address)
 	}
-	if configuration.HTTP.MaxBodyBytes != 1024*1024 || configuration.HTTP.CORSAllowedOrigin != "" {
+	if configuration.HTTP.MaxBodyBytes != 1024*1024 || configuration.HTTP.CORSAllowedOrigin != "" || configuration.HTTP.RequestDebug {
 		t.Fatalf("HTTP boundary = %#v", configuration.HTTP)
 	}
 	if configuration.Auth.SessionTTL != 24*time.Hour {
@@ -35,6 +35,9 @@ func TestLoadAPIDefaults(t *testing.T) {
 	}
 	if len(configuration.Encryption.Key) != 32 {
 		t.Fatalf("Encryption key length = %d", len(configuration.Encryption.Key))
+	}
+	if configuration.PublicURL != testPublicURL {
+		t.Fatalf("PublicURL = %q", configuration.PublicURL)
 	}
 	if configuration.PostgreSQL.URL != testPostgresURL || configuration.PostgreSQL.MinConnections != 1 || configuration.PostgreSQL.MaxConnections != 10 {
 		t.Fatalf("PostgreSQL = %#v", configuration.PostgreSQL)
@@ -58,6 +61,7 @@ func TestLoadAPICustomValues(t *testing.T) {
 		HTTPCORSAllowedOriginKey: "https://console.example.com",
 		AuthSessionTTLKey:        "12h",
 		EncryptionKey:            "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
+		PublicURLKey:             "https://fixthe.example.com/ingress",
 	}))
 	if err != nil {
 		t.Fatalf("LoadAPI() error = %v", err)
@@ -74,6 +78,9 @@ func TestLoadAPICustomValues(t *testing.T) {
 	}
 	if configuration.Auth.SessionTTL != 12*time.Hour {
 		t.Fatalf("Auth = %#v", configuration.Auth)
+	}
+	if configuration.PublicURL != "https://fixthe.example.com/ingress" {
+		t.Fatalf("PublicURL = %q", configuration.PublicURL)
 	}
 }
 
@@ -148,6 +155,29 @@ func TestLoadPostgreSQLQueryDebug(t *testing.T) {
 			}
 			if configuration.QueryDebug != test.want {
 				t.Fatalf("QueryDebug = %v, want %v", configuration.QueryDebug, test.want)
+			}
+		})
+	}
+}
+
+func TestLoadHTTPRequestDebug(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "true", raw: "true", want: true},
+		{name: "TRUE", raw: "TRUE", want: true},
+		{name: "false", raw: "false", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configuration, err := LoadAPI(mapLookup(map[string]string{HTTPRequestDebugKey: test.raw}))
+			if err != nil {
+				t.Fatalf("LoadAPI() error = %v", err)
+			}
+			if configuration.HTTP.RequestDebug != test.want {
+				t.Fatalf("RequestDebug = %v, want %v", configuration.HTTP.RequestDebug, test.want)
 			}
 		})
 	}
@@ -302,6 +332,30 @@ func TestLoadAPIReportsLogFieldWithoutRawValue(t *testing.T) {
 	}
 }
 
+func TestLoadAPIRejectsInvalidHTTPRequestDebugWithoutRawValue(t *testing.T) {
+	const rawValue = "pretty-secret-marker"
+	_, err := LoadAPI(mapLookup(map[string]string{HTTPRequestDebugKey: rawValue}))
+	if err == nil || !strings.Contains(err.Error(), HTTPRequestDebugKey) {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if strings.Contains(err.Error(), rawValue) {
+		t.Fatalf("error %q contains raw value", err)
+	}
+}
+
+func TestLoadAPIRejectsInvalidPublicURLWithoutRawValue(t *testing.T) {
+	const rawValue = "https://user:pretty-secret-marker@hooks.example.com/hooks/"
+	for _, value := range []string{"", rawValue, "not-a-url", "ftp://hooks.example.com", "https://hooks.example.com/", "https://hooks.example.com?token=1"} {
+		_, err := LoadAPI(mapLookup(map[string]string{PublicURLKey: value}))
+		if err == nil || !strings.Contains(err.Error(), PublicURLKey) {
+			t.Fatalf("LoadAPI() error = %v", err)
+		}
+		if value != "" && strings.Contains(err.Error(), value) {
+			t.Fatalf("error %q contains raw public URL", err)
+		}
+	}
+}
+
 func TestLoadAPIRejectsInvalidAddressAndDuration(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -314,6 +368,8 @@ func TestLoadAPIRejectsInvalidAddressAndDuration(t *testing.T) {
 		{name: "CORS path", values: map[string]string{HTTPCORSAllowedOriginKey: "https://console.example.com/path"}, field: HTTPCORSAllowedOriginKey},
 		{name: "CORS credentials", values: map[string]string{HTTPCORSAllowedOriginKey: "https://user:secret@console.example.com"}, field: HTTPCORSAllowedOriginKey},
 		{name: "session TTL", values: map[string]string{AuthSessionTTLKey: "1m"}, field: AuthSessionTTLKey},
+		{name: "request debug", values: map[string]string{HTTPRequestDebugKey: "pretty-secret-marker"}, field: HTTPRequestDebugKey},
+		{name: "public URL", values: map[string]string{PublicURLKey: "https://hooks.example.com/"}, field: PublicURLKey},
 	}
 
 	for _, test := range tests {
@@ -338,6 +394,9 @@ func mapLookup(values map[string]string) Lookup {
 		if key == EncryptionKey && !ok {
 			return testEncryptionKey, true
 		}
+		if key == PublicURLKey && !ok {
+			return testPublicURL, true
+		}
 		return value, ok
 	}
 }
@@ -345,3 +404,4 @@ func mapLookup(values map[string]string) Lookup {
 const testPostgresURL = "postgres://test:test@localhost:5432/fixthe_test?sslmode=disable"
 const testRedisURL = "redis://localhost:6379"
 const testEncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+const testPublicURL = "http://127.0.0.1:8080"

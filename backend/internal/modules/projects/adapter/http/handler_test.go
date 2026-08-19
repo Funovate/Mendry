@@ -27,6 +27,7 @@ type fakeService struct {
 	secretID    string
 	secretName  string
 	secretValue []byte
+	inboundURL  string
 	updateErr   error
 }
 
@@ -82,14 +83,27 @@ func (f *fakeService) UpdateSecret(_ context.Context, _ authdomain.User, project
 func (f *fakeService) ListSecrets(context.Context, authdomain.User, string) (projectapplication.ListResult[domain.Secret], error) {
 	return projectapplication.ListResult[domain.Secret]{Items: []domain.Secret{f.secret}, Total: 1}, nil
 }
-func (*fakeService) GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error) {
-	return domain.Configuration{}, nil
+func (f *fakeService) GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error) {
+	return domain.Configuration{Trigger: domain.Trigger{Kind: "signed_webhook", InboundURL: f.inboundURL}}, nil
 }
 func (*fakeService) PutConfiguration(context.Context, authdomain.User, string, domain.Configuration) (domain.Configuration, error) {
 	return domain.Configuration{}, nil
 }
+func (f *fakeService) RotateWebhookToken(_ context.Context, _ authdomain.User, projectKey string) (string, error) {
+	if f.updateErr != nil {
+		return "", f.updateErr
+	}
+	f.projectKey = projectKey
+	return f.inboundURL, nil
+}
 func (*fakeService) ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (projectapplication.RepositoryRefs, error) {
 	return projectapplication.RepositoryRefs{DefaultBranch: "main", DeployedCommit: "0123456789abcdef0123456789abcdef01234567", Branches: []projectapplication.GitRef{{Name: "main", Commit: "0123456789abcdef0123456789abcdef01234567"}}}, nil
+}
+func (*fakeService) ProbeLLMModels(context.Context, authdomain.User, string, string, string) (projectapplication.LLMModels, error) {
+	return projectapplication.LLMModels{Models: []string{"gpt-4.1", "gpt-5.6"}}, nil
+}
+func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error {
+	return nil
 }
 func (*fakeService) ListAuditEvents(context.Context, authdomain.User, string, int32) (projectapplication.ListResult[domain.AuditEvent], error) {
 	return projectapplication.ListResult[domain.AuditEvent]{Items: []domain.AuditEvent{}}, nil
@@ -303,4 +317,36 @@ func newHandler(t *testing.T, service *fakeService) nethttp.Handler {
 
 func sessionCookie() *nethttp.Cookie {
 	return &nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"}
+}
+
+func TestRotateWebhookTokenReturnsInboundURL(t *testing.T) {
+	service := &fakeService{inboundURL: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/configuration/webhook-token", strings.NewReader("{}"))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" {
+		t.Fatalf("response = %d %q project=%q", response.Code, response.Body.String(), service.projectKey)
+	}
+	if !strings.Contains(response.Body.String(), `"inboundUrl":"http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"`) {
+		t.Fatalf("body = %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), `"token"`) {
+		t.Fatalf("response leaked token field: %s", response.Body.String())
+	}
+}
+
+func TestRotateWebhookTokenMapsForbidden(t *testing.T) {
+	service := &fakeService{updateErr: projectapplication.ErrForbidden}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/configuration/webhook-token", strings.NewReader("{}"))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
 }

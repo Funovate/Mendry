@@ -110,8 +110,12 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list applied migrations: %v", err)
 	}
-	if len(applied) != 4 || applied[0].Version != 1 || applied[1].Version != 2 || applied[2].Version != 3 || applied[3].Version != 4 ||
-		len(applied[0].Checksum) != 64 || len(applied[1].Checksum) != 64 || len(applied[2].Checksum) != 64 || len(applied[3].Checksum) != 64 {
+	if len(applied) != 10 || applied[0].Version != 1 || applied[1].Version != 2 || applied[2].Version != 3 || applied[3].Version != 4 ||
+		applied[4].Version != 5 || applied[5].Version != 6 || applied[6].Version != 7 || applied[7].Version != 8 ||
+		applied[8].Version != 9 || applied[9].Version != 10 ||
+		len(applied[0].Checksum) != 64 || len(applied[1].Checksum) != 64 || len(applied[2].Checksum) != 64 || len(applied[3].Checksum) != 64 ||
+		len(applied[4].Checksum) != 64 || len(applied[5].Checksum) != 64 || len(applied[6].Checksum) != 64 ||
+		len(applied[7].Checksum) != 64 || len(applied[8].Checksum) != 64 || len(applied[9].Checksum) != 64 {
 		t.Fatalf("applied migrations = %#v", applied)
 	}
 
@@ -122,6 +126,8 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 
 func resetMVPPostgreSQLSchema(ctx context.Context, pool *postgres.Pool, operation string) error {
 	for _, table := range []string{
+		"remediation_tool_invocation", "remediation_artifact", "remediation_plan",
+		"remediation_decision", "remediation_run", "remediation_series",
 		"audit_events", "incidents", "observations", "project_triggers", "project_sources",
 		"project_repositories", "project_secrets", "project_memberships",
 		"project_environments", "projects", "users", "fixthe_schema_migrations",
@@ -164,18 +170,25 @@ func assertMVPRelations(t *testing.T, ctx context.Context, pool *postgres.Pool) 
 func assertSchemaComments(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	t.Helper()
 	expectedColumnCounts := map[string]int{
-		"fixthe_schema_migrations": 4,
-		"users":                    8,
-		"projects":                 7,
-		"project_environments":     8,
-		"project_memberships":      6,
-		"project_secrets":          11,
-		"project_repositories":     12,
-		"project_sources":          12,
-		"project_triggers":         11,
-		"observations":             13,
-		"incidents":                19,
-		"audit_events":             9,
+		"fixthe_schema_migrations":    4,
+		"users":                       8,
+		"projects":                    7,
+		"project_environments":        8,
+		"project_memberships":         6,
+		"project_secrets":             11,
+		"project_repositories":        12,
+		"project_sources":             12,
+		"project_triggers":            14,
+		"observations":                13,
+		"incidents":                   21,
+		"audit_events":                9,
+		"remediation_series":          5,
+		"remediation_run":             17,
+		"remediation_decision":        11,
+		"remediation_plan":            12,
+		"remediation_artifact":        8,
+		"remediation_tool_invocation": 8,
+		"project_llm_providers":       9,
 	}
 	for table, expectedColumnCount := range expectedColumnCounts {
 		var tableComment string
@@ -302,6 +315,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 			Config: []byte(`{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"integration-logset"}`), Capabilities: []string{"push_ingestion"}, Enabled: true},
 		Trigger: projectdomain.Trigger{ID: "019ff544-405c-7d26-9f10-cb3fc579605c", Name: "error-webhook", Kind: "signed_webhook", SigningSecretID: &secretIDs[2],
 			Config: []byte(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true},
+		LLM: &projectdomain.LLMProvider{ID: "019ff544-405c-7d29-9f10-cb3fc579605c", Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretIDs[1], Model: "gpt-5.6"},
 	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d32-9f10-cb3fc579605c")
 	if err != nil {
 		t.Fatalf("upsert project configuration: %v", err)
@@ -335,6 +349,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Repository:  reloadedAfterRename.Repository,
 		Source:      reloadedAfterRename.Source,
 		Trigger:     reloadedAfterRename.Trigger,
+		LLM:         reloadedAfterRename.LLM,
 	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d65-9f10-cb3fc579605c")
 	if err != nil || syncedConfiguration.Environment.Name != renamed.Name {
 		t.Fatalf("align environment name = %#v, %v", syncedConfiguration, err)
@@ -427,7 +442,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		OccurrenceCount:     1,
 		HostCount:           1,
 		NotificationSummary: "Lifecycle default",
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c")
+	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c", nil)
 	if err != nil {
 		t.Fatalf("create incident through repository: %v", err)
 	}
@@ -445,7 +460,8 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	}
 
 	updated, err := incidentRepository.UpdateStatus(ctx, project.ID, incident.Number, incidentdomain.StatusRecovered,
-		"019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c")
+		incident.LifecycleGeneration, incident.DeployedCommit,
+		"019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c", nil)
 	if err != nil {
 		t.Fatalf("update incident through repository: %v", err)
 	}

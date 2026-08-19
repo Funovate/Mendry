@@ -109,6 +109,24 @@ type Trigger struct {
 	Config          json.RawMessage
 	Enabled         bool
 	Version         int64
+	// InboundURL 仅项目管理员读取 signed_webhook 时由 application 填入完整公开地址。
+	InboundURL string
+	// IngressTokenHash / Ciphertext / Nonce 是 trigger 行上的入站 token 材料，
+	// 不得进入 HTTP JSON；仅 persistence 与 application 揭示路径使用。
+	IngressTokenHash       []byte
+	IngressTokenCiphertext []byte
+	IngressTokenNonce      []byte
+}
+
+// LLMProvider 是项目唯一的 OpenAI 兼容模型接入点。
+// API key 只以同项目 http_bearer 凭据引用存在，不进入本结构。
+type LLMProvider struct {
+	ID                 string
+	Provider           string
+	BaseURL            string
+	CredentialSecretID string
+	Model              string
+	Version            int64
 }
 
 type Configuration struct {
@@ -116,6 +134,7 @@ type Configuration struct {
 	Repository  Repository
 	Source      Source
 	Trigger     Trigger
+	LLM         *LLMProvider
 }
 
 type AuditEvent struct {
@@ -133,10 +152,27 @@ var (
 	projectKeyPattern     = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}[a-z0-9]$`)
 	environmentKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	commitPattern         = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+	webhookTokenPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 )
 
 func IsCommitSHA(value string) bool {
 	return commitPattern.MatchString(value)
+}
+
+// ParseWebhookToken 拒绝路径中形状错误的入站 token，避免无意义的哈希查找。
+func ParseWebhookToken(value string) (string, error) {
+	if !webhookTokenPattern.MatchString(value) {
+		return "", fmt.Errorf("webhook token is invalid")
+	}
+	return value, nil
+}
+
+// InboundWebhookURL 用部署级公共基址和 token 派生完整入站地址。
+func InboundWebhookURL(publicURL, token string) (string, error) {
+	if _, err := ParseWebhookToken(token); err != nil {
+		return "", err
+	}
+	return publicURL + "/hooks/" + token, nil
 }
 
 func NormalizeProjectKey(value string) (string, error) {
@@ -204,6 +240,34 @@ func ValidateSecret(secret Secret, value []byte) error {
 	return nil
 }
 
+func ValidateLLMProvider(provider LLMProvider) error {
+	if !oneOf(provider.Provider, "openai") || !validHTTPURL(provider.BaseURL) || !bounded(provider.BaseURL, 1, 2048) ||
+		!bounded(provider.Model, 1, 200) || strings.ContainsAny(provider.Model, " \t\r\n") {
+		return fmt.Errorf("LLM provider configuration is invalid")
+	}
+	if err := validateRequiredUUIDv7(provider.CredentialSecretID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ValidateLLMModelsProbe(baseURL, secretID string) error {
+	if !validHTTPURL(baseURL) || !bounded(baseURL, 1, 2048) {
+		return fmt.Errorf("LLM base URL is invalid")
+	}
+	return validateRequiredUUIDv7(secretID)
+}
+
+func ValidateLLMChatProbe(baseURL, secretID, model string) error {
+	if err := ValidateLLMModelsProbe(baseURL, secretID); err != nil {
+		return err
+	}
+	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") {
+		return fmt.Errorf("LLM model is invalid")
+	}
+	return nil
+}
+
 func ValidateRepositoryProbe(remoteURL, transport string) error {
 	remote, err := url.Parse(remoteURL)
 	if err != nil || remote.User != nil || remote.Host == "" || !bounded(remoteURL, 1, 2048) ||
@@ -236,6 +300,11 @@ func ValidateConfiguration(configuration Configuration) error {
 			return err
 		}
 	}
+	if configuration.LLM != nil {
+		if err := ValidateLLMProvider(*configuration.LLM); err != nil {
+			return err
+		}
+	}
 
 	if !bounded(configuration.Source.Name, 1, 120) || !oneOf(configuration.Source.Kind, "ssh", "cloud", "mcp") {
 		return fmt.Errorf("source configuration is invalid")
@@ -253,10 +322,18 @@ func ValidateConfiguration(configuration Configuration) error {
 	if err := validateTriggerConfig(configuration.Trigger.Kind, configuration.Trigger.Config); err != nil {
 		return err
 	}
-	if configuration.Trigger.Kind == "signed_webhook" && configuration.Trigger.SigningSecretID == nil {
-		return fmt.Errorf("signed webhook requires a signing secret reference")
-	}
 	return nil
+}
+
+// ValidateWebhookTokenColumns 要求入站 token 的 hash/ciphertext/nonce 同时为空或同时完整。
+func ValidateWebhookTokenColumns(hash, ciphertext, nonce []byte) error {
+	if len(hash) == 0 && len(ciphertext) == 0 && len(nonce) == 0 {
+		return nil
+	}
+	if len(hash) == 32 && len(ciphertext) > 0 && len(nonce) == 12 {
+		return nil
+	}
+	return fmt.Errorf("webhook token columns must be all present or all empty")
 }
 
 type sshConfig struct {
@@ -394,8 +471,12 @@ func validateOptionalUUIDv7(value *string) error {
 	if value == nil {
 		return nil
 	}
-	parsed, err := uuid.Parse(*value)
-	if err != nil || parsed.Version() != 7 || parsed.String() != *value {
+	return validateRequiredUUIDv7(*value)
+}
+
+func validateRequiredUUIDv7(value string) error {
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.Version() != 7 || parsed.String() != value {
 		return fmt.Errorf("credential reference must be a canonical UUIDv7")
 	}
 	return nil

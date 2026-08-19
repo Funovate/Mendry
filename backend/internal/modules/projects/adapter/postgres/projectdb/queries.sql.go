@@ -272,11 +272,16 @@ SELECT e.id AS environment_id, e.environment_key, e.name AS environment_name, e.
        s.capabilities AS source_capabilities, s.enabled AS source_enabled, s.version AS source_version,
        t.id AS trigger_id, t.name AS trigger_name, t.kind AS trigger_kind,
        t.signing_secret_id, t.config AS trigger_config, t.enabled AS trigger_enabled,
-       t.version AS trigger_version
+       t.version AS trigger_version,
+       t.ingress_token_hash, t.ingress_token_ciphertext, t.ingress_token_nonce,
+       l.id AS llm_id, l.provider AS llm_provider, l.base_url AS llm_base_url,
+       l.credential_secret_id AS llm_credential_secret_id, l.model AS llm_model,
+       l.version AS llm_version
 FROM project_environments AS e
 JOIN project_repositories AS r ON r.project_id = e.project_id
 JOIN project_sources AS s ON s.project_id = e.project_id AND s.environment_id = e.id
 JOIN project_triggers AS t ON t.project_id = e.project_id AND t.environment_id = e.id
+LEFT JOIN project_llm_providers AS l ON l.project_id = e.project_id
 WHERE e.project_id = $1
 ORDER BY e.created_at
 LIMIT 1
@@ -311,6 +316,15 @@ type GetProjectConfigurationRow struct {
 	TriggerConfig                []byte
 	TriggerEnabled               bool
 	TriggerVersion               int64
+	IngressTokenHash             []byte
+	IngressTokenCiphertext       []byte
+	IngressTokenNonce            []byte
+	LlmID                        pgtype.UUID
+	LlmProvider                  *string
+	LlmBaseUrl                   *string
+	LlmCredentialSecretID        pgtype.UUID
+	LlmModel                     *string
+	LlmVersion                   *int64
 }
 
 func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.UUID) (GetProjectConfigurationRow, error) {
@@ -345,6 +359,15 @@ func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.
 		&i.TriggerConfig,
 		&i.TriggerEnabled,
 		&i.TriggerVersion,
+		&i.IngressTokenHash,
+		&i.IngressTokenCiphertext,
+		&i.IngressTokenNonce,
+		&i.LlmID,
+		&i.LlmProvider,
+		&i.LlmBaseUrl,
+		&i.LlmCredentialSecretID,
+		&i.LlmModel,
+		&i.LlmVersion,
 	)
 	return i, err
 }
@@ -630,6 +653,30 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 	return items, nil
 }
 
+const lookupWebhookToken = `-- name: LookupWebhookToken :one
+SELECT trigger.project_id, source.id AS source_id
+FROM project_triggers AS trigger
+JOIN project_sources AS source
+    ON source.project_id = trigger.project_id
+   AND source.environment_id = trigger.environment_id
+WHERE trigger.ingress_token_hash = $1
+  AND trigger.kind = 'signed_webhook'
+  AND trigger.enabled
+  AND source.enabled
+`
+
+type LookupWebhookTokenRow struct {
+	ProjectID pgtype.UUID
+	SourceID  pgtype.UUID
+}
+
+func (q *Queries) LookupWebhookToken(ctx context.Context, ingressTokenHash []byte) (LookupWebhookTokenRow, error) {
+	row := q.db.QueryRow(ctx, lookupWebhookToken, ingressTokenHash)
+	var i LookupWebhookTokenRow
+	err := row.Scan(&i.ProjectID, &i.SourceID)
+	return i, err
+}
+
 const updateProjectName = `-- name: UpdateProjectName :one
 WITH existing_project AS (
     SELECT projects.id, projects.project_key, projects.name, projects.description, projects.version, projects.created_at
@@ -775,6 +822,59 @@ func (q *Queries) UpdateProjectSecret(ctx context.Context, arg UpdateProjectSecr
 	return i, err
 }
 
+const updateWebhookToken = `-- name: UpdateWebhookToken :one
+WITH changed_trigger AS (
+    UPDATE project_triggers
+    SET ingress_token_hash = $1,
+        ingress_token_ciphertext = $2,
+        ingress_token_nonce = $3,
+        version = project_triggers.version + 1,
+        updated_at = clock_timestamp()
+    WHERE project_triggers.project_id = $4
+      AND project_triggers.kind = 'signed_webhook'
+    RETURNING id, project_id, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $5, changed_trigger.project_id, $6,
+           'project.trigger.webhook_token', 'project_trigger', changed_trigger.id,
+           'Project webhook token updated.',
+           jsonb_build_object('rotated', $7::boolean)
+    FROM changed_trigger
+)
+SELECT id, version
+FROM changed_trigger
+`
+
+type UpdateWebhookTokenParams struct {
+	IngressTokenHash       []byte
+	IngressTokenCiphertext []byte
+	IngressTokenNonce      []byte
+	ProjectID              pgtype.UUID
+	AuditID                pgtype.UUID
+	ActorUserID            pgtype.UUID
+	Rotated                bool
+}
+
+type UpdateWebhookTokenRow struct {
+	ID      pgtype.UUID
+	Version int64
+}
+
+func (q *Queries) UpdateWebhookToken(ctx context.Context, arg UpdateWebhookTokenParams) (UpdateWebhookTokenRow, error) {
+	row := q.db.QueryRow(ctx, updateWebhookToken,
+		arg.IngressTokenHash,
+		arg.IngressTokenCiphertext,
+		arg.IngressTokenNonce,
+		arg.ProjectID,
+		arg.AuditID,
+		arg.ActorUserID,
+		arg.Rotated,
+	)
+	var i UpdateWebhookTokenRow
+	err := row.Scan(&i.ID, &i.Version)
+	return i, err
+}
+
 const upsertProjectConfiguration = `-- name: UpsertProjectConfiguration :one
 WITH changed_environment AS (
     INSERT INTO project_environments (id, project_id, environment_key, name, service)
@@ -830,11 +930,13 @@ WITH changed_environment AS (
     RETURNING id, name, kind, credential_secret_id, config, capabilities, enabled, version
 ), changed_trigger AS (
     INSERT INTO project_triggers (
-        id, project_id, environment_id, name, kind, signing_secret_id, config, enabled
+        id, project_id, environment_id, name, kind, signing_secret_id, config, enabled,
+        ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
     )
     SELECT $20, $2, changed_environment.id,
            $21, $22, $23,
-           $24, $25
+           $24, $25,
+           $26, $27, $28
     FROM changed_environment
     ON CONFLICT (project_id) DO UPDATE
     SET environment_id = EXCLUDED.environment_id,
@@ -843,20 +945,41 @@ WITH changed_environment AS (
         signing_secret_id = EXCLUDED.signing_secret_id,
         config = EXCLUDED.config,
         enabled = EXCLUDED.enabled,
+        ingress_token_hash = EXCLUDED.ingress_token_hash,
+        ingress_token_ciphertext = EXCLUDED.ingress_token_ciphertext,
+        ingress_token_nonce = EXCLUDED.ingress_token_nonce,
         version = project_triggers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, name, kind, signing_secret_id, config, enabled, version
+    RETURNING id, name, kind, signing_secret_id, config, enabled, version,
+              ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+), changed_llm AS (
+    INSERT INTO project_llm_providers (
+        id, project_id, provider, base_url, credential_secret_id, model
+    ) VALUES (
+        $29, $2, $30,
+        $31, $32, $33
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET provider = EXCLUDED.provider,
+        base_url = EXCLUDED.base_url,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        model = EXCLUDED.model,
+        version = project_llm_providers.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, provider, base_url, credential_secret_id, model, version
 ), created_audit AS (
     INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $26, $2, $27,
+    SELECT $34, $2, $35,
            'project.configuration.updated', 'project', $2,
            'Project configuration updated.',
            jsonb_build_object(
                'environmentKey', changed_environment.environment_key,
                'sourceKind', changed_source.kind,
-               'triggerKind', changed_trigger.kind
+               'triggerKind', changed_trigger.kind,
+               'llmProvider', changed_llm.provider,
+               'llmModel', changed_llm.model
            )
-    FROM changed_environment, changed_source, changed_trigger
+    FROM changed_environment, changed_source, changed_trigger, changed_llm
 )
 SELECT changed_environment.id AS environment_id,
        changed_environment.environment_key, changed_environment.name AS environment_name,
@@ -874,8 +997,14 @@ SELECT changed_environment.id AS environment_id,
        changed_trigger.id AS trigger_id, changed_trigger.name AS trigger_name,
        changed_trigger.kind AS trigger_kind, changed_trigger.signing_secret_id,
        changed_trigger.config AS trigger_config, changed_trigger.enabled AS trigger_enabled,
-       changed_trigger.version AS trigger_version
-FROM changed_environment, changed_repository, changed_source, changed_trigger
+       changed_trigger.version AS trigger_version,
+       changed_trigger.ingress_token_hash, changed_trigger.ingress_token_ciphertext,
+       changed_trigger.ingress_token_nonce,
+       changed_llm.id AS llm_id, changed_llm.provider AS llm_provider,
+       changed_llm.base_url AS llm_base_url,
+       changed_llm.credential_secret_id AS llm_credential_secret_id,
+       changed_llm.model AS llm_model, changed_llm.version AS llm_version
+FROM changed_environment, changed_repository, changed_source, changed_trigger, changed_llm
 `
 
 type UpsertProjectConfigurationParams struct {
@@ -904,6 +1033,14 @@ type UpsertProjectConfigurationParams struct {
 	SigningSecretID              pgtype.UUID
 	TriggerConfig                []byte
 	TriggerEnabled               bool
+	IngressTokenHash             []byte
+	IngressTokenCiphertext       []byte
+	IngressTokenNonce            []byte
+	LlmID                        pgtype.UUID
+	LlmProvider                  string
+	LlmBaseUrl                   string
+	LlmCredentialSecretID        pgtype.UUID
+	LlmModel                     string
 	AuditID                      pgtype.UUID
 	ActorUserID                  pgtype.UUID
 }
@@ -937,6 +1074,15 @@ type UpsertProjectConfigurationRow struct {
 	TriggerConfig                []byte
 	TriggerEnabled               bool
 	TriggerVersion               int64
+	IngressTokenHash             []byte
+	IngressTokenCiphertext       []byte
+	IngressTokenNonce            []byte
+	LlmID                        pgtype.UUID
+	LlmProvider                  string
+	LlmBaseUrl                   string
+	LlmCredentialSecretID        pgtype.UUID
+	LlmModel                     string
+	LlmVersion                   int64
 }
 
 func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProjectConfigurationParams) (UpsertProjectConfigurationRow, error) {
@@ -966,6 +1112,14 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		arg.SigningSecretID,
 		arg.TriggerConfig,
 		arg.TriggerEnabled,
+		arg.IngressTokenHash,
+		arg.IngressTokenCiphertext,
+		arg.IngressTokenNonce,
+		arg.LlmID,
+		arg.LlmProvider,
+		arg.LlmBaseUrl,
+		arg.LlmCredentialSecretID,
+		arg.LlmModel,
 		arg.AuditID,
 		arg.ActorUserID,
 	)
@@ -999,6 +1153,15 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		&i.TriggerConfig,
 		&i.TriggerEnabled,
 		&i.TriggerVersion,
+		&i.IngressTokenHash,
+		&i.IngressTokenCiphertext,
+		&i.IngressTokenNonce,
+		&i.LlmID,
+		&i.LlmProvider,
+		&i.LlmBaseUrl,
+		&i.LlmCredentialSecretID,
+		&i.LlmModel,
+		&i.LlmVersion,
 	)
 	return i, err
 }

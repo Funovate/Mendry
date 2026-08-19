@@ -25,6 +25,8 @@ const (
 	HTTPIdleKey                 = "FIXTHE_HTTP_IDLE_TIMEOUT"
 	HTTPMaxBodyBytesKey         = "FIXTHE_HTTP_MAX_BODY_BYTES"
 	HTTPCORSAllowedOriginKey    = "FIXTHE_HTTP_CORS_ALLOWED_ORIGIN"
+	HTTPRequestDebugKey         = "FIXTHE_HTTP_REQUEST_DEBUG"
+	PublicURLKey                = "FIXTHE_PUBLIC_URL"
 	AuthSessionTTLKey           = "FIXTHE_AUTH_SESSION_TTL"
 	EncryptionKey               = "FIXTHE_ENCRYPTION_KEY"
 	BootstrapAdminPasswordKey   = "FIXTHE_BOOTSTRAP_ADMIN_PASSWORD"
@@ -69,7 +71,7 @@ type Common struct {
 	ShutdownTimeout time.Duration
 }
 
-// HTTP 包含 API server 的监听地址和超时边界。
+// HTTP 包含 API server 的监听地址、超时边界和入站调试开关。
 type HTTP struct {
 	Address           string
 	ReadHeaderTimeout time.Duration
@@ -78,6 +80,9 @@ type HTTP struct {
 	IdleTimeout       time.Duration
 	MaxBodyBytes      int64
 	CORSAllowedOrigin string
+	// RequestDebug 为 true 时，AccessLog 会把完整请求/响应写入
+	// http.request.completed；默认关闭，且不得把这些内容复制到 span 或 metric。
+	RequestDebug bool
 }
 
 // API 聚合 API 进程启动所需的全部已验证配置。
@@ -86,6 +91,8 @@ type API struct {
 	HTTP       HTTP
 	Auth       Auth
 	Encryption Encryption
+	// PublicURL 是派生公开 webhook 入站地址的部署级基址。
+	PublicURL  string
 	PostgreSQL PostgreSQL
 	Redis      Redis
 }
@@ -190,8 +197,25 @@ func LoadAPI(lookup Lookup) (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	publicURL, err := publicURLValue(lookup)
+	if err != nil {
+		return API{}, err
+	}
 
-	return API{Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL}, Encryption: Encryption{Key: encryptionKey}, PostgreSQL: postgresConfig, Redis: redisConfig}, nil
+	return API{Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL}, Encryption: Encryption{Key: encryptionKey}, PublicURL: publicURL, PostgreSQL: postgresConfig, Redis: redisConfig}, nil
+}
+
+func publicURLValue(lookup Lookup) (string, error) {
+	value := stringValue(lookup, PublicURLKey, "")
+	if value == "" || strings.ContainsAny(value, "\x00\r\n") {
+		return "", fieldError(PublicURLKey, "is required and must be an absolute http or https URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Path == "/" || strings.HasSuffix(parsed.Path, "/") {
+		return "", fieldError(PublicURLKey, "must be an absolute http or https URL without credentials, query, fragment, or a trailing slash")
+	}
+	return value, nil
 }
 
 func encryptionKeyValue(lookup Lookup) ([]byte, error) {
@@ -521,6 +545,13 @@ func loadHTTP(lookup Lookup) (HTTP, error) {
 			return HTTP{}, fieldError(HTTPCORSAllowedOriginKey, "must be an http or https origin without credentials, path, query, or fragment")
 		}
 	}
+	requestDebugValue, err := enumValue(lookup, HTTPRequestDebugKey, "false", map[string]struct{}{
+		"true":  {},
+		"false": {},
+	})
+	if err != nil {
+		return HTTP{}, err
+	}
 
 	return HTTP{
 		Address:           address,
@@ -530,6 +561,7 @@ func loadHTTP(lookup Lookup) (HTTP, error) {
 		IdleTimeout:       idleTimeout,
 		MaxBodyBytes:      maxBodyBytes,
 		CORSAllowedOrigin: corsAllowedOrigin,
+		RequestDebug:      requestDebugValue == "true",
 	}, nil
 }
 

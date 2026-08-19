@@ -9,6 +9,7 @@ import (
 	"fixthe/backend/internal/modules/projects/adapter/postgres/projectdb"
 	"fixthe/backend/internal/modules/projects/application"
 	"fixthe/backend/internal/modules/projects/domain"
+	"fixthe/backend/internal/platform/errtrace"
 	platformpostgres "fixthe/backend/internal/platform/postgres"
 
 	"github.com/google/uuid"
@@ -49,7 +50,7 @@ func (r *Repository) CreateProject(ctx context.Context, project domain.Project, 
 		return domain.Project{}, application.ErrConflict
 	}
 	if err != nil {
-		return domain.Project{}, repositoryError{operation: "insert project", cause: err}
+		return domain.Project{}, newRepositoryError("insert project", err)
 	}
 	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -63,7 +64,7 @@ func (r *Repository) ListProjects(ctx context.Context, userID string, systemAdmi
 		SystemAdmin: systemAdmin, UserID: userUUID, ResultLimit: limit,
 	})
 	if err != nil {
-		return application.ListResult[domain.Project]{}, repositoryError{operation: "list projects", cause: err}
+		return application.ListResult[domain.Project]{}, newRepositoryError("list projects", err)
 	}
 	projects := make([]domain.Project, 0, len(rows))
 	var total int64
@@ -90,7 +91,7 @@ func (r *Repository) ResolveProject(ctx context.Context, projectKey, userID stri
 		return domain.Project{}, application.ErrNotFound
 	}
 	if err != nil {
-		return domain.Project{}, repositoryError{operation: "resolve project access", cause: err}
+		return domain.Project{}, newRepositoryError("resolve project access", err)
 	}
 	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -102,7 +103,7 @@ func (r *Repository) ListMembers(ctx context.Context, projectID string) (applica
 	}
 	rows, err := r.queries.ListProjectMembers(platformpostgres.WithOperation(ctx, "project.member.list"), projectUUID)
 	if err != nil {
-		return application.ListResult[domain.Member]{}, repositoryError{operation: "list project members", cause: err}
+		return application.ListResult[domain.Member]{}, newRepositoryError("list project members", err)
 	}
 	members := make([]domain.Member, 0, len(rows))
 	var total int64
@@ -125,7 +126,7 @@ func (r *Repository) UpsertMember(ctx context.Context, projectID, username strin
 	if _, err := r.queries.GetEnabledProjectUser(platformpostgres.WithOperation(ctx, "project.member.get_enabled_user"), username); errors.Is(err, pgx.ErrNoRows) {
 		return domain.Member{}, application.ErrMemberNotFound
 	} else if err != nil {
-		return domain.Member{}, repositoryError{operation: "query project member user", cause: err}
+		return domain.Member{}, newRepositoryError("query project member user", err)
 	}
 	row, err := r.queries.UpsertProjectMember(platformpostgres.WithOperation(ctx, "project.member.upsert"), projectdb.UpsertProjectMemberParams{
 		Username: username, ProjectID: params.projectID, Role: string(role), AuditID: params.auditID, ActorUserID: params.actorID,
@@ -134,7 +135,7 @@ func (r *Repository) UpsertMember(ctx context.Context, projectID, username strin
 		return domain.Member{}, application.ErrMemberChangeRejected
 	}
 	if err != nil {
-		return domain.Member{}, repositoryError{operation: "upsert project member", cause: err}
+		return domain.Member{}, newRepositoryError("upsert project member", err)
 	}
 	return mapMember(row.UserID, row.Username, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -151,7 +152,7 @@ func (r *Repository) DeleteMember(ctx context.Context, projectID, username, acto
 		return domain.Member{}, application.ErrMemberNotFound
 	}
 	if err != nil {
-		return domain.Member{}, repositoryError{operation: "query project member", cause: err}
+		return domain.Member{}, newRepositoryError("query project member", err)
 	}
 	row, err := r.queries.DeleteProjectMember(platformpostgres.WithOperation(ctx, "project.member.delete"), projectdb.DeleteProjectMemberParams{
 		ProjectID: params.projectID, Username: username, AuditID: params.auditID, ActorUserID: params.actorID,
@@ -160,7 +161,7 @@ func (r *Repository) DeleteMember(ctx context.Context, projectID, username, acto
 		return domain.Member{}, application.ErrMemberChangeRejected
 	}
 	if err != nil {
-		return domain.Member{}, repositoryError{operation: "delete project member", cause: err}
+		return domain.Member{}, newRepositoryError("delete project member", err)
 	}
 	role, err := domain.ParseRole(row.Role)
 	if err != nil {
@@ -191,7 +192,7 @@ func (r *Repository) UpdateProjectName(ctx context.Context, project domain.Proje
 		return domain.Project{}, application.ErrNotFound
 	}
 	if err != nil {
-		return domain.Project{}, repositoryError{operation: "update project name", cause: err}
+		return domain.Project{}, newRepositoryError("update project name", err)
 	}
 	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -222,7 +223,7 @@ func (r *Repository) CreateSecret(ctx context.Context, encrypted domain.Encrypte
 		return domain.Secret{}, application.ErrConflict
 	}
 	if err != nil {
-		return domain.Secret{}, repositoryError{operation: "insert project credential", cause: err}
+		return domain.Secret{}, newRepositoryError("insert project credential", err)
 	}
 	return mapSecret(row.ID, row.ProjectID, row.Name, row.Kind, row.KeyVersion, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -256,7 +257,7 @@ func (r *Repository) UpdateSecret(ctx context.Context, encrypted domain.Encrypte
 		return domain.Secret{}, application.ErrConflict
 	}
 	if err != nil {
-		return domain.Secret{}, repositoryError{operation: "update project credential", cause: err}
+		return domain.Secret{}, newRepositoryError("update project credential", err)
 	}
 	return mapSecret(row.ID, row.ProjectID, row.Name, row.Kind, row.KeyVersion, row.Version, row.CreatedAt, row.UpdatedAt)
 }
@@ -268,7 +269,7 @@ func (r *Repository) ListSecrets(ctx context.Context, projectID string) (applica
 	}
 	rows, err := r.queries.ListProjectSecrets(platformpostgres.WithOperation(ctx, "project.secret.list"), projectUUID)
 	if err != nil {
-		return application.ListResult[domain.Secret]{}, repositoryError{operation: "list project credentials", cause: err}
+		return application.ListResult[domain.Secret]{}, newRepositoryError("list project credentials", err)
 	}
 	secrets := make([]domain.Secret, 0, len(rows))
 	var total int64
@@ -299,7 +300,7 @@ func (r *Repository) GetEncryptedSecret(ctx context.Context, projectID, secretID
 		return domain.EncryptedSecret{}, application.ErrInvalidInput
 	}
 	if err != nil {
-		return domain.EncryptedSecret{}, repositoryError{operation: "get project credential", cause: err}
+		return domain.EncryptedSecret{}, newRepositoryError("get project credential", err)
 	}
 	secret, err := mapSecret(row.ID, row.ProjectID, row.Name, row.Kind, row.KeyVersion, row.Version, row.CreatedAt, row.UpdatedAt)
 	if err != nil {
@@ -321,7 +322,7 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		return domain.Configuration{}, application.ErrConfigurationNotFound
 	}
 	if err != nil {
-		return domain.Configuration{}, repositoryError{operation: "query project configuration", cause: err}
+		return domain.Configuration{}, newRepositoryError("query project configuration", err)
 	}
 	return mapConfiguration(configurationRow{
 		environmentID: row.EnvironmentID, environmentKey: row.EnvironmentKey, environmentName: row.EnvironmentName,
@@ -334,6 +335,10 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		sourceVersion: row.SourceVersion, triggerID: row.TriggerID, triggerName: row.TriggerName,
 		triggerKind: row.TriggerKind, signingSecretID: row.SigningSecretID, triggerConfig: row.TriggerConfig,
 		triggerEnabled: row.TriggerEnabled, triggerVersion: row.TriggerVersion,
+		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
+		ingressTokenNonce: row.IngressTokenNonce,
+		llmID:             row.LlmID, llmProvider: row.LlmProvider, llmBaseURL: row.LlmBaseUrl,
+		llmSecretID: row.LlmCredentialSecretID, llmModel: row.LlmModel, llmVersion: row.LlmVersion,
 	})
 }
 
@@ -358,6 +363,17 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 	if err != nil {
 		return domain.Configuration{}, err
 	}
+	if configuration.LLM == nil {
+		return domain.Configuration{}, application.ErrInvalidInput
+	}
+	llmID, err := uuidParameter(configuration.LLM.ID, "project LLM provider")
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	llmSecretID, err := uuidParameter(configuration.LLM.CredentialSecretID, "LLM credential")
+	if err != nil {
+		return domain.Configuration{}, err
+	}
 	actorID, err := uuidParameter(actorUserID, "actor user")
 	if err != nil {
 		return domain.Configuration{}, err
@@ -378,7 +394,12 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		SourceCapabilities: configuration.Source.Capabilities, SourceEnabled: configuration.Source.Enabled,
 		TriggerID: triggerID, TriggerName: configuration.Trigger.Name, TriggerKind: configuration.Trigger.Kind,
 		SigningSecretID: optionalUUID(configuration.Trigger.SigningSecretID), TriggerConfig: configuration.Trigger.Config,
-		TriggerEnabled: configuration.Trigger.Enabled, AuditID: auditUUID, ActorUserID: actorID,
+		TriggerEnabled:   configuration.Trigger.Enabled,
+		IngressTokenHash: configuration.Trigger.IngressTokenHash, IngressTokenCiphertext: configuration.Trigger.IngressTokenCiphertext,
+		IngressTokenNonce: configuration.Trigger.IngressTokenNonce,
+		AuditID:           auditUUID, ActorUserID: actorID,
+		LlmID: llmID, LlmProvider: configuration.LLM.Provider, LlmBaseUrl: configuration.LLM.BaseURL,
+		LlmCredentialSecretID: llmSecretID, LlmModel: configuration.LLM.Model,
 	})
 	if configurationReferenceConflict(err) {
 		return domain.Configuration{}, application.ErrInvalidInput
@@ -387,7 +408,7 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		return domain.Configuration{}, application.ErrConflict
 	}
 	if err != nil {
-		return domain.Configuration{}, repositoryError{operation: "upsert project configuration", cause: err}
+		return domain.Configuration{}, newRepositoryError("upsert project configuration", err)
 	}
 	return mapConfiguration(configurationRow{
 		environmentID: row.EnvironmentID, environmentKey: row.EnvironmentKey, environmentName: row.EnvironmentName,
@@ -400,7 +421,55 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		sourceVersion: row.SourceVersion, triggerID: row.TriggerID, triggerName: row.TriggerName,
 		triggerKind: row.TriggerKind, signingSecretID: row.SigningSecretID, triggerConfig: row.TriggerConfig,
 		triggerEnabled: row.TriggerEnabled, triggerVersion: row.TriggerVersion,
+		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
+		ingressTokenNonce: row.IngressTokenNonce,
+		llmID:             row.LlmID, llmProvider: stringPointer(row.LlmProvider), llmBaseURL: stringPointer(row.LlmBaseUrl),
+		llmSecretID: row.LlmCredentialSecretID, llmModel: stringPointer(row.LlmModel), llmVersion: int64Pointer(row.LlmVersion),
 	})
+}
+
+func (r *Repository) LookupWebhookToken(ctx context.Context, hash []byte) (application.WebhookIngress, error) {
+	if len(hash) != 32 {
+		return application.WebhookIngress{}, application.ErrNotFound
+	}
+	row, err := r.queries.LookupWebhookToken(platformpostgres.WithOperation(ctx, "project.webhook.lookup"), hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return application.WebhookIngress{}, application.ErrNotFound
+	}
+	if err != nil {
+		return application.WebhookIngress{}, newRepositoryError("lookup webhook token", err)
+	}
+	if !row.ProjectID.Valid || !row.SourceID.Valid {
+		return application.WebhookIngress{}, application.ErrNotFound
+	}
+	return application.WebhookIngress{ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID)}, nil
+}
+
+func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, hash, ciphertext, nonce []byte, actorUserID, auditID string, rotated bool) error {
+	if err := domain.ValidateWebhookTokenColumns(hash, ciphertext, nonce); err != nil {
+		return application.ErrInvalidInput
+	}
+	projectUUID, err := uuidParameter(projectID, "project")
+	if err != nil {
+		return err
+	}
+	actorID, err := uuidParameter(actorUserID, "actor user")
+	if err != nil {
+		return err
+	}
+	auditUUID, err := uuidParameter(auditID, "audit event")
+	if err != nil {
+		return err
+	}
+	if _, err := r.queries.UpdateWebhookToken(platformpostgres.WithOperation(ctx, "project.webhook.update_token"), projectdb.UpdateWebhookTokenParams{
+		IngressTokenHash: hash, IngressTokenCiphertext: ciphertext, IngressTokenNonce: nonce,
+		ProjectID: projectUUID, AuditID: auditUUID, ActorUserID: actorID, Rotated: rotated,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return application.ErrConfigurationNotFound
+	} else if err != nil {
+		return newRepositoryError("update webhook token", err)
+	}
+	return nil
 }
 
 func (r *Repository) ListAuditEvents(ctx context.Context, projectID string, limit int32) (application.ListResult[domain.AuditEvent], error) {
@@ -412,7 +481,7 @@ func (r *Repository) ListAuditEvents(ctx context.Context, projectID string, limi
 		ProjectID: projectUUID, ResultLimit: limit,
 	})
 	if err != nil {
-		return application.ListResult[domain.AuditEvent]{}, repositoryError{operation: "list project audit events", cause: err}
+		return application.ListResult[domain.AuditEvent]{}, newRepositoryError("list project audit events", err)
 	}
 	events := make([]domain.AuditEvent, 0, len(rows))
 	var total int64
@@ -447,28 +516,33 @@ func (r *Repository) memberMutationParameters(projectID, actorUserID, auditID st
 }
 
 type configurationRow struct {
-	environmentID                     pgtype.UUID
-	environmentKey, environmentName   string
-	service                           *string
-	environmentVersion                int64
-	repositoryID                      pgtype.UUID
-	remoteURL, scmProvider, transport string
-	repositorySecretID                pgtype.UUID
-	productionBranch, deployedCommit  string
-	repositoryVersion                 int64
-	sourceID                          pgtype.UUID
-	sourceName, sourceKind            string
-	sourceSecretID                    pgtype.UUID
-	sourceConfig                      []byte
-	sourceCapabilities                []string
-	sourceEnabled                     bool
-	sourceVersion                     int64
-	triggerID                         pgtype.UUID
-	triggerName, triggerKind          string
-	signingSecretID                   pgtype.UUID
-	triggerConfig                     []byte
-	triggerEnabled                    bool
-	triggerVersion                    int64
+	environmentID                                               pgtype.UUID
+	environmentKey, environmentName                             string
+	service                                                     *string
+	environmentVersion                                          int64
+	repositoryID                                                pgtype.UUID
+	remoteURL, scmProvider, transport                           string
+	repositorySecretID                                          pgtype.UUID
+	productionBranch, deployedCommit                            string
+	repositoryVersion                                           int64
+	sourceID                                                    pgtype.UUID
+	sourceName, sourceKind                                      string
+	sourceSecretID                                              pgtype.UUID
+	sourceConfig                                                []byte
+	sourceCapabilities                                          []string
+	sourceEnabled                                               bool
+	sourceVersion                                               int64
+	triggerID                                                   pgtype.UUID
+	triggerName, triggerKind                                    string
+	signingSecretID                                             pgtype.UUID
+	triggerConfig                                               []byte
+	triggerEnabled                                              bool
+	triggerVersion                                              int64
+	ingressTokenHash, ingressTokenCiphertext, ingressTokenNonce []byte
+	llmID                                                       pgtype.UUID
+	llmProvider, llmBaseURL, llmModel                           *string
+	llmSecretID                                                 pgtype.UUID
+	llmVersion                                                  *int64
 }
 
 func mapConfiguration(row configurationRow) (domain.Configuration, error) {
@@ -487,7 +561,10 @@ func mapConfiguration(row configurationRow) (domain.Configuration, error) {
 			Capabilities: row.sourceCapabilities, Enabled: row.sourceEnabled, Version: row.sourceVersion},
 		Trigger: domain.Trigger{ID: uuidString(row.triggerID), Name: row.triggerName, Kind: row.triggerKind,
 			SigningSecretID: optionalUUIDString(row.signingSecretID), Config: row.triggerConfig,
-			Enabled: row.triggerEnabled, Version: row.triggerVersion},
+			Enabled: row.triggerEnabled, Version: row.triggerVersion,
+			IngressTokenHash: row.ingressTokenHash, IngressTokenCiphertext: row.ingressTokenCiphertext,
+			IngressTokenNonce: row.ingressTokenNonce},
+		LLM: mapLLMProvider(row),
 	}
 	if err := domain.ValidateConfiguration(configuration); err != nil {
 		return domain.Configuration{}, fmt.Errorf("validate project configuration row: %w", err)
@@ -534,6 +611,24 @@ func mapSecret(id, projectID pgtype.UUID, name, kindValue string, keyVersion int
 	return domain.Secret{ID: uuidString(id), ProjectID: uuidString(projectID), Name: name, Kind: kind, KeyVersion: keyVersion,
 		Version: version, CreatedAt: createdAt.Time.UTC(), UpdatedAt: updatedAt.Time.UTC()}, nil
 }
+
+func mapLLMProvider(row configurationRow) *domain.LLMProvider {
+	if !row.llmID.Valid || row.llmProvider == nil || row.llmBaseURL == nil || row.llmModel == nil || row.llmVersion == nil {
+		return nil
+	}
+	secretID := optionalUUIDString(row.llmSecretID)
+	if secretID == nil {
+		return nil
+	}
+	return &domain.LLMProvider{
+		ID: uuidString(row.llmID), Provider: *row.llmProvider, BaseURL: *row.llmBaseURL,
+		CredentialSecretID: *secretID, Model: *row.llmModel, Version: *row.llmVersion,
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
+func int64Pointer(value int64) *int64 { return &value }
 
 func uuidParameter(value, label string) (pgtype.UUID, error) {
 	parsed, err := uuid.Parse(value)
@@ -583,7 +678,13 @@ func constraintError(err error, name string) bool {
 type repositoryError struct {
 	operation string
 	cause     error
+	stack     errtrace.Trace
 }
 
-func (e repositoryError) Error() string { return e.operation + " failed" }
-func (e repositoryError) Unwrap() error { return e.cause }
+func newRepositoryError(operation string, cause error) repositoryError {
+	return repositoryError{operation: operation, cause: cause, stack: errtrace.Capture(1)}
+}
+
+func (e repositoryError) Error() string              { return e.operation + " failed" }
+func (e repositoryError) Unwrap() error              { return e.cause }
+func (e repositoryError) StackTrace() errtrace.Trace { return e.stack }
