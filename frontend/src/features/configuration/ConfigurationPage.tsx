@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CircleHelp, Eye, GitBranch, LoaderCircle, Plus, Settings2 } from "lucide-react";
+import { Check, CircleHelp, Copy, Eye, GitBranch, LoaderCircle, Plus, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, messageFromError, type ListResult, type Project } from "../../api";
@@ -45,6 +45,13 @@ export function ConfigurationPage() {
       <tr><td>Git repository</td><td>{value.repository.scmProvider}</td><td><code>{value.repository.remoteUrl}</code></td><td>{value.repository.credentialSecretId ? "Credential linked" : "No credential"}</td></tr>
       <tr><td>Collection source</td><td>{value.source.name}</td><td>{value.source.kind}</td><td>{value.source.enabled ? "Enabled" : "Disabled"}</td></tr>
       <tr><td>Trigger</td><td>{value.trigger.name}</td><td>{value.trigger.kind.replace("_", " ")}</td><td>{value.trigger.enabled ? "Enabled" : "Disabled"}</td></tr>
+      {value.trigger.kind === "signed_webhook" && value.trigger.inboundUrl && <tr>
+        <td>Inbound webhook</td>
+        <td>Public URL</td>
+        <td><InboundUrlCopy value={value.trigger.inboundUrl} /></td>
+        <td>Admin only</td>
+      </tr>}
+      <tr><td>LLM provider</td><td>{value.llm?.provider || "Not configured"}</td><td>{value.llm ? <code>{value.llm.model}</code> : "Base URL and model are required to run remediation"}</td><td>{value.llm?.credentialSecretId ? "Credential linked" : "No credential"}</td></tr>
     </tbody></table></div>
     <section className="metadata-note"><CircleHelp size={17} /><p>Credential values are write-only. This page receives only stable secret references and never plaintext, ciphertext, or nonce values.</p></section>
   </section>;
@@ -102,4 +109,19 @@ function ProjectIdentitySection() {
     </div>
     {updateName.error && <ErrorNotice message={messageFromError(updateName.error)} />}
   </section>;
+}
+
+function InboundUrlCopy({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copyUrl = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return <div className="inbound-url-copy">
+    <code>{value}</code>
+    <button className="secondary-button" type="button" onClick={() => void copyUrl()}>
+      {copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "Copied" : "Copy URL"}
+    </button>
+  </div>;
 }

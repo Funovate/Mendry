@@ -1,7 +1,7 @@
 import { CircleHelp } from "lucide-react";
 import type { ProjectConfiguration } from "../../../api";
 
-export function ReviewStep({ configuration }: { configuration: ProjectConfiguration }) {
+export function ReviewStep({ configuration, inboundUrl }: { configuration: ProjectConfiguration; inboundUrl?: string | null }) {
   return <section>
     <div className="setup-card-title"><CircleHelp size={20} /><div><h2>Review</h2><p>Confirm every section before saving — this is the exact snapshot that will be written.</p></div></div>
     <div className="review-summary">
@@ -38,7 +38,9 @@ export function ReviewStep({ configuration }: { configuration: ProjectConfigurat
         <dl>
           <dt>Name</dt><dd>{configuration.trigger.name}</dd>
           <dt>Kind</dt><dd>{configuration.trigger.kind}</dd>
-          <dt>Signing credential</dt><dd>{configuration.trigger.signingSecretId || "No credential"}</dd>
+          {configuration.trigger.kind === "signed_webhook" && inboundUrl && <>
+            <dt>Inbound URL</dt><dd>{inboundUrl}</dd>
+          </>}
         </dl>
       </div>
     </div>

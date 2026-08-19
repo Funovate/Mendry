@@ -37,7 +37,7 @@ describe("configuration projections", () => {
   it("builds source-specific and trigger-specific payloads", () => {
     expect(buildSourceConfig("ssh", input)).toEqual(expect.objectContaining({ schemaVersion: 1, host: "host.internal", port: 22, mode: "tail" }));
     expect(buildSourceConfig("cloud", input)).toEqual({ schemaVersion: 1, provider: "tencent-cls", region: "ap-guangzhou", resource: "server-log" });
-    expect(buildTriggerConfig("signed_webhook", { eventTypes: "alarm-fired, alarm-recovered", deduplicationKey: " fingerprint ", groupingWindowSeconds: 900, matchExpression: "" })).toEqual({ schemaVersion: 1, eventTypes: ["alarm-fired", "alarm-recovered"], deduplicationKey: "fingerprint" });
+    expect(buildTriggerConfig("signed_webhook", { eventTypes: "", deduplicationKey: "", groupingWindowSeconds: 900, matchExpression: "" })).toEqual({ schemaVersion: 1, eventTypes: ["alarm"], deduplicationKey: "title" });
   });
 });
 

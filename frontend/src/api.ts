@@ -94,11 +94,32 @@ const projectConfigurationSchema = z.object({
     id: z.string().optional(),
     name: z.string(),
     kind: triggerKindSchema,
-    signingSecretId: z.string().nullable(),
+    signingSecretId: z.string().nullable().optional(),
+    inboundUrl: z.string().nullable().optional(),
     config: unknownRecordSchema,
     enabled: z.boolean(),
     version: z.number().optional(),
   }),
+  llm: z.object({
+    id: z.string().optional(),
+    provider: z.literal("openai"),
+    baseUrl: z.string(),
+    credentialSecretId: z.string(),
+    model: z.string(),
+    version: z.number().optional(),
+  }).nullish(),
+});
+
+const llmModelsSchema = z.object({
+  models: z.array(z.string()),
+});
+
+const llmChatProbeSchema = z.object({
+  status: z.literal("ok"),
+});
+
+const webhookTokenSchema = z.object({
+  inboundUrl: z.string(),
 });
 
 const observationSchema = z.object({
@@ -145,6 +166,39 @@ const auditEventSchema = z.object({
   summary: z.string(),
   metadata: unknownRecordSchema,
   occurredAt: z.string(),
+});
+
+const remediationDiagnosisSchema = z.object({
+  fixability: z.string(),
+  confidence: z.number(),
+  causalReasoning: z.string(),
+  evidenceRefs: z.array(z.string()),
+  contradictions: z.array(z.string()),
+  missingEvidence: z.array(z.string()),
+  recommendedNextAction: z.string(),
+});
+
+const remediationPlanSchema = z.object({
+  planId: z.string(),
+  intendedBehavior: z.string(),
+  risk: z.string(),
+  rationale: z.string(),
+  evidenceRefs: z.array(z.string()),
+  affectedFiles: z.array(z.string()),
+  rollbackStrategy: z.string().optional(),
+  recommended: z.boolean(),
+});
+
+const remediationReviewSchema = z.object({
+  runId: z.string(),
+  seriesId: z.string(),
+  status: z.string(),
+  generation: z.number(),
+  deployedCommit: z.string(),
+  diagnosis: remediationDiagnosisSchema.nullable().optional(),
+  plans: z.array(remediationPlanSchema),
+  suggestedDiff: z.string(),
+  risk: z.string(),
 });
 
 const errorEnvelopeSchema = z.object({
@@ -194,6 +248,7 @@ export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
+export type RemediationReview = z.infer<typeof remediationReviewSchema>;
 export type ListResult<T> = { items: T[]; total: number };
 
 export class ApiError extends Error {
@@ -315,9 +370,15 @@ export const api = {
     }),
   probeRepositoryRefs: (projectKey: string, input: { remoteUrl: string; transport: "https" | "ssh"; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/repository/refs"), repositoryRefsSchema, { method: "POST", body: JSON.stringify(input) }),
+  probeLLMModels: (projectKey: string, input: { baseUrl: string; credentialSecretId: string }) =>
+    requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
+  probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
+    requestData(projectPath(projectKey, "/llm/chat"), llmChatProbeSchema, { method: "POST", body: JSON.stringify(input) }),
   getConfiguration: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { signal }),
   putConfiguration: (projectKey: string, configuration: ProjectConfiguration) =>
     requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { method: "PUT", body: JSON.stringify(configuration) }),
+  rotateWebhookToken: (projectKey: string) =>
+    requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
   listObservations: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/observations?limit=100"), observationSchema, { signal }),
   listIncidents: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/incidents?limit=100"), incidentSchema, { signal }),
   updateIncidentStatus: (projectKey: string, incidentId: string, status: IncidentStatus) =>
@@ -325,6 +386,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  getRemediation: (projectKey: string, incidentId: string, signal?: AbortSignal) =>
+    requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation`), remediationReviewSchema, { signal }),
   listAuditEvents: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/audit-events?limit=100"), auditEventSchema, { signal }),
 };
 

@@ -79,10 +79,11 @@ export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): R
 
 export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string }): Record<string, unknown> {
   if (kind === "signed_webhook") {
+    const eventTypes = input.eventTypes.split(",").map((value) => value.trim()).filter(Boolean);
     return {
       schemaVersion: 1,
-      eventTypes: input.eventTypes.split(",").map((value) => value.trim()).filter(Boolean),
-      deduplicationKey: input.deduplicationKey.trim(),
+      eventTypes: eventTypes.length > 0 ? eventTypes : ["alarm"],
+      deduplicationKey: input.deduplicationKey.trim() || "title",
     };
   }
   return {

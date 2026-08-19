@@ -1,39 +1,32 @@
-import { Activity } from "lucide-react";
-import type { ProjectSecret, TriggerKind } from "../../../api";
-import { CredentialField } from "./CredentialField";
-
-const WEBHOOK_CREDENTIAL_KINDS: { value: ProjectSecret["kind"]; label: string }[] = [
-  { value: "webhook_hmac", label: "Webhook HMAC" },
-];
+import { Activity, Check, Copy, LoaderCircle } from "lucide-react";
+import { useState } from "react";
+import type { TriggerKind } from "../../../api";
 
 export function TriggerStep({
-  triggerName, setTriggerName, triggerKind, setTriggerKind, signingSecretId, setSigningSecretId,
-  eventTypes, setEventTypes, deduplicationKey, setDeduplicationKey, groupingWindowSeconds, setGroupingWindowSeconds,
-  matchExpression, setMatchExpression, knownSecrets, createCredential, creatingCredential, createCredentialError,
-  updateCredential, updatingCredential = false, updateCredentialError,
+  triggerName, setTriggerName, triggerKind, setTriggerKind,
+  groupingWindowSeconds, setGroupingWindowSeconds, matchExpression, setMatchExpression,
+  inboundUrl, onGenerateInboundUrl, generatingInboundUrl = false, generateInboundUrlError,
 }: {
   triggerName: string;
   setTriggerName: (value: string) => void;
   triggerKind: TriggerKind;
   setTriggerKind: (value: TriggerKind) => void;
-  signingSecretId: string;
-  setSigningSecretId: (value: string) => void;
-  eventTypes: string;
-  setEventTypes: (value: string) => void;
-  deduplicationKey: string;
-  setDeduplicationKey: (value: string) => void;
   groupingWindowSeconds: number;
   setGroupingWindowSeconds: (value: number) => void;
   matchExpression: string;
   setMatchExpression: (value: string) => void;
-  knownSecrets: ProjectSecret[];
-  createCredential: (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => Promise<ProjectSecret>;
-  creatingCredential: boolean;
-  createCredentialError?: unknown;
-  updateCredential: (input: { secretId: string; name: string; value?: string }) => Promise<ProjectSecret>;
-  updatingCredential?: boolean;
-  updateCredentialError?: unknown;
+  inboundUrl?: string | null;
+  onGenerateInboundUrl?: () => Promise<string>;
+  generatingInboundUrl?: boolean;
+  generateInboundUrlError?: unknown;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copyUrl = async () => {
+    if (!inboundUrl) return;
+    await navigator.clipboard.writeText(inboundUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
   return <section>
     <div className="setup-card-title"><Activity size={20} /><div><h2>Trigger</h2><p>Signed webhooks or custom rules decide how normalized events enter incident grouping.</p></div></div>
     <div className="source-form">
@@ -43,17 +36,18 @@ export function TriggerStep({
         <option value="signed_webhook">Signed webhook</option>
       </select></label>
     </div>
-    {triggerKind === "signed_webhook" ? <>
-      <CredentialField
-        label="Webhook signing credential" value={signingSecretId} onChange={setSigningSecretId}
-        secrets={knownSecrets.filter((secret) => secret.kind === "webhook_hmac")} required
-        createLabelPrefix="Webhook" allowedCreateKinds={WEBHOOK_CREDENTIAL_KINDS} onCreate={createCredential}
-        creating={creatingCredential} createError={createCredentialError}
-        onUpdate={updateCredential} updating={updatingCredential} updateError={updateCredentialError}
-      />
-      <label>Event types<input aria-label="Webhook event types" value={eventTypes} onChange={(event) => setEventTypes(event.target.value)} /></label>
-      <label>Deduplication key<input aria-label="Deduplication key" value={deduplicationKey} onChange={(event) => setDeduplicationKey(event.target.value)} /></label>
-    </> : <>
+    {triggerKind === "signed_webhook" ? <div className="inbound-url-field">
+      <label>Inbound webhook URL<input aria-label="Inbound webhook URL" value={inboundUrl ?? ""} readOnly placeholder="Generate an inbound URL after the project is saved." /></label>
+      <div className="inbound-url-actions">
+        <button className="secondary-button" type="button" disabled={!inboundUrl} onClick={() => void copyUrl()}>
+          {copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "Copied" : "Copy URL"}
+        </button>
+        {onGenerateInboundUrl && <button className="secondary-button" type="button" disabled={generatingInboundUrl} onClick={() => void onGenerateInboundUrl()}>
+          {generatingInboundUrl ? <LoaderCircle className="spin" size={16} /> : null}{inboundUrl ? "Regenerate URL" : "Generate URL"}
+        </button>}
+      </div>
+      {generateInboundUrlError instanceof Error && <p role="alert">{generateInboundUrlError.message}</p>}
+    </div> : <>
       <label>Grouping window seconds<input aria-label="Grouping window seconds" type="number" min="1" max="86400" value={groupingWindowSeconds} onChange={(event) => setGroupingWindowSeconds(Number(event.target.value))} /></label>
       <label>Match expression<textarea aria-label="Match expression" value={matchExpression} onChange={(event) => setMatchExpression(event.target.value)} /></label>
     </>}

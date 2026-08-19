@@ -8,19 +8,21 @@ import { queryKeys } from "../../app/query";
 import { ErrorNotice, LoadingState, PageError } from "../../shared/ui";
 import {
   buildSourceConfig, buildTriggerConfig, configurationOrNull, defaultSourceCapabilities,
-  readConfigNumber, readConfigString, readConfigStrings, readStringRecord,
+  readConfigNumber, readConfigString, readStringRecord,
 } from "./configuration";
+import { LLMStep } from "./wizard/LLMStep";
 import { RepositoryStep } from "./wizard/RepositoryStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SourceStep } from "./wizard/SourceStep";
 import { TriggerStep } from "./wizard/TriggerStep";
 
-type StepId = "repository" | "source" | "trigger" | "review";
+type StepId = "repository" | "source" | "trigger" | "llm" | "review";
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: "repository", label: "Git repository" },
   { id: "source", label: "Collection source" },
   { id: "trigger", label: "Trigger" },
+  { id: "llm", label: "LLM provider" },
   { id: "review", label: "Review" },
 ];
 
@@ -83,11 +85,14 @@ function ConfigurationWizard({ current, secrets }: { current: ProjectConfigurati
   const [sourceResource, setSourceResource] = useState(readConfigString(current?.source.config, "resource", "service-logs"));
   const [triggerName, setTriggerName] = useState(current?.trigger.name ?? "incident-rule");
   const [triggerKind, setTriggerKind] = useState<TriggerKind>(current?.trigger.kind ?? "custom_rule");
-  const [signingSecretId, setSigningSecretId] = useState(current?.trigger.signingSecretId ?? "");
-  const [eventTypes, setEventTypes] = useState(readConfigStrings(current?.trigger.config, "eventTypes", ["alarm-fired", "alarm-recovered"]).join(", "));
-  const [deduplicationKey, setDeduplicationKey] = useState(readConfigString(current?.trigger.config, "deduplicationKey", "fingerprint"));
+  const [inboundUrl, setInboundUrl] = useState(current?.trigger.inboundUrl ?? "");
   const [groupingWindowSeconds, setGroupingWindowSeconds] = useState(readConfigNumber(current?.trigger.config, "groupingWindowSeconds", 900));
   const [matchExpression, setMatchExpression] = useState(readConfigString(current?.trigger.config, "matchExpression", "level=ERROR"));
+  const [llmBaseUrl, setLlmBaseUrl] = useState(current?.llm?.baseUrl ?? "https://api.openai.com");
+  const [llmCredentialId, setLlmCredentialId] = useState(current?.llm?.credentialSecretId ?? "");
+  const [llmModel, setLlmModel] = useState(current?.llm?.model ?? "");
+  const [llmModels, setLlmModels] = useState<string[]>(current?.llm?.model ? [current.llm.model] : []);
+  const [llmChatReady, setLlmChatReady] = useState(false);
   const [validationError, setValidationError] = useState("");
 
   const createSecret = useMutation({
@@ -124,10 +129,35 @@ function ConfigurationWizard({ current, secrets }: { current: ProjectConfigurati
     mutationFn: (input: { remoteUrl: string; transport: "https" | "ssh"; credentialSecretId: string }) => api.probeRepositoryRefs(project.key, input),
     onSuccess: applyRepositoryRefs,
   });
+  const probeLLMModels = useMutation({
+    mutationFn: (input: { baseUrl: string; credentialSecretId: string }) => api.probeLLMModels(project.key, input),
+    onSuccess: (result) => {
+      setLlmModels(result.models);
+      if (llmModel && !result.models.includes(llmModel)) {
+        setLlmModel("");
+        setLlmChatReady(false);
+      }
+    },
+  });
+  const probeLLMChat = useMutation({
+    mutationFn: (input: { baseUrl: string; credentialSecretId: string; model: string }) => api.probeLLMChat(project.key, input),
+    onSuccess: () => setLlmChatReady(true),
+  });
   const saveConfiguration = useMutation({
     mutationFn: (configuration: ProjectConfiguration) => api.putConfiguration(project.key, configuration),
     onSuccess: (saved) => {
       queryClient.setQueryData(queryKeys.configuration(project.key), saved);
+      setInboundUrl(saved.trigger.inboundUrl ?? "");
+    },
+  });
+  const rotateWebhookToken = useMutation({
+    mutationFn: () => api.rotateWebhookToken(project.key),
+    onSuccess: (result) => {
+      setInboundUrl(result.inboundUrl);
+      queryClient.setQueryData<ProjectConfiguration>(queryKeys.configuration(project.key), (currentConfiguration) => currentConfiguration ? {
+        ...currentConfiguration,
+        trigger: { ...currentConfiguration.trigger, inboundUrl: result.inboundUrl },
+      } : currentConfiguration);
     },
   });
   const createCredential = (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => createSecret.mutateAsync(input);
@@ -148,9 +178,15 @@ function ConfigurationWizard({ current, secrets }: { current: ProjectConfigurati
       capabilities: sourceCapabilities, enabled: current?.source.enabled ?? true,
     },
     trigger: {
-      name: triggerName.trim(), kind: triggerKind, signingSecretId: triggerKind === "signed_webhook" ? signingSecretId || null : null,
-      config: buildTriggerConfig(triggerKind, { eventTypes, deduplicationKey, groupingWindowSeconds, matchExpression }),
+      name: triggerName.trim(), kind: triggerKind, signingSecretId: null,
+      config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression }),
       enabled: current?.trigger.enabled ?? true,
+    },
+    llm: {
+      provider: "openai",
+      baseUrl: llmBaseUrl.trim(),
+      credentialSecretId: llmCredentialId,
+      model: llmModel.trim(),
     },
   });
 
@@ -169,16 +205,20 @@ function ConfigurationWizard({ current, secrets }: { current: ProjectConfigurati
       ? "Read the Git remote before saving."
       : sourceCapabilities.length === 0
         ? "Select at least one collection capability."
-        : triggerKind === "signed_webhook" && !signingSecretId
-          ? "Select a webhook signing credential for the signed webhook trigger."
-          : null;
+        : !llmCredentialId
+            ? "Select an LLM API key credential."
+            : !llmModel.trim()
+              ? "Load and select an LLM model."
+              : !llmChatReady
+                ? "Test the selected model with hi before saving."
+                : null;
 
   return <section className="setup-view">
     <div className="setup-header">
       <button type="button" className="back-link" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/configuration`)}><ChevronLeft size={17} />Configuration</button>
       <div className="eyebrow">{project.name}</div>
       <h1>Project configuration</h1>
-      <p>Environment, Git baseline, one collection source, and one trigger are saved as one transactional snapshot.</p>
+      <p>Environment, Git baseline, one collection source, one trigger, and one LLM provider are saved as one transactional snapshot.</p>
     </div>
     <div className="wizard-steps" role="tablist">
       {STEPS.map((step) => <button
@@ -216,13 +256,23 @@ function ConfigurationWizard({ current, secrets }: { current: ProjectConfigurati
       />}
       {activeStep === "trigger" && <TriggerStep
         triggerName={triggerName} setTriggerName={setTriggerName} triggerKind={triggerKind} setTriggerKind={setTriggerKind}
-        signingSecretId={signingSecretId} setSigningSecretId={setSigningSecretId} eventTypes={eventTypes} setEventTypes={setEventTypes}
-        deduplicationKey={deduplicationKey} setDeduplicationKey={setDeduplicationKey} groupingWindowSeconds={groupingWindowSeconds} setGroupingWindowSeconds={setGroupingWindowSeconds}
+        groupingWindowSeconds={groupingWindowSeconds} setGroupingWindowSeconds={setGroupingWindowSeconds}
         matchExpression={matchExpression} setMatchExpression={setMatchExpression}
+        inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}
+        generatingInboundUrl={rotateWebhookToken.isPending} generateInboundUrlError={rotateWebhookToken.error}
+      />}
+      {activeStep === "llm" && <LLMStep
+        baseUrl={llmBaseUrl} setBaseUrl={(value) => { setLlmBaseUrl(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
+        credentialId={llmCredentialId} setCredentialId={(value) => { setLlmCredentialId(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
+        model={llmModel} setModel={(value) => { setLlmModel(value); setLlmChatReady(false); }} models={llmModels}
+        onLoadModels={() => { if (llmCredentialId) probeLLMModels.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId }); }}
+        loadingModels={probeLLMModels.isPending} loadModelsError={probeLLMModels.error}
+        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() }); }}
+        testingChat={probeLLMChat.isPending} testChatError={probeLLMChat.error} chatReady={llmChatReady}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}
         updateCredential={updateCredential} updatingCredential={updateSecret.isPending} updateCredentialError={updateSecret.error}
       />}
-      {activeStep === "review" && <ReviewStep configuration={buildConfigurationPayload()} />}
+      {activeStep === "review" && <ReviewStep configuration={buildConfigurationPayload()} inboundUrl={inboundUrl} />}
       {validationError && <ErrorNotice message={validationError} />}
       {saveConfiguration.error && <ErrorNotice message={messageFromError(saveConfiguration.error)} />}
       <footer className="setup-footer">

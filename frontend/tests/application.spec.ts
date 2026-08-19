@@ -52,6 +52,7 @@ function configuration(overrides: { environmentName?: string } = {}) {
       name: "backend-errors",
       kind: "custom_rule",
       signingSecretId: null,
+      inboundUrl: null,
       config: { schemaVersion: 1, groupingWindowSeconds: 900, matchExpression: "level=ERROR" },
       enabled: true,
       version: 1,
@@ -193,8 +194,22 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (path === "/api/v1/projects/real-estate/configuration" && method === "PUT") {
       currentConfiguration = body as ReturnType<typeof configuration>;
+      if (currentConfiguration.trigger.kind === "signed_webhook" && !currentConfiguration.trigger.inboundUrl) {
+        currentConfiguration = {
+          ...currentConfiguration,
+          trigger: { ...currentConfiguration.trigger, inboundUrl: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO" },
+        };
+      }
       writes.push({ method, path, body });
       return json(currentConfiguration);
+    }
+    if (path === "/api/v1/projects/real-estate/configuration/webhook-token" && method === "POST") {
+      const inboundUrl = "http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML";
+      if (currentConfiguration) {
+        currentConfiguration = { ...currentConfiguration, trigger: { ...currentConfiguration.trigger, inboundUrl } };
+      }
+      writes.push({ method, path, body });
+      return json({ inboundUrl });
     }
     if (path === "/api/v1/projects/real-estate/observations" && method === "GET") {
       if (options.expireResource === "observations") {
@@ -355,13 +370,9 @@ test("administrator persists credentials, configuration, members, and incident l
   await page.getByRole("tab", { name: "Trigger" }).click();
   await expect(page.getByLabel("Git remote URL")).toHaveCount(0);
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
-  await page.getByRole("button", { name: "New credential" }).click();
-  await page.getByLabel("Webhook credential name").fill("webhook-signing-prod");
-  await page.getByLabel("Webhook credential type").selectOption("webhook_hmac");
-  await page.getByLabel("Webhook credential value").fill("super-secret-hmac");
-  await page.getByRole("button", { name: "Store webhook credential" }).click();
-  await expect(page.getByLabel("Webhook signing credential")).toHaveValue("secret-webhook-signing-prod");
-  await expect(page.getByText("super-secret-hmac", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByLabel("Webhook signing credential")).toHaveCount(0);
+  await expect(page.getByLabel("Webhook event types")).toHaveCount(0);
 
   await page.getByRole("tab", { name: "Git repository" }).click();
   await page.getByRole("button", { name: "New credential" }).click();
@@ -418,7 +429,6 @@ test("administrator persists credentials, configuration, members, and incident l
 
   expect(state.writes).toEqual(expect.arrayContaining([
     { method: "PATCH", path: "/api/v1/projects/real-estate/incidents/INC-2048/status", body: { status: "Recovered" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "webhook-signing-prod", kind: "webhook_hmac", value: "super-secret-hmac" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-http-ci", kind: "git_credential", value: "deploy:https-token-value" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-ci", kind: "ssh_private_key", value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----\nkey-passphrase" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/members/oncall", body: { role: "operator" } },
@@ -522,8 +532,8 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
 
   await page.getByRole("tab", { name: "Trigger" }).click();
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
-  await page.getByRole("button", { name: "New credential" }).click();
-  await expect(page.getByLabel("Webhook credential value")).toBeVisible();
+  await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByLabel("Webhook credential value")).toHaveCount(0);
   await expect(page.getByLabel("Webhook SSH private key file")).toHaveCount(0);
   await expect(page.getByLabel("SSH private key file", { exact: true })).toHaveCount(0);
 
@@ -602,18 +612,16 @@ test("administrator edits Git, source, and webhook credentials without disclosin
 
   await page.getByRole("tab", { name: "Trigger" }).click();
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
-  await page.getByLabel("Webhook signing credential").selectOption("secret-webhook");
-  await page.getByRole("button", { name: "Edit credential" }).click();
-  await expect(page.getByLabel("Webhook credential type")).toHaveValue("webhook_hmac");
-  await page.getByLabel("Webhook credential name").fill("webhook-hmac-renamed");
-  await page.getByRole("button", { name: "Save webhook credential" }).click();
-  await expect(page.getByLabel("Webhook signing credential")).toHaveValue("secret-webhook");
+  await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByLabel("Webhook signing credential")).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate URL" }).click();
+  await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML");
 
   expect(state.writes).toEqual(expect.arrayContaining([
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git", body: { name: "git-http-renamed" } },
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git", body: { name: "git-http-rotated", value: "deploy:rotated-https-token" } },
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-source", body: { name: "source-bearer-renamed", value: "rotated-source-token" } },
-    { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-webhook", body: { name: "webhook-hmac-renamed" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/configuration/webhook-token", body: {} },
   ]));
   expect(state.writes.some((write) => JSON.stringify(write.body).includes("ciphertext"))).toBeFalsy();
 });
@@ -633,6 +641,7 @@ test("viewer receives the permission matrix without mutation controls", async ({
   await expect(page.getByLabel("Project name")).toHaveAttribute("readonly", "");
   await expect(page.getByLabel("Project key")).toHaveValue("real-estate");
   await expect(page.getByRole("button", { name: "Edit project name" })).toHaveCount(0);
+  await expect(page.getByText("Inbound webhook", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Members" }).click();
   await expect(page.getByRole("row", { name: /operator operator Yes Yes No/ })).toBeVisible();
   await expect(page.getByLabel("Member username")).toHaveCount(0);

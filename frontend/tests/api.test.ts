@@ -197,4 +197,83 @@ describe("API contract boundary", () => {
       updatedAt: "2026-08-13T09:00:00Z",
     });
   });
+
+  it("unwraps a remediation review envelope", async () => {
+    const review = {
+      runId: "run-1",
+      seriesId: "series-1",
+      status: "diagnosis_ready_for_review",
+      generation: 1,
+      deployedCommit: "abc123",
+      diagnosis: {
+        fixability: "code_fixable",
+        confidence: 0.9,
+        causalReasoning: "nil deref",
+        evidenceRefs: ["ev-1"],
+        contradictions: [],
+        missingEvidence: [],
+        recommendedNextAction: "apply suggested patch",
+      },
+      plans: [{
+        planId: "p1",
+        intendedBehavior: "add nil check",
+        risk: "ordinary",
+        rationale: "simplest",
+        evidenceRefs: ["ev-1"],
+        affectedFiles: ["main.go"],
+        recommended: true,
+      }],
+      suggestedDiff: "diff --git a/main.go",
+      risk: "ordinary",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: review,
+      meta: { requestId: "request-7", durationMs: 2 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.getRemediation("payments", "INC-2049")).resolves.toEqual(review);
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/projects/payments/incidents/INC-2049/remediation", expect.objectContaining({
+      credentials: "include",
+    }));
+  });
+
+  it("ignores unknown secret-like fields on a remediation payload", async () => {
+    const review = {
+      runId: "run-1",
+      seriesId: "series-1",
+      status: "queued",
+      generation: 1,
+      deployedCommit: "abc123",
+      diagnosis: null,
+      plans: [],
+      suggestedDiff: "",
+      risk: "",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: { ...review, prompt: "sk-secret" },
+      meta: { requestId: "request-8", durationMs: 1 },
+    }), { status: 200 })));
+    await expect(api.getRemediation("payments", "INC-2049")).resolves.toEqual(review);
+  });
+
+  it("posts an empty body when rotating a webhook token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: { inboundUrl: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" },
+      meta: { requestId: "request-9", durationMs: 1 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.rotateWebhookToken("payments")).resolves.toEqual({
+      inboundUrl: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/projects/payments/configuration/webhook-token", expect.objectContaining({
+      method: "POST",
+      body: "{}",
+    }));
+  });
 });

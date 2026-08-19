@@ -57,6 +57,29 @@
   grid-column: 1 / -1;
 }
 
+.inbound-url-field {
+  display: grid;
+  gap: 10px;
+}
+
+.inbound-url-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inbound-url-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.inbound-url-copy code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .setup-summary {
   display: flex;
   align-items: center;
