@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Extend CredentialField and GitCredentialField only; secret plaintext rules; no third editor."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Write-only secrets, Git SSH compose, clear inputs after success."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Local parse/validate before request; do not invent a new DTO."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Route-mocked E2E must assert secret write bodies, not clicks only."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Keep helpers in the configuration feature; do not import prototype App.tsx."}
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Adapters already extract PEM blocks; ssh_password is rejected for log reads."}
