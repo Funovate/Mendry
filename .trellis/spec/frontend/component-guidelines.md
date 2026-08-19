@@ -38,15 +38,19 @@ Do not add a generic component abstraction for a one-off layout.
 
 - Render business actions from `project.capabilities`, not role comparisons.
 - Role text may explain access but must not grant it.
-- Secret plaintext may appear only in the active password input and outgoing request.
-- After a successful secret write, clear the input and render only returned metadata.
+- Secret plaintext may appear only in the active write control (password input
+  or `ssh_private_key` textarea) and the outgoing request.
+- After a successful secret write, clear the input, file picker, and import
+  error, then render only returned metadata.
 - Project identity edits are capability-gated by `manageConfiguration`. The
   project key is always read-only. Viewers see name and key without edit controls.
 - Extend `CredentialField` and `GitCredentialField` for create and edit. Do not
-  add a third credential editor. Create and edit modes are mutually exclusive.
-  Edit mode shows the immutable kind, pre-fills only the display name, and starts
-  sensitive inputs empty. Switching the selected credential or closing edit mode
-  clears every sensitive draft.
+  add a third credential editor. `SshPrivateKeyDraftField` is a shared textarea
+  plus file input used by those two editors, not a third editor. Create and
+  edit modes are mutually exclusive. Edit mode shows the immutable kind,
+  pre-fills only the display name, and starts sensitive inputs empty. Switching
+  the selected credential, allowed kind set, Git transport, or closing edit
+  mode clears every sensitive draft, file name, and import error.
 
 ## Styling
 
@@ -92,9 +96,12 @@ credential reference and permission summary.
 
 The Git repository step chooses create fields from transport, not from a kind
 select. HTTPS asks for username plus password/token and stores
-`git_credential`. SSH asks for a private-key textarea plus optional passphrase
-and stores `ssh_private_key`. The existing-secret dropdown lists only kinds
-valid for the current transport.
+`git_credential`. SSH asks for a private-key textarea, optional passphrase,
+and a local `.pem` / OpenSSH file picker, then stores `ssh_private_key`.
+Source `ssh_private_key` uses the same textarea plus file picker and does not
+add a passphrase field. Other secret kinds stay on a single-line password
+input. The existing-secret dropdown lists only kinds valid for the current
+transport or source.
 
 Production branch and deployed commit are not typed. The operator reads them
 from the remote; branch is a select of returned heads and commit is read-only.
@@ -114,4 +121,10 @@ of required gates and the absence of the entered secret from rendered text.
 - Importing prototype fixtures into a production route to fill a missing backend capability.
 - Making a non-functional icon button appear actionable without a backend or UI contract.
 - Letting a feature failure replace the entire shell instead of its route content.
+- Collecting an `ssh_private_key` in a single-line password input. PEM text
+  loses newlines and cannot be inspected.
+- Uploading a private-key file as multipart or storing it as a blob. Read the
+  file to text in the browser and send the existing secrets API value.
+- Treating `SshPrivateKeyDraftField` as a third credential editor, or leaving
+  an SSH create form open when the source kind or Git transport changes.
 - Nesting route-owned business forms inside the app composition layer.

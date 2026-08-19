@@ -48,6 +48,10 @@ the advisory before changing versions; do not run a forced audit fix.
 - Secret values are cleared and never appear in response state or rendered text.
 - Project rename and credential edit stay on the same project key and secret ID.
 - Incomplete Git replacement drafts disable Save instead of sending name-only.
+- `ssh_private_key` E2E asserts file import and paste POST bodies, a rejected
+  non-PEM file with no secrets write, a name-only PATCH that omits `value`,
+  and the absence of key text after success. Non-key kinds must not expose a
+  private-key file picker.
 - Editing one configuration field does not reset hidden connector fields.
 - A business `401` leaves Session observed with `null` data and clears only
   non-session queries.

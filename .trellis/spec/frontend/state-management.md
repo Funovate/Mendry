@@ -40,9 +40,17 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
   and `manageConfiguration`.
 - Components use capabilities for action availability. A local role selector
   must never authorize a business action.
-- `ProjectConfiguration` owns one environment, repository, source, and trigger
-  snapshot. Source and trigger config objects must round-trip every field for
-  their selected kind.
+- `ProjectConfiguration` owns one environment, repository, source, trigger, and
+  optional LLM snapshot. Source and trigger config objects must round-trip every
+  field for their selected kind. LLM stores `provider`, `baseUrl`,
+  `credentialSecretId`, and `model`; the API key itself is a write-only
+  `http_bearer` secret.
+- `POST /api/v1/projects/{projectKey}/llm/models` decrypts the selected bearer
+  secret in the API process, calls the provider `/v1/models` endpoint, and
+  returns model IDs only. The UI must load that list before saving a new model.
+- `POST /api/v1/projects/{projectKey}/llm/chat` sends a bounded `hi` Chat
+  Completions probe with the selected model. Save stays disabled until this
+  probe succeeds. The response is `{status:"ok"}` and never includes model text.
 - Secret values exist only in the write form and outgoing create/update request.
   Responses are metadata only; clear the input after success. `updateSecret`
   omits `value` for a name-only edit and never sends `kind`.
@@ -50,6 +58,14 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
   compose the private key and optional passphrase into one `ssh_private_key`
   value. Configuration still stores only `credentialSecretId`. Incomplete Git
   replacement drafts are not complete and must not omit `value`.
+- `inspectSshPrivateKeyDraft` / `inspectSshPrivateKeyFile` gate every
+  `ssh_private_key` create and every replacement that sends `value`. Empty,
+  unreadable, oversized (`> 65519` UTF-8 bytes of the stored secret), public
+  keys, and PuTTY `.ppk` fail with a stable message that never interpolates
+  file contents. An empty SSH replacement remains name-only. File import is
+  `File` → text (`file.text()` or `FileReader.readAsText`); jsdom has no
+  `File.text()`. Git measures size on the composed key-plus-passphrase
+  string. Do not convert `.ppk`.
 - After `updateProjectName`, replace the matching item in the `projects` cache
   and invalidate configuration so a synchronized environment name is fetched.
   After `updateSecret`, replace the matching item in the project-scoped secrets
