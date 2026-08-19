@@ -139,3 +139,37 @@ Added FIXTHE_POSTGRES_QUERY_DEBUG so query logs can emit one interpolated, copy-
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: SSH PEM credential import
+
+**Date**: 2026-08-19
+**Task**: SSH PEM credential import
+**Branch**: `main`
+
+### Summary
+
+Added client-side PEM/OpenSSH file import and paste inspection on Git SSH and SSH log-source credentials; recorded frontend spec rules. Did not change backend secrets or convert PuTTY keys.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6aba5a5` | (see git log) |
+| `7fa94ab` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
