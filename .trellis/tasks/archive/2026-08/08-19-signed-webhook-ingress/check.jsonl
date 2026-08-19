@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/project-guidelines.md", "reason": "Verify HMAC is no longer required, inboundUrl is admin-only, and tokens are hashed+encrypted on the trigger row."}
+{"file": ".trellis/spec/backend/incident-guidelines.md", "reason": "Verify inbound ingest create/bump/ignore-closed and null audit actor."}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Verify POST /hooks/{token} has no Session and authenticated routes still require one."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Verify FIXTHE_PUBLIC_URL and the hooks route are documented."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify access logs use the hooks pattern and never the raw token path."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify webhook_not_found vs invalid_request mapping and no token in envelopes."}
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Verify hooks does not call Git/SSH/LLM adapters; P2 create still emits RemediationTrigger."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify webhook UI is read-only URL + copy/regenerate with no HMAC field."}
+{"file": "backend/internal/modules/projects/domain/project.go", "reason": "Verify signed_webhook validation and token column invariants."}
+{"file": "backend/internal/modules/hooks", "reason": "Verify unauthenticated ingest orchestration and 404 collapsing."}
+{"file": "backend/internal/modules/incidents/application/service.go", "reason": "Verify authenticated Create/UpdateStatus still require a principal."}
+{"file": "frontend/src/features/configuration/wizard/TriggerStep.tsx", "reason": "Verify HMAC/event-type fields are gone and inbound URL is not editable."}

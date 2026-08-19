@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/backend/project-guidelines.md", "reason": "Current project/trigger/secret/Observation contracts; public webhook is still documented as unimplemented and HMAC is required for signed_webhook."}
+{"file": ".trellis/spec/backend/incident-guidelines.md", "reason": "Authenticated incident create/list/status; fingerprint uniqueness; no inbound ingest or occurrence bump yet."}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Session middleware and role checks; hooks route must stay outside RequireAuthentication."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Config keys, bootstrap wiring, and HTTP route registration."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "AccessLog uses route pattern; tokens must never appear in completed/failed records."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Forward-only sqlc migrations and comment conventions for 000010."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Stable error envelopes; unknown token must not leak as distinct from missing project."}
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Inbound P2 create must reuse RemediationTrigger, not call adapters from hooks."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Trigger wizard and configuration overview patterns."}
+{"file": "backend/internal/modules/projects/domain/project.go", "reason": "Trigger validation currently requires SigningSecretID for signed_webhook."}
+{"file": "backend/internal/modules/incidents/application/service.go", "reason": "Create requires a principal and only conflicts on fingerprint; bump path does not exist."}
+{"file": "backend/internal/modules/observations/application/service.go", "reason": "Create requires RequireIncidentWrite; inbound needs a no-principal path."}
+{"file": "backend/internal/bootstrap/api.go", "reason": "Composition root for the new hooks route and public URL."}
+{"file": "frontend/src/features/configuration/wizard/TriggerStep.tsx", "reason": "Current HMAC/event-type UI to replace with inbound URL."}
