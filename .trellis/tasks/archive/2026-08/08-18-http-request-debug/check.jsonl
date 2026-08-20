@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify default-off payload ban, debug completed fields, skipped failed snapshot, MaxBodyBytes ceiling, and console projection."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Verify FIXTHE_HTTP_REQUEST_DEBUG is documented on the HTTP boundary group."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify constructors, Chinese comments, and tests inject writers instead of mutating global logger state."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify client responses and http.request.error are unchanged when debug is on."}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Verify session cookies stay off the default log path and appear only on the documented debug exception."}

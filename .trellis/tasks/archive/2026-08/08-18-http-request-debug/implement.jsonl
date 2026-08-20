@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Default-off inbound contract, failure-snapshot exception, and the new FIXTHE_HTTP_REQUEST_DEBUG exception this task adds."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "API HTTP / boundary environment group must list the new key."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Constructor, comment, and test isolation rules for config + AccessLog + observability field changes."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Client error envelopes and http.request.error stay unchanged; debug dump must not leak into responses."}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Session cookie and Authorization become loggable only when the debug switch is on; default path must still forbid them."}
