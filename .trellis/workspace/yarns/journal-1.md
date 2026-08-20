@@ -208,3 +208,36 @@ Added a server-generated path token and public POST /hooks/{token} so alert syst
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Remove redundant configuration names
+
+**Date**: 2026-08-20
+**Task**: Remove redundant configuration names
+**Branch**: `main`
+
+### Summary
+
+Closed the source/trigger alias-removal task after backend/frontend quality gates and a scoped commit. Also audited the leftover MVP task tree: archived completed or expired contracts (bootstrap, console API/prototype, connector framework, LLM providers, remediation-changes, 08-12 foundation, HTTP request debug) and left notes on the remaining foundation/domain/ingestion/evidence/harness work.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b8d7508` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
