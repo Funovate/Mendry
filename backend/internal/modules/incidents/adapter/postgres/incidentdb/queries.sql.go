@@ -53,7 +53,7 @@ type CreateIncidentParams struct {
 	Fingerprint         string
 	Status              string
 	Priority            string
-	SourceName          string
+	Source              string
 	FirstSeen           pgtype.Timestamptz
 	LastSeen            pgtype.Timestamptz
 	OccurrenceCount     int64
@@ -100,7 +100,7 @@ func (q *Queries) CreateIncident(ctx context.Context, arg CreateIncidentParams) 
 		arg.Fingerprint,
 		arg.Status,
 		arg.Priority,
-		arg.SourceName,
+		arg.Source,
 		arg.FirstSeen,
 		arg.LastSeen,
 		arg.OccurrenceCount,
@@ -400,7 +400,7 @@ func (q *Queries) GetIncidentByNumber(ctx context.Context, arg GetIncidentByNumb
 }
 
 const getIncidentSourceScope = `-- name: GetIncidentSourceScope :one
-SELECT source.environment_id, source.name
+SELECT source.environment_id, source.kind AS source
 FROM project_sources AS source
 WHERE source.project_id = $1
   AND source.id = $2
@@ -414,13 +414,13 @@ type GetIncidentSourceScopeParams struct {
 
 type GetIncidentSourceScopeRow struct {
 	EnvironmentID pgtype.UUID
-	Name          string
+	Source        string
 }
 
 func (q *Queries) GetIncidentSourceScope(ctx context.Context, arg GetIncidentSourceScopeParams) (GetIncidentSourceScopeRow, error) {
 	row := q.db.QueryRow(ctx, getIncidentSourceScope, arg.ProjectID, arg.SourceID)
 	var i GetIncidentSourceScopeRow
-	err := row.Scan(&i.EnvironmentID, &i.Name)
+	err := row.Scan(&i.EnvironmentID, &i.Source)
 	return i, err
 }
 

@@ -1,5 +1,5 @@
-import { FileSearch } from "lucide-react";
-import type { ProjectSecret, SourceKind } from "../../../api";
+import { Check, FileSearch, LoaderCircle } from "lucide-react";
+import { messageFromError, type ProjectSecret, type SourceKind } from "../../../api";
 import { CredentialField } from "./CredentialField";
 
 const SOURCE_CREDENTIAL_KINDS: Record<SourceKind, { value: ProjectSecret["kind"]; label: string }[]> = {
@@ -18,16 +18,15 @@ const SOURCE_CREDENTIAL_KINDS: Record<SourceKind, { value: ProjectSecret["kind"]
 };
 
 export function SourceStep({
-  sourceName, setSourceName, sourceKind, onSourceKindChange, sourceCredentialId, setSourceCredentialId,
+  sourceKind, onSourceKindChange, sourceCredentialId, setSourceCredentialId,
   sourceCapabilities, toggleCapability, sourceEndpoint, setSourceEndpoint, mcpTransport, setMcpTransport,
   mcpHeaders, setMcpHeaders, evidenceProfile, setEvidenceProfile, queryScope, setQueryScope,
   sourceHost, setSourceHost, sshPort, setSshPort, sshUser, setSshUser, projectFolder, setProjectFolder,
   logPath, setLogPath, readMode, setReadMode, cloudProvider, setCloudProvider, cloudRegion, setCloudRegion,
   sourceResource, setSourceResource, knownSecrets, createCredential, creatingCredential, createCredentialError,
   updateCredential, updatingCredential = false, updateCredentialError,
+  onSave, saving = false, canSave = false, saveError,
 }: {
-  sourceName: string;
-  setSourceName: (value: string) => void;
   sourceKind: SourceKind;
   onSourceKindChange: (kind: SourceKind) => void;
   sourceCredentialId: string;
@@ -69,11 +68,14 @@ export function SourceStep({
   updateCredential: (input: { secretId: string; name: string; value?: string }) => Promise<ProjectSecret>;
   updatingCredential?: boolean;
   updateCredentialError?: unknown;
+  onSave: () => void;
+  saving?: boolean;
+  canSave?: boolean;
+  saveError?: unknown;
 }) {
   return <section>
-    <div className="setup-card-title"><FileSearch size={20} /><div><h2>Collection source</h2><p>Configure the complete persisted contract for one read-only source.</p></div></div>
+    <div className="setup-card-title"><FileSearch size={20} /><div><h2>Collection source</h2><p>Configure one read-only source.</p></div></div>
     <div className="source-form">
-      <label>Source name<input aria-label="Source name" value={sourceName} onChange={(event) => setSourceName(event.target.value)} /></label>
       <label>Source type<select aria-label="Source type" value={sourceKind} onChange={(event) => onSourceKindChange(event.target.value as SourceKind)}>
         <option value="cloud">Cloud logs</option>
         <option value="mcp">MCP</option>
@@ -127,5 +129,11 @@ export function SourceStep({
         <input type="checkbox" checked={sourceCapabilities.includes(capability)} onChange={() => toggleCapability(capability)} />{capability.replaceAll("_", " ")}
       </label>)}
     </fieldset>
+    <div className="setup-section-actions">
+      <button className="primary-button" type="button" disabled={saving || !canSave} onClick={onSave}>
+        {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}Save collection source
+      </button>
+      {saveError !== undefined && saveError !== null && <p className="credential-field-error" role="alert">{messageFromError(saveError)}</p>}
+    </div>
   </section>;
 }

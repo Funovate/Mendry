@@ -92,7 +92,6 @@ type Repository struct {
 
 type Source struct {
 	ID                 string
-	Name               string
 	Kind               string
 	CredentialSecretID *string
 	Config             json.RawMessage
@@ -103,7 +102,6 @@ type Source struct {
 
 type Trigger struct {
 	ID              string
-	Name            string
 	Kind            string
 	SigningSecretID *string
 	Config          json.RawMessage
@@ -134,6 +132,16 @@ type Configuration struct {
 	Repository  Repository
 	Source      Source
 	Trigger     Trigger
+	LLM         *LLMProvider
+}
+
+// ConfigurationDraft 表示配置编辑器读取到的可部分保存配置。
+// 每个组件都可以尚未落库，完整运行配置仍由 Configuration 表示。
+type ConfigurationDraft struct {
+	Environment *Environment
+	Repository  *Repository
+	Source      *Source
+	Trigger     *Trigger
 	LLM         *LLMProvider
 }
 
@@ -277,14 +285,17 @@ func ValidateRepositoryProbe(remoteURL, transport string) error {
 	return nil
 }
 
-func ValidateConfiguration(configuration Configuration) error {
-	environment := configuration.Environment
+// ValidateEnvironment 校验项目环境的独立配置。
+func ValidateEnvironment(environment Environment) error {
 	if !environmentKeyPattern.MatchString(environment.Key) || !bounded(environment.Name, 1, 120) ||
 		(environment.Service != nil && !bounded(*environment.Service, 1, 120)) {
 		return fmt.Errorf("environment configuration is invalid")
 	}
+	return nil
+}
 
-	repository := configuration.Repository
+// ValidateRepository 校验 Git 仓库的独立配置。
+func ValidateRepository(repository Repository) error {
 	remote, err := url.Parse(repository.RemoteURL)
 	if err != nil || remote.User != nil || remote.Host == "" || !bounded(repository.RemoteURL, 1, 2048) ||
 		!oneOf(remote.Scheme, "https", "ssh") || remote.Scheme != repository.Transport {
@@ -295,32 +306,51 @@ func ValidateConfiguration(configuration Configuration) error {
 		!commitPattern.MatchString(repository.DeployedCommit) {
 		return fmt.Errorf("repository configuration is invalid")
 	}
-	for _, reference := range []*string{repository.CredentialSecretID, configuration.Source.CredentialSecretID, configuration.Trigger.SigningSecretID} {
-		if err := validateOptionalUUIDv7(reference); err != nil {
-			return err
-		}
+	return validateOptionalUUIDv7(repository.CredentialSecretID)
+}
+
+// ValidateSource 校验 collection source 的独立配置。
+func ValidateSource(source Source) error {
+	if err := validateOptionalUUIDv7(source.CredentialSecretID); err != nil {
+		return err
+	}
+	if !oneOf(source.Kind, "ssh", "cloud", "mcp") {
+		return fmt.Errorf("source configuration is invalid")
+	}
+	if err := validateCapabilities(source.Capabilities); err != nil {
+		return err
+	}
+	return validateSourceConfig(source.Kind, source.Config)
+}
+
+// ValidateTrigger 校验 trigger 的独立配置。
+func ValidateTrigger(trigger Trigger) error {
+	if err := validateOptionalUUIDv7(trigger.SigningSecretID); err != nil {
+		return err
+	}
+	if !oneOf(trigger.Kind, "signed_webhook", "custom_rule") {
+		return fmt.Errorf("trigger configuration is invalid")
+	}
+	return validateTriggerConfig(trigger.Kind, trigger.Config)
+}
+
+func ValidateConfiguration(configuration Configuration) error {
+	if err := ValidateEnvironment(configuration.Environment); err != nil {
+		return err
+	}
+	if err := ValidateRepository(configuration.Repository); err != nil {
+		return err
+	}
+	if err := ValidateSource(configuration.Source); err != nil {
+		return err
+	}
+	if err := ValidateTrigger(configuration.Trigger); err != nil {
+		return err
 	}
 	if configuration.LLM != nil {
 		if err := ValidateLLMProvider(*configuration.LLM); err != nil {
 			return err
 		}
-	}
-
-	if !bounded(configuration.Source.Name, 1, 120) || !oneOf(configuration.Source.Kind, "ssh", "cloud", "mcp") {
-		return fmt.Errorf("source configuration is invalid")
-	}
-	if err := validateCapabilities(configuration.Source.Capabilities); err != nil {
-		return err
-	}
-	if err := validateSourceConfig(configuration.Source.Kind, configuration.Source.Config); err != nil {
-		return err
-	}
-
-	if !bounded(configuration.Trigger.Name, 1, 120) || !oneOf(configuration.Trigger.Kind, "signed_webhook", "custom_rule") {
-		return fmt.Errorf("trigger configuration is invalid")
-	}
-	if err := validateTriggerConfig(configuration.Trigger.Kind, configuration.Trigger.Config); err != nil {
-		return err
 	}
 	return nil
 }

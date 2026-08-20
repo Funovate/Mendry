@@ -71,7 +71,7 @@ func (f *fakeQueries) RecordIncidentOccurrence(_ context.Context, params inciden
 
 func TestRepositoryCreateCarriesProjectSourceActorAndAudit(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 456000000, time.FixedZone("offset", 8*60*60))
-	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Name: "production-logs"}, createRow: validCreateRow(t, now.UTC())}
+	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Source: "mcp"}, createRow: validCreateRow(t, now.UTC())}
 	repository := &Repository{queries: queries}
 	created, err := repository.Create(context.Background(), validDomainIncident(now), actorIDValue, auditIDValue, nil)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestRepositoryCreateCarriesProjectSourceActorAndAudit(t *testing.T) {
 	if created.Number != 2049 || created.ProjectID != projectIDValue || created.SourceID != sourceIDValue ||
 		queries.createParams.ProjectID != uuidValue(t, projectIDValue) || queries.createParams.SourceID != uuidValue(t, sourceIDValue) ||
 		queries.createParams.ActorUserID != uuidValue(t, actorIDValue) || queries.createParams.AuditID != uuidValue(t, auditIDValue) ||
-		queries.createParams.SourceName != "production-logs" || queries.createParams.FirstSeen.Time.Location() != time.UTC {
+		queries.createParams.Source != "mcp" || queries.createParams.FirstSeen.Time.Location() != time.UTC {
 		t.Fatalf("created = %#v, params = %#v", created, queries.createParams)
 	}
 }
@@ -121,7 +121,7 @@ func TestRepositoryMapsNotFoundConflictAndSafeErrors(t *testing.T) {
 	}
 
 	postgresError := &pgconn.PgError{Code: "23505", ConstraintName: "incidents_project_fingerprint_unique_idx", Message: "sensitive database detail"}
-	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Name: "source"}, createError: postgresError}
+	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Source: "cloud"}, createError: postgresError}
 	repository = &Repository{queries: queries}
 	if _, err := repository.Create(context.Background(), validDomainIncident(time.Now()), actorIDValue, auditIDValue, nil); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("Create() conflict error = %v", err)
@@ -172,19 +172,19 @@ func validValues(t *testing.T, now time.Time) rowValues {
 }
 func validCreateRow(t *testing.T, now time.Time) incidentdb.CreateIncidentRow {
 	v := validValues(t, now)
-	return incidentdb.CreateIncidentRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "production-logs", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
+	return incidentdb.CreateIncidentRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "mcp", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
 }
 func validGetRow(t *testing.T, now time.Time) incidentdb.GetIncidentByNumberRow {
 	v := validValues(t, now)
-	return incidentdb.GetIncidentByNumberRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "production-logs", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
+	return incidentdb.GetIncidentByNumberRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "mcp", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
 }
 func validListRow(t *testing.T, now time.Time) incidentdb.ListIncidentsRow {
 	v := validValues(t, now)
-	return incidentdb.ListIncidentsRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "production-logs", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
+	return incidentdb.ListIncidentsRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Open", Priority: "P2", Source: "mcp", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 1, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
 }
 func validUpdateRow(t *testing.T, now time.Time) incidentdb.UpdateIncidentStatusRow {
 	v := validValues(t, now)
-	return incidentdb.UpdateIncidentStatusRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Closed", Priority: "P2", Source: "production-logs", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 2, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
+	return incidentdb.UpdateIncidentStatusRow{ID: v.id, ProjectID: v.projectID, EnvironmentID: v.environmentID, SourceID: v.sourceID, IncidentNumber: 2049, Title: "Database latency", Fingerprint: "pg:latency", Status: "Closed", Priority: "P2", Source: "mcp", FirstSeen: v.timestamp, LastSeen: v.timestamp, OccurrenceCount: 2, HostCount: 1, NotificationSummary: "Lifecycle default", Version: 2, CreatedAt: v.timestamp, UpdatedAt: v.timestamp}
 }
 
 func validDomainIncident(now time.Time) domain.Incident {

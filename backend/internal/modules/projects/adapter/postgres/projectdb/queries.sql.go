@@ -267,10 +267,10 @@ SELECT e.id AS environment_id, e.environment_key, e.name AS environment_name, e.
        r.id AS repository_id, r.remote_url, r.scm_provider, r.transport,
        r.credential_secret_id AS repository_credential_secret_id,
        r.production_branch, r.deployed_commit, r.version AS repository_version,
-       s.id AS source_id, s.name AS source_name, s.kind AS source_kind,
+       s.id AS source_id, s.kind AS source_kind,
        s.credential_secret_id AS source_credential_secret_id, s.config AS source_config,
        s.capabilities AS source_capabilities, s.enabled AS source_enabled, s.version AS source_version,
-       t.id AS trigger_id, t.name AS trigger_name, t.kind AS trigger_kind,
+       t.id AS trigger_id, t.kind AS trigger_kind,
        t.signing_secret_id, t.config AS trigger_config, t.enabled AS trigger_enabled,
        t.version AS trigger_version,
        t.ingress_token_hash, t.ingress_token_ciphertext, t.ingress_token_nonce,
@@ -302,7 +302,6 @@ type GetProjectConfigurationRow struct {
 	DeployedCommit               string
 	RepositoryVersion            int64
 	SourceID                     pgtype.UUID
-	SourceName                   string
 	SourceKind                   string
 	SourceCredentialSecretID     pgtype.UUID
 	SourceConfig                 []byte
@@ -310,7 +309,6 @@ type GetProjectConfigurationRow struct {
 	SourceEnabled                bool
 	SourceVersion                int64
 	TriggerID                    pgtype.UUID
-	TriggerName                  string
 	TriggerKind                  string
 	SigningSecretID              pgtype.UUID
 	TriggerConfig                []byte
@@ -345,7 +343,6 @@ func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.
 		&i.DeployedCommit,
 		&i.RepositoryVersion,
 		&i.SourceID,
-		&i.SourceName,
 		&i.SourceKind,
 		&i.SourceCredentialSecretID,
 		&i.SourceConfig,
@@ -353,7 +350,6 @@ func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.
 		&i.SourceEnabled,
 		&i.SourceVersion,
 		&i.TriggerID,
-		&i.TriggerName,
 		&i.TriggerKind,
 		&i.SigningSecretID,
 		&i.TriggerConfig,
@@ -368,6 +364,65 @@ func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.
 		&i.LlmCredentialSecretID,
 		&i.LlmModel,
 		&i.LlmVersion,
+	)
+	return i, err
+}
+
+const getProjectEnvironment = `-- name: GetProjectEnvironment :one
+SELECT id, environment_key, name, service, version
+FROM project_environments
+WHERE project_id = $1
+ORDER BY created_at
+LIMIT 1
+`
+
+type GetProjectEnvironmentRow struct {
+	ID             pgtype.UUID
+	EnvironmentKey string
+	Name           string
+	Service        *string
+	Version        int64
+}
+
+func (q *Queries) GetProjectEnvironment(ctx context.Context, projectID pgtype.UUID) (GetProjectEnvironmentRow, error) {
+	row := q.db.QueryRow(ctx, getProjectEnvironment, projectID)
+	var i GetProjectEnvironmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentKey,
+		&i.Name,
+		&i.Service,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getProjectLLMProvider = `-- name: GetProjectLLMProvider :one
+SELECT id, provider, base_url, credential_secret_id, model, version
+FROM project_llm_providers
+WHERE project_id = $1
+LIMIT 1
+`
+
+type GetProjectLLMProviderRow struct {
+	ID                 pgtype.UUID
+	Provider           string
+	BaseUrl            string
+	CredentialSecretID pgtype.UUID
+	Model              string
+	Version            int64
+}
+
+func (q *Queries) GetProjectLLMProvider(ctx context.Context, projectID pgtype.UUID) (GetProjectLLMProviderRow, error) {
+	row := q.db.QueryRow(ctx, getProjectLLMProvider, projectID)
+	var i GetProjectLLMProviderRow
+	err := row.Scan(
+		&i.ID,
+		&i.Provider,
+		&i.BaseUrl,
+		&i.CredentialSecretID,
+		&i.Model,
+		&i.Version,
 	)
 	return i, err
 }
@@ -408,6 +463,41 @@ func (q *Queries) GetProjectMemberByUsername(ctx context.Context, arg GetProject
 	return i, err
 }
 
+const getProjectRepository = `-- name: GetProjectRepository :one
+SELECT id, remote_url, scm_provider, transport, credential_secret_id,
+       production_branch, deployed_commit, version
+FROM project_repositories
+WHERE project_id = $1
+LIMIT 1
+`
+
+type GetProjectRepositoryRow struct {
+	ID                 pgtype.UUID
+	RemoteUrl          string
+	ScmProvider        string
+	Transport          string
+	CredentialSecretID pgtype.UUID
+	ProductionBranch   string
+	DeployedCommit     string
+	Version            int64
+}
+
+func (q *Queries) GetProjectRepository(ctx context.Context, projectID pgtype.UUID) (GetProjectRepositoryRow, error) {
+	row := q.db.QueryRow(ctx, getProjectRepository, projectID)
+	var i GetProjectRepositoryRow
+	err := row.Scan(
+		&i.ID,
+		&i.RemoteUrl,
+		&i.ScmProvider,
+		&i.Transport,
+		&i.CredentialSecretID,
+		&i.ProductionBranch,
+		&i.DeployedCommit,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getProjectSecret = `-- name: GetProjectSecret :one
 SELECT id, project_id, name, kind, ciphertext, nonce, key_version, version, created_at, updated_at
 FROM project_secrets
@@ -433,6 +523,75 @@ func (q *Queries) GetProjectSecret(ctx context.Context, arg GetProjectSecretPara
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getProjectSource = `-- name: GetProjectSource :one
+SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
+FROM project_sources
+WHERE project_id = $1
+LIMIT 1
+`
+
+type GetProjectSourceRow struct {
+	ID                 pgtype.UUID
+	Kind               string
+	CredentialSecretID pgtype.UUID
+	Config             []byte
+	Capabilities       []string
+	Enabled            bool
+	Version            int64
+}
+
+func (q *Queries) GetProjectSource(ctx context.Context, projectID pgtype.UUID) (GetProjectSourceRow, error) {
+	row := q.db.QueryRow(ctx, getProjectSource, projectID)
+	var i GetProjectSourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.CredentialSecretID,
+		&i.Config,
+		&i.Capabilities,
+		&i.Enabled,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getProjectTrigger = `-- name: GetProjectTrigger :one
+SELECT id, kind, signing_secret_id, config, enabled, version,
+       ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+FROM project_triggers
+WHERE project_id = $1
+LIMIT 1
+`
+
+type GetProjectTriggerRow struct {
+	ID                     pgtype.UUID
+	Kind                   string
+	SigningSecretID        pgtype.UUID
+	Config                 []byte
+	Enabled                bool
+	Version                int64
+	IngressTokenHash       []byte
+	IngressTokenCiphertext []byte
+	IngressTokenNonce      []byte
+}
+
+func (q *Queries) GetProjectTrigger(ctx context.Context, projectID pgtype.UUID) (GetProjectTriggerRow, error) {
+	row := q.db.QueryRow(ctx, getProjectTrigger, projectID)
+	var i GetProjectTriggerRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SigningSecretID,
+		&i.Config,
+		&i.Enabled,
+		&i.Version,
+		&i.IngressTokenHash,
+		&i.IngressTokenCiphertext,
+		&i.IngressTokenNonce,
 	)
 	return i, err
 }
@@ -910,16 +1069,15 @@ WITH changed_environment AS (
               production_branch, deployed_commit, version
 ), changed_source AS (
     INSERT INTO project_sources (
-        id, project_id, environment_id, name, kind, credential_secret_id,
+        id, project_id, environment_id, kind, credential_secret_id,
         config, capabilities, enabled
     )
     SELECT $13, $2, changed_environment.id,
-           $14, $15, $16,
-           $17, $18, $19
+           $14, $15,
+           $16, $17, $18
     FROM changed_environment
     ON CONFLICT (project_id) DO UPDATE
     SET environment_id = EXCLUDED.environment_id,
-        name = EXCLUDED.name,
         kind = EXCLUDED.kind,
         credential_secret_id = EXCLUDED.credential_secret_id,
         config = EXCLUDED.config,
@@ -927,20 +1085,19 @@ WITH changed_environment AS (
         enabled = EXCLUDED.enabled,
         version = project_sources.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, name, kind, credential_secret_id, config, capabilities, enabled, version
+    RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
 ), changed_trigger AS (
     INSERT INTO project_triggers (
-        id, project_id, environment_id, name, kind, signing_secret_id, config, enabled,
+        id, project_id, environment_id, kind, signing_secret_id, config, enabled,
         ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
     )
-    SELECT $20, $2, changed_environment.id,
-           $21, $22, $23,
-           $24, $25,
-           $26, $27, $28
+    SELECT $19, $2, changed_environment.id,
+           $20, $21,
+           $22, $23,
+           $24, $25, $26
     FROM changed_environment
     ON CONFLICT (project_id) DO UPDATE
     SET environment_id = EXCLUDED.environment_id,
-        name = EXCLUDED.name,
         kind = EXCLUDED.kind,
         signing_secret_id = EXCLUDED.signing_secret_id,
         config = EXCLUDED.config,
@@ -950,14 +1107,14 @@ WITH changed_environment AS (
         ingress_token_nonce = EXCLUDED.ingress_token_nonce,
         version = project_triggers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, name, kind, signing_secret_id, config, enabled, version,
+    RETURNING id, kind, signing_secret_id, config, enabled, version,
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 ), changed_llm AS (
     INSERT INTO project_llm_providers (
         id, project_id, provider, base_url, credential_secret_id, model
     ) VALUES (
-        $29, $2, $30,
-        $31, $32, $33
+        $27, $2, $28,
+        $29, $30, $31
     )
     ON CONFLICT (project_id) DO UPDATE
     SET provider = EXCLUDED.provider,
@@ -969,7 +1126,7 @@ WITH changed_environment AS (
     RETURNING id, provider, base_url, credential_secret_id, model, version
 ), created_audit AS (
     INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $34, $2, $35,
+    SELECT $32, $2, $33,
            'project.configuration.updated', 'project', $2,
            'Project configuration updated.',
            jsonb_build_object(
@@ -989,13 +1146,11 @@ SELECT changed_environment.id AS environment_id,
        changed_repository.credential_secret_id AS repository_credential_secret_id,
        changed_repository.production_branch, changed_repository.deployed_commit,
        changed_repository.version AS repository_version,
-       changed_source.id AS source_id, changed_source.name AS source_name,
-       changed_source.kind AS source_kind,
+       changed_source.id AS source_id, changed_source.kind AS source_kind,
        changed_source.credential_secret_id AS source_credential_secret_id,
        changed_source.config AS source_config, changed_source.capabilities AS source_capabilities,
        changed_source.enabled AS source_enabled, changed_source.version AS source_version,
-       changed_trigger.id AS trigger_id, changed_trigger.name AS trigger_name,
-       changed_trigger.kind AS trigger_kind, changed_trigger.signing_secret_id,
+       changed_trigger.id AS trigger_id, changed_trigger.kind AS trigger_kind, changed_trigger.signing_secret_id,
        changed_trigger.config AS trigger_config, changed_trigger.enabled AS trigger_enabled,
        changed_trigger.version AS trigger_version,
        changed_trigger.ingress_token_hash, changed_trigger.ingress_token_ciphertext,
@@ -1021,14 +1176,12 @@ type UpsertProjectConfigurationParams struct {
 	ProductionBranch             string
 	DeployedCommit               string
 	SourceID                     pgtype.UUID
-	SourceName                   string
 	SourceKind                   string
 	SourceCredentialSecretID     pgtype.UUID
 	SourceConfig                 []byte
 	SourceCapabilities           []string
 	SourceEnabled                bool
 	TriggerID                    pgtype.UUID
-	TriggerName                  string
 	TriggerKind                  string
 	SigningSecretID              pgtype.UUID
 	TriggerConfig                []byte
@@ -1060,7 +1213,6 @@ type UpsertProjectConfigurationRow struct {
 	DeployedCommit               string
 	RepositoryVersion            int64
 	SourceID                     pgtype.UUID
-	SourceName                   string
 	SourceKind                   string
 	SourceCredentialSecretID     pgtype.UUID
 	SourceConfig                 []byte
@@ -1068,7 +1220,6 @@ type UpsertProjectConfigurationRow struct {
 	SourceEnabled                bool
 	SourceVersion                int64
 	TriggerID                    pgtype.UUID
-	TriggerName                  string
 	TriggerKind                  string
 	SigningSecretID              pgtype.UUID
 	TriggerConfig                []byte
@@ -1100,14 +1251,12 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		arg.ProductionBranch,
 		arg.DeployedCommit,
 		arg.SourceID,
-		arg.SourceName,
 		arg.SourceKind,
 		arg.SourceCredentialSecretID,
 		arg.SourceConfig,
 		arg.SourceCapabilities,
 		arg.SourceEnabled,
 		arg.TriggerID,
-		arg.TriggerName,
 		arg.TriggerKind,
 		arg.SigningSecretID,
 		arg.TriggerConfig,
@@ -1139,7 +1288,6 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		&i.DeployedCommit,
 		&i.RepositoryVersion,
 		&i.SourceID,
-		&i.SourceName,
 		&i.SourceKind,
 		&i.SourceCredentialSecretID,
 		&i.SourceConfig,
@@ -1147,7 +1295,6 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		&i.SourceEnabled,
 		&i.SourceVersion,
 		&i.TriggerID,
-		&i.TriggerName,
 		&i.TriggerKind,
 		&i.SigningSecretID,
 		&i.TriggerConfig,
@@ -1162,6 +1309,140 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		&i.LlmCredentialSecretID,
 		&i.LlmModel,
 		&i.LlmVersion,
+	)
+	return i, err
+}
+
+const upsertProjectEnvironment = `-- name: UpsertProjectEnvironment :one
+WITH changed_environment AS (
+    INSERT INTO project_environments (id, project_id, environment_key, name, service)
+    VALUES ($1, $2, $3,
+            $4, $5)
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_key = EXCLUDED.environment_key,
+        name = EXCLUDED.name,
+        service = EXCLUDED.service,
+        version = project_environments.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, environment_key, name, service, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $6, $2, $7,
+           'project.configuration.updated', 'project', $2,
+           'Project environment configuration updated.',
+           jsonb_build_object('environmentKey', changed_environment.environment_key)
+    FROM changed_environment
+ )
+SELECT id, environment_key, name, service, version
+FROM changed_environment
+`
+
+type UpsertProjectEnvironmentParams struct {
+	EnvironmentID   pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentKey  string
+	EnvironmentName string
+	Service         *string
+	AuditID         pgtype.UUID
+	ActorUserID     pgtype.UUID
+}
+
+type UpsertProjectEnvironmentRow struct {
+	ID             pgtype.UUID
+	EnvironmentKey string
+	Name           string
+	Service        *string
+	Version        int64
+}
+
+func (q *Queries) UpsertProjectEnvironment(ctx context.Context, arg UpsertProjectEnvironmentParams) (UpsertProjectEnvironmentRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectEnvironment,
+		arg.EnvironmentID,
+		arg.ProjectID,
+		arg.EnvironmentKey,
+		arg.EnvironmentName,
+		arg.Service,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectEnvironmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentKey,
+		&i.Name,
+		&i.Service,
+		&i.Version,
+	)
+	return i, err
+}
+
+const upsertProjectLLMProvider = `-- name: UpsertProjectLLMProvider :one
+WITH changed_llm AS (
+    INSERT INTO project_llm_providers (
+        id, project_id, provider, base_url, credential_secret_id, model
+    ) VALUES (
+        $1, $2, $3,
+        $4, $5, $6
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET provider = EXCLUDED.provider,
+        base_url = EXCLUDED.base_url,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        model = EXCLUDED.model,
+        version = project_llm_providers.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, provider, base_url, credential_secret_id, model, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $7, $2, $8,
+           'project.configuration.updated', 'project', $2,
+           'Project LLM provider configuration updated.',
+           jsonb_build_object('llmProvider', changed_llm.provider, 'llmModel', changed_llm.model)
+    FROM changed_llm
+ )
+SELECT id, provider, base_url, credential_secret_id, model, version
+FROM changed_llm
+`
+
+type UpsertProjectLLMProviderParams struct {
+	LlmID                 pgtype.UUID
+	ProjectID             pgtype.UUID
+	LlmProvider           string
+	LlmBaseUrl            string
+	LlmCredentialSecretID pgtype.UUID
+	LlmModel              string
+	AuditID               pgtype.UUID
+	ActorUserID           pgtype.UUID
+}
+
+type UpsertProjectLLMProviderRow struct {
+	ID                 pgtype.UUID
+	Provider           string
+	BaseUrl            string
+	CredentialSecretID pgtype.UUID
+	Model              string
+	Version            int64
+}
+
+func (q *Queries) UpsertProjectLLMProvider(ctx context.Context, arg UpsertProjectLLMProviderParams) (UpsertProjectLLMProviderRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectLLMProvider,
+		arg.LlmID,
+		arg.ProjectID,
+		arg.LlmProvider,
+		arg.LlmBaseUrl,
+		arg.LlmCredentialSecretID,
+		arg.LlmModel,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectLLMProviderRow
+	err := row.Scan(
+		&i.ID,
+		&i.Provider,
+		&i.BaseUrl,
+		&i.CredentialSecretID,
+		&i.Model,
+		&i.Version,
 	)
 	return i, err
 }
@@ -1237,6 +1518,263 @@ func (q *Queries) UpsertProjectMember(ctx context.Context, arg UpsertProjectMemb
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertProjectRepository = `-- name: UpsertProjectRepository :one
+WITH changed_repository AS (
+    INSERT INTO project_repositories (
+        id, project_id, remote_url, scm_provider, transport, credential_secret_id,
+        production_branch, deployed_commit
+    ) VALUES (
+        $1, $2, $3,
+        $4, $5,
+        $6, $7, $8
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET remote_url = EXCLUDED.remote_url,
+        scm_provider = EXCLUDED.scm_provider,
+        transport = EXCLUDED.transport,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        production_branch = EXCLUDED.production_branch,
+        deployed_commit = EXCLUDED.deployed_commit,
+        version = project_repositories.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, remote_url, scm_provider, transport, credential_secret_id,
+              production_branch, deployed_commit, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $9, $2, $10,
+           'project.configuration.updated', 'project', $2,
+           'Project repository configuration updated.',
+           jsonb_build_object('scmProvider', changed_repository.scm_provider, 'remoteUrl', changed_repository.remote_url)
+    FROM changed_repository
+ )
+SELECT id, remote_url, scm_provider, transport, credential_secret_id,
+       production_branch, deployed_commit, version
+FROM changed_repository
+`
+
+type UpsertProjectRepositoryParams struct {
+	RepositoryID        pgtype.UUID
+	ProjectID           pgtype.UUID
+	RemoteUrl           string
+	ScmProvider         string
+	RepositoryTransport string
+	CredentialSecretID  pgtype.UUID
+	ProductionBranch    string
+	DeployedCommit      string
+	AuditID             pgtype.UUID
+	ActorUserID         pgtype.UUID
+}
+
+type UpsertProjectRepositoryRow struct {
+	ID                 pgtype.UUID
+	RemoteUrl          string
+	ScmProvider        string
+	Transport          string
+	CredentialSecretID pgtype.UUID
+	ProductionBranch   string
+	DeployedCommit     string
+	Version            int64
+}
+
+func (q *Queries) UpsertProjectRepository(ctx context.Context, arg UpsertProjectRepositoryParams) (UpsertProjectRepositoryRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectRepository,
+		arg.RepositoryID,
+		arg.ProjectID,
+		arg.RemoteUrl,
+		arg.ScmProvider,
+		arg.RepositoryTransport,
+		arg.CredentialSecretID,
+		arg.ProductionBranch,
+		arg.DeployedCommit,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectRepositoryRow
+	err := row.Scan(
+		&i.ID,
+		&i.RemoteUrl,
+		&i.ScmProvider,
+		&i.Transport,
+		&i.CredentialSecretID,
+		&i.ProductionBranch,
+		&i.DeployedCommit,
+		&i.Version,
+	)
+	return i, err
+}
+
+const upsertProjectSource = `-- name: UpsertProjectSource :one
+WITH changed_source AS (
+    INSERT INTO project_sources (
+        id, project_id, environment_id, kind, credential_secret_id, config, capabilities, enabled
+    ) VALUES (
+        $1, $2, $3, $4,
+        $5, $6, $7, $8
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_id = EXCLUDED.environment_id,
+        kind = EXCLUDED.kind,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        config = EXCLUDED.config,
+        capabilities = EXCLUDED.capabilities,
+        enabled = EXCLUDED.enabled,
+        version = project_sources.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $9, $2, $10,
+           'project.configuration.updated', 'project', $2,
+           'Project collection source configuration updated.',
+           jsonb_build_object('sourceKind', changed_source.kind)
+    FROM changed_source
+ )
+SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
+FROM changed_source
+`
+
+type UpsertProjectSourceParams struct {
+	SourceID           pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	SourceKind         string
+	CredentialSecretID pgtype.UUID
+	SourceConfig       []byte
+	SourceCapabilities []string
+	SourceEnabled      bool
+	AuditID            pgtype.UUID
+	ActorUserID        pgtype.UUID
+}
+
+type UpsertProjectSourceRow struct {
+	ID                 pgtype.UUID
+	Kind               string
+	CredentialSecretID pgtype.UUID
+	Config             []byte
+	Capabilities       []string
+	Enabled            bool
+	Version            int64
+}
+
+func (q *Queries) UpsertProjectSource(ctx context.Context, arg UpsertProjectSourceParams) (UpsertProjectSourceRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectSource,
+		arg.SourceID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SourceKind,
+		arg.CredentialSecretID,
+		arg.SourceConfig,
+		arg.SourceCapabilities,
+		arg.SourceEnabled,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectSourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.CredentialSecretID,
+		&i.Config,
+		&i.Capabilities,
+		&i.Enabled,
+		&i.Version,
+	)
+	return i, err
+}
+
+const upsertProjectTrigger = `-- name: UpsertProjectTrigger :one
+WITH changed_trigger AS (
+    INSERT INTO project_triggers (
+        id, project_id, environment_id, kind, signing_secret_id, config, enabled,
+        ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+    ) VALUES (
+        $1, $2, $3, $4,
+        $5, $6, $7,
+        $8, $9, $10
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_id = EXCLUDED.environment_id,
+        kind = EXCLUDED.kind,
+        signing_secret_id = EXCLUDED.signing_secret_id,
+        config = EXCLUDED.config,
+        enabled = EXCLUDED.enabled,
+        ingress_token_hash = EXCLUDED.ingress_token_hash,
+        ingress_token_ciphertext = EXCLUDED.ingress_token_ciphertext,
+        ingress_token_nonce = EXCLUDED.ingress_token_nonce,
+        version = project_triggers.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, kind, signing_secret_id, config, enabled, version,
+              ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $11, $2, $12,
+           'project.configuration.updated', 'project', $2,
+           'Project trigger configuration updated.',
+           jsonb_build_object('triggerKind', changed_trigger.kind)
+    FROM changed_trigger
+ )
+SELECT id, kind, signing_secret_id, config, enabled, version,
+       ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+FROM changed_trigger
+`
+
+type UpsertProjectTriggerParams struct {
+	TriggerID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	TriggerKind            string
+	SigningSecretID        pgtype.UUID
+	TriggerConfig          []byte
+	TriggerEnabled         bool
+	IngressTokenHash       []byte
+	IngressTokenCiphertext []byte
+	IngressTokenNonce      []byte
+	AuditID                pgtype.UUID
+	ActorUserID            pgtype.UUID
+}
+
+type UpsertProjectTriggerRow struct {
+	ID                     pgtype.UUID
+	Kind                   string
+	SigningSecretID        pgtype.UUID
+	Config                 []byte
+	Enabled                bool
+	Version                int64
+	IngressTokenHash       []byte
+	IngressTokenCiphertext []byte
+	IngressTokenNonce      []byte
+}
+
+func (q *Queries) UpsertProjectTrigger(ctx context.Context, arg UpsertProjectTriggerParams) (UpsertProjectTriggerRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectTrigger,
+		arg.TriggerID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TriggerKind,
+		arg.SigningSecretID,
+		arg.TriggerConfig,
+		arg.TriggerEnabled,
+		arg.IngressTokenHash,
+		arg.IngressTokenCiphertext,
+		arg.IngressTokenNonce,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectTriggerRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.SigningSecretID,
+		&i.Config,
+		&i.Enabled,
+		&i.Version,
+		&i.IngressTokenHash,
+		&i.IngressTokenCiphertext,
+		&i.IngressTokenNonce,
 	)
 	return i, err
 }

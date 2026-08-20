@@ -1,5 +1,5 @@
 -- name: GetIncidentSourceScope :one
-SELECT source.environment_id, source.name
+SELECT source.environment_id, source.kind AS source
 FROM project_sources AS source
 WHERE source.project_id = sqlc.arg(project_id)
   AND source.id = sqlc.arg(source_id)
@@ -14,7 +14,7 @@ WITH created_incident AS (
     ) VALUES (
         sqlc.arg(incident_id), sqlc.arg(project_id), sqlc.arg(environment_id),
         sqlc.arg(source_id), sqlc.arg(title), sqlc.arg(fingerprint), sqlc.arg(status),
-        sqlc.arg(priority), sqlc.arg(source_name), sqlc.arg(first_seen), sqlc.arg(last_seen),
+        sqlc.arg(priority), sqlc.arg(source), sqlc.arg(first_seen), sqlc.arg(last_seen),
         sqlc.arg(occurrence_count), sqlc.arg(host_count), sqlc.arg(muted),
         sqlc.arg(notification_summary), sqlc.arg(lifecycle_generation), sqlc.arg(deployed_commit)
     )

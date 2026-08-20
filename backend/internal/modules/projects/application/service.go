@@ -49,7 +49,13 @@ type Repository interface {
 	ListSecrets(context.Context, string) (ListResult[domain.Secret], error)
 	GetEncryptedSecret(context.Context, string, string) (domain.EncryptedSecret, error)
 	GetConfiguration(context.Context, string) (domain.Configuration, error)
+	GetConfigurationDraft(context.Context, string) (domain.ConfigurationDraft, error)
 	UpsertConfiguration(context.Context, string, domain.Configuration, string, string) (domain.Configuration, error)
+	UpsertEnvironment(context.Context, string, domain.Environment, string, string) (domain.Environment, error)
+	UpsertRepository(context.Context, string, domain.Repository, string, string) (domain.Repository, error)
+	UpsertSource(context.Context, string, string, domain.Source, string, string) (domain.Source, error)
+	UpsertTrigger(context.Context, string, string, domain.Trigger, string, string) (domain.Trigger, error)
+	UpsertLLMProvider(context.Context, string, domain.LLMProvider, string, string) (domain.LLMProvider, error)
 	LookupWebhookToken(context.Context, []byte) (WebhookIngress, error)
 	UpdateWebhookToken(context.Context, string, []byte, []byte, []byte, string, string, bool) error
 	ListAuditEvents(context.Context, string, int32) (ListResult[domain.AuditEvent], error)
@@ -300,6 +306,200 @@ func (s *Service) GetConfiguration(ctx context.Context, principal authdomain.Use
 	return configuration, nil
 }
 
+// GetConfigurationDraft 返回编辑器所需的可部分保存配置。
+func (s *Service) GetConfigurationDraft(ctx context.Context, principal authdomain.User, projectKey string) (domain.ConfigurationDraft, error) {
+	project, err := s.resolve(ctx, principal, projectKey)
+	if err != nil {
+		return domain.ConfigurationDraft{}, err
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.ConfigurationDraft{}, err
+	}
+	if draft.Trigger != nil {
+		if err := s.attachInboundURLToTrigger(project, draft.Trigger); err != nil {
+			return domain.ConfigurationDraft{}, err
+		}
+	}
+	return draft, nil
+}
+
+// PutConfigurationEnvironment 独立保存项目环境配置。
+func (s *Service) PutConfigurationEnvironment(ctx context.Context, principal authdomain.User, projectKey string, environment domain.Environment) (domain.Environment, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	if err := domain.ValidateEnvironment(environment); err != nil {
+		return domain.Environment{}, ErrInvalidInput
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	if draft.Environment != nil {
+		environment.ID = draft.Environment.ID
+	} else if environment.ID == "" {
+		environment.ID, err = s.newID()
+		if err != nil {
+			return domain.Environment{}, err
+		}
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	return s.repository.UpsertEnvironment(ctx, project.ID, environment, principal.ID, auditID)
+}
+
+// PutConfigurationRepository 独立保存 Git 仓库配置。
+func (s *Service) PutConfigurationRepository(ctx context.Context, principal authdomain.User, projectKey string, repository domain.Repository) (domain.Repository, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	if err := domain.ValidateRepository(repository); err != nil {
+		return domain.Repository{}, ErrInvalidInput
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	if draft.Repository != nil {
+		repository.ID = draft.Repository.ID
+	} else if repository.ID == "" {
+		repository.ID, err = s.newID()
+		if err != nil {
+			return domain.Repository{}, err
+		}
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	return s.repository.UpsertRepository(ctx, project.ID, repository, principal.ID, auditID)
+}
+
+// PutConfigurationSource 独立保存 collection source 配置。
+func (s *Service) PutConfigurationSource(ctx context.Context, principal authdomain.User, projectKey string, source domain.Source) (domain.Source, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.Source{}, err
+	}
+	if err := domain.ValidateSource(source); err != nil {
+		return domain.Source{}, ErrInvalidInput
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.Source{}, err
+	}
+	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft, principal.ID)
+	if err != nil {
+		return domain.Source{}, err
+	}
+	if draft.Source != nil {
+		source.ID = draft.Source.ID
+	} else if source.ID == "" {
+		source.ID, err = s.newID()
+		if err != nil {
+			return domain.Source{}, err
+		}
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.Source{}, err
+	}
+	return s.repository.UpsertSource(ctx, project.ID, environment.ID, source, principal.ID, auditID)
+}
+
+// PutConfigurationTrigger 独立保存 trigger 配置，并在首次保存 signed_webhook 时签发 token。
+func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdomain.User, projectKey string, trigger domain.Trigger) (domain.Trigger, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	if err := domain.ValidateTrigger(trigger); err != nil {
+		return domain.Trigger{}, ErrInvalidInput
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft, principal.ID)
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	var current domain.Trigger
+	if draft.Trigger != nil {
+		current = *draft.Trigger
+		trigger.ID = current.ID
+	} else if trigger.ID == "" {
+		trigger.ID, err = s.newID()
+		if err != nil {
+			return domain.Trigger{}, err
+		}
+	}
+	configuration := domain.Configuration{Trigger: trigger}
+	if err := s.applyWebhookToken(project.ID, &configuration, current); err != nil {
+		return domain.Trigger{}, err
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	saved, err := s.repository.UpsertTrigger(ctx, project.ID, environment.ID, configuration.Trigger, principal.ID, auditID)
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	if err := s.attachInboundURLToTrigger(project, &saved); err != nil {
+		return domain.Trigger{}, err
+	}
+	return saved, nil
+}
+
+// PutConfigurationLLMProvider 独立保存 LLM provider 配置。
+func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal authdomain.User, projectKey string, provider domain.LLMProvider) (domain.LLMProvider, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	if err := domain.ValidateLLMProvider(provider); err != nil {
+		return domain.LLMProvider{}, ErrInvalidInput
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	if draft.LLM != nil {
+		provider.ID = draft.LLM.ID
+	} else if provider.ID == "" {
+		provider.ID, err = s.newID()
+		if err != nil {
+			return domain.LLMProvider{}, err
+		}
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	return s.repository.UpsertLLMProvider(ctx, project.ID, provider, principal.ID, auditID)
+}
+
+func (s *Service) ensureConfigurationEnvironment(ctx context.Context, project domain.Project, draft domain.ConfigurationDraft, actorUserID string) (domain.Environment, error) {
+	if draft.Environment != nil {
+		return *draft.Environment, nil
+	}
+	ids, err := s.newIDs(2)
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	environment := domain.Environment{ID: ids[0], Key: project.Key, Name: project.Name}
+	if err := domain.ValidateEnvironment(environment); err != nil {
+		return domain.Environment{}, ErrInvalidInput
+	}
+	return s.repository.UpsertEnvironment(ctx, project.ID, environment, actorUserID, ids[1])
+}
+
 func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.User, projectKey string, configuration domain.Configuration) (domain.Configuration, error) {
 	project, err := s.requireAdmin(ctx, principal, projectKey)
 	if err != nil {
@@ -350,6 +550,7 @@ func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.U
 	if err != nil {
 		return "", err
 	}
+	// 只认已落库的 trigger kind。向导草稿切到 signed_webhook 并不等于可以签发 token。
 	if configuration.Trigger.Kind != "signed_webhook" {
 		return "", ErrInvalidInput
 	}
@@ -563,14 +764,18 @@ func (s *Service) issueWebhookToken(projectID, triggerID string) ([]byte, []byte
 }
 
 func (s *Service) attachInboundURL(project domain.Project, configuration *domain.Configuration) error {
-	configuration.Trigger.InboundURL = ""
-	if !project.CanAdminister() || configuration.Trigger.Kind != "signed_webhook" {
+	return s.attachInboundURLToTrigger(project, &configuration.Trigger)
+}
+
+func (s *Service) attachInboundURLToTrigger(project domain.Project, trigger *domain.Trigger) error {
+	trigger.InboundURL = ""
+	if !project.CanAdminister() || trigger.Kind != "signed_webhook" {
 		return nil
 	}
-	if len(configuration.Trigger.IngressTokenCiphertext) == 0 || len(configuration.Trigger.IngressTokenNonce) == 0 {
+	if len(trigger.IngressTokenCiphertext) == 0 || len(trigger.IngressTokenNonce) == 0 {
 		return nil
 	}
-	plaintext, err := s.cipher.DecryptWebhookToken(project.ID, configuration.Trigger.ID, configuration.Trigger.IngressTokenCiphertext, configuration.Trigger.IngressTokenNonce)
+	plaintext, err := s.cipher.DecryptWebhookToken(project.ID, trigger.ID, trigger.IngressTokenCiphertext, trigger.IngressTokenNonce)
 	if err != nil {
 		return fmt.Errorf("decrypt webhook token: %w", err)
 	}
@@ -583,7 +788,7 @@ func (s *Service) attachInboundURL(project domain.Project, configuration *domain
 	if err != nil {
 		return err
 	}
-	configuration.Trigger.InboundURL = inbound
+	trigger.InboundURL = inbound
 	return nil
 }
 

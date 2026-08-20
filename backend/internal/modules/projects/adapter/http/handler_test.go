@@ -21,14 +21,15 @@ import (
 )
 
 type fakeService struct {
-	project     domain.Project
-	secret      domain.Secret
-	projectKey  string
-	secretID    string
-	secretName  string
-	secretValue []byte
-	inboundURL  string
-	updateErr   error
+	project       domain.Project
+	secret        domain.Secret
+	projectKey    string
+	secretID      string
+	secretName    string
+	secretValue   []byte
+	inboundURL    string
+	configuration domain.Configuration
+	updateErr     error
 }
 
 func (f *fakeService) CreateProject(context.Context, authdomain.User, string, string, string) (domain.Project, error) {
@@ -86,8 +87,85 @@ func (f *fakeService) ListSecrets(context.Context, authdomain.User, string) (pro
 func (f *fakeService) GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error) {
 	return domain.Configuration{Trigger: domain.Trigger{Kind: "signed_webhook", InboundURL: f.inboundURL}}, nil
 }
-func (*fakeService) PutConfiguration(context.Context, authdomain.User, string, domain.Configuration) (domain.Configuration, error) {
-	return domain.Configuration{}, nil
+func (f *fakeService) PutConfiguration(_ context.Context, _ authdomain.User, projectKey string, configuration domain.Configuration) (domain.Configuration, error) {
+	f.projectKey = projectKey
+	f.configuration = configuration
+	configuration.Environment.ID = "env-id"
+	configuration.Repository.ID = "repo-id"
+	configuration.Source.ID = "source-id"
+	configuration.Trigger.ID = "trigger-id"
+	configuration.Environment.Version = 1
+	configuration.Repository.Version = 1
+	configuration.Source.Version = 1
+	configuration.Trigger.Version = 1
+	f.configuration = configuration
+	return configuration, nil
+}
+
+func (f *fakeService) GetConfigurationDraft(context.Context, authdomain.User, string) (domain.ConfigurationDraft, error) {
+	draft := domain.ConfigurationDraft{}
+	if f.configuration.Environment.ID != "" {
+		environment := f.configuration.Environment
+		draft.Environment = &environment
+	}
+	if f.configuration.Repository.ID != "" {
+		repository := f.configuration.Repository
+		draft.Repository = &repository
+	}
+	if f.configuration.Source.ID != "" {
+		source := f.configuration.Source
+		draft.Source = &source
+	}
+	if f.configuration.Trigger.ID != "" {
+		trigger := f.configuration.Trigger
+		draft.Trigger = &trigger
+	}
+	if f.configuration.LLM != nil {
+		provider := *f.configuration.LLM
+		draft.LLM = &provider
+	}
+	return draft, nil
+}
+
+func (f *fakeService) PutConfigurationEnvironment(_ context.Context, _ authdomain.User, projectKey string, environment domain.Environment) (domain.Environment, error) {
+	f.projectKey = projectKey
+	environment.ID = "env-id"
+	environment.Version = 1
+	f.configuration.Environment = environment
+	return environment, f.updateErr
+}
+
+func (f *fakeService) PutConfigurationRepository(_ context.Context, _ authdomain.User, projectKey string, repository domain.Repository) (domain.Repository, error) {
+	f.projectKey = projectKey
+	repository.ID = "repo-id"
+	repository.Version = 1
+	f.configuration.Repository = repository
+	return repository, f.updateErr
+}
+
+func (f *fakeService) PutConfigurationSource(_ context.Context, _ authdomain.User, projectKey string, source domain.Source) (domain.Source, error) {
+	f.projectKey = projectKey
+	source.ID = "source-id"
+	source.Version = 1
+	f.configuration.Source = source
+	return source, f.updateErr
+}
+
+func (f *fakeService) PutConfigurationTrigger(_ context.Context, _ authdomain.User, projectKey string, trigger domain.Trigger) (domain.Trigger, error) {
+	f.projectKey = projectKey
+	trigger.ID = "trigger-id"
+	trigger.Version = 1
+	trigger.InboundURL = f.inboundURL
+	f.configuration.Trigger = trigger
+	return trigger, f.updateErr
+}
+
+func (f *fakeService) PutConfigurationLLMProvider(_ context.Context, _ authdomain.User, projectKey string, provider domain.LLMProvider) (domain.LLMProvider, error) {
+	f.projectKey = projectKey
+	provider.ID = "llm-id"
+	provider.Version = 1
+	f.configuration.LLM = &provider
+	return provider, f.updateErr
 }
 func (f *fakeService) RotateWebhookToken(_ context.Context, _ authdomain.User, projectKey string) (string, error) {
 	if f.updateErr != nil {
@@ -293,6 +371,57 @@ func TestProbeRepositoryRefsReturnsBranchesWithoutSecretMaterial(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("probe response leaked %q: %s", forbidden, body)
 		}
+	}
+}
+
+func TestConfigurationPUTOmitsSourceAndTriggerAliases(t *testing.T) {
+	service := &fakeService{}
+	handler := newHandler(t, service)
+	payload := `{"environment":{"key":"production","name":"Production","service":"checkout"},"repository":{"remoteUrl":"https://git.example.internal/checkout.git","scmProvider":"github","transport":"https","credentialSecretId":null,"productionBranch":"main","deployedCommit":"0123456789abcdef0123456789abcdef01234567"},"source":{"kind":"cloud","credentialSecretId":null,"config":{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"checkout-logset"},"capabilities":["pull_collection"],"enabled":true},"trigger":{"kind":"custom_rule","signingSecretId":null,"config":{"schemaVersion":1,"groupingWindowSeconds":900,"matchExpression":"level=ERROR"},"enabled":true},"llm":null}`
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" || service.configuration.Source.Kind != "cloud" || service.configuration.Trigger.Kind != "custom_rule" {
+		t.Fatalf("configuration PUT = %d %q service=%#v", response.Code, response.Body.String(), service)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, `"source":{"id":"source-id","name"`) || strings.Contains(body, `"trigger":{"id":"trigger-id","name"`) {
+		t.Fatalf("configuration response exposed source/trigger name: %s", body)
+	}
+}
+
+func TestConfigurationPUTRejectsStaleSourceAndTriggerAliases(t *testing.T) {
+	handler := newHandler(t, &fakeService{})
+	payload := `{"environment":{"key":"production","name":"Production","service":null},"repository":{"remoteUrl":"https://git.example.internal/checkout.git","scmProvider":"github","transport":"https","credentialSecretId":null,"productionBranch":"main","deployedCommit":"0123456789abcdef0123456789abcdef01234567"},"source":{"name":"legacy-source-alias","kind":"cloud","credentialSecretId":null,"config":{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"checkout-logset"},"capabilities":["pull_collection"],"enabled":true},"trigger":{"name":"legacy-trigger-alias","kind":"custom_rule","signingSecretId":null,"config":{"schemaVersion":1,"groupingWindowSeconds":900,"matchExpression":"level=ERROR"},"enabled":true},"llm":null}`
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("stale name response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestConfigurationTriggerPUTIsComponentScoped(t *testing.T) {
+	service := &fakeService{inboundURL: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"}
+	handler := newHandler(t, service)
+	payload := `{"kind":"signed_webhook","signingSecretId":null,"config":{"schemaVersion":1,"eventTypes":["alarm"],"deduplicationKey":"title"},"enabled":true}`
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration/trigger", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" || service.configuration.Trigger.Kind != "signed_webhook" {
+		t.Fatalf("trigger PUT = %d %q service=%#v", response.Code, response.Body.String(), service)
+	}
+	if !strings.Contains(response.Body.String(), `"inboundUrl":"http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"`) || strings.Contains(response.Body.String(), `"llm"`) {
+		t.Fatalf("trigger response = %s", response.Body.String())
+	}
+	if strings.Contains(string(service.configuration.Trigger.Config), "name") {
+		t.Fatalf("trigger payload retained alias: %s", service.configuration.Trigger.Config)
 	}
 }
 

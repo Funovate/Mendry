@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CircleHelp, Copy, Eye, GitBranch, LoaderCircle, Plus, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, messageFromError, type ListResult, type Project } from "../../api";
+import { api, messageFromError, type ListResult, type Project, type ProjectConfiguration } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { ErrorNotice, LoadingState, PageError } from "../../shared/ui";
@@ -40,11 +40,11 @@ export function ConfigurationPage() {
       <div><GitBranch size={17} /><span><strong>Production baseline</strong><small>{value.repository.productionBranch}@{value.repository.deployedCommit}</small></span></div>
       <div><Eye size={17} /><span><strong>Collection</strong><small>{value.source.kind} · {value.source.capabilities.join(", ")}</small></span></div>
     </div>
-    <div className="table-wrap"><table><thead><tr><th>Component</th><th>Name</th><th>Configuration</th><th>Status</th></tr></thead><tbody>
+    <div className="table-wrap"><table><thead><tr><th>Component</th><th>Type / provider</th><th>Configuration</th><th>Status</th></tr></thead><tbody>
       <tr><td>Environment</td><td>{value.environment.name}</td><td>{value.environment.service || "No service"}</td><td>Active</td></tr>
       <tr><td>Git repository</td><td>{value.repository.scmProvider}</td><td><code>{value.repository.remoteUrl}</code></td><td>{value.repository.credentialSecretId ? "Credential linked" : "No credential"}</td></tr>
-      <tr><td>Collection source</td><td>{value.source.name}</td><td>{value.source.kind}</td><td>{value.source.enabled ? "Enabled" : "Disabled"}</td></tr>
-      <tr><td>Trigger</td><td>{value.trigger.name}</td><td>{value.trigger.kind.replace("_", " ")}</td><td>{value.trigger.enabled ? "Enabled" : "Disabled"}</td></tr>
+      <tr><td>Collection source</td><td>{value.source.kind}</td><td>{sourceConfigurationSummary(value.source.config)}</td><td>{value.source.enabled ? "Enabled" : "Disabled"}</td></tr>
+      <tr><td>Trigger</td><td>{value.trigger.kind.replace("_", " ")}</td><td>{triggerConfigurationSummary(value.trigger.config)}</td><td>{value.trigger.enabled ? "Enabled" : "Disabled"}</td></tr>
       {value.trigger.kind === "signed_webhook" && value.trigger.inboundUrl && <tr>
         <td>Inbound webhook</td>
         <td>Public URL</td>
@@ -55,6 +55,19 @@ export function ConfigurationPage() {
     </tbody></table></div>
     <section className="metadata-note"><CircleHelp size={17} /><p>Credential values are write-only. This page receives only stable secret references and never plaintext, ciphertext, or nonce values.</p></section>
   </section>;
+}
+
+function sourceConfigurationSummary(config: ProjectConfiguration["source"]["config"]): string {
+  if (typeof config.provider === "string" && typeof config.resource === "string") return `${config.provider} · ${config.resource}`;
+  if (typeof config.endpoint === "string") return config.endpoint;
+  if (typeof config.host === "string" && typeof config.logPath === "string") return `${config.host}${config.logPath}`;
+  return "Configured";
+}
+
+function triggerConfigurationSummary(config: ProjectConfiguration["trigger"]["config"]): string {
+  if (typeof config.matchExpression === "string") return config.matchExpression;
+  if (Array.isArray(config.eventTypes)) return config.eventTypes.filter((value): value is string => typeof value === "string").join(", ") || "Signed webhook";
+  return "Configured";
 }
 
 function ProjectIdentitySection() {

@@ -39,7 +39,6 @@ function configuration(overrides: { environmentName?: string } = {}) {
     },
     source: {
       id: "source-id",
-      name: "cls-production",
       kind: "mcp",
       credentialSecretId: null,
       config: { schemaVersion: 1, endpoint: "https://mcp.internal/mcp", transport: "streamable_http", headers: {}, evidenceProfile: "errors-context", queryScope: "project" },
@@ -49,7 +48,6 @@ function configuration(overrides: { environmentName?: string } = {}) {
     },
     trigger: {
       id: "trigger-id",
-      name: "backend-errors",
       kind: "custom_rule",
       signingSecretId: null,
       inboundUrl: null,
@@ -79,7 +77,7 @@ function baseIncident() {
     fingerprint: "b2a8:validator-locale",
     status: "Open",
     priority: "Info",
-    source: "cls-production",
+    source: "mcp",
     sourceId: "source-id",
     environmentId: "env-id",
     firstSeen: "2026-08-13T07:40:00Z",
@@ -124,6 +122,13 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     { id: "secret-ssh", name: "git-ssh-prod", kind: "ssh_private_key", keyVersion: 1, version: 1, createdAt: now, updatedAt: now },
   ];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
+  const configurationDraft = () => ({
+    environment: currentConfiguration?.environment ?? null,
+    repository: currentConfiguration?.repository ?? null,
+    source: currentConfiguration?.source ?? null,
+    trigger: currentConfiguration?.trigger ?? null,
+    llm: currentConfiguration?.llm ?? null,
+  });
 
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -192,6 +197,44 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     if (path === "/api/v1/projects/real-estate/configuration" && method === "GET") {
       return currentConfiguration ? json(currentConfiguration) : error(404, "configuration_not_found", "Project configuration was not found.");
     }
+    if (path === "/api/v1/projects/real-estate/configuration/draft" && method === "GET") return json(configurationDraft());
+    if (path.startsWith("/api/v1/projects/real-estate/configuration/") && method === "PUT") {
+      const component = path.split("/").at(-1);
+      const base = currentConfiguration ?? configuration();
+      if (component === "environment") {
+        const input = body as Partial<typeof base.environment>;
+        currentConfiguration = { ...base, environment: { ...base.environment, ...input, version: base.environment.version + 1 } };
+        writes.push({ method, path, body });
+        return json(currentConfiguration.environment);
+      }
+      if (component === "repository") {
+        const input = body as Partial<typeof base.repository>;
+        currentConfiguration = { ...base, repository: { ...base.repository, ...input, version: base.repository.version + 1 } };
+        writes.push({ method, path, body });
+        return json(currentConfiguration.repository);
+      }
+      if (component === "source") {
+        const input = body as Partial<typeof base.source>;
+        currentConfiguration = { ...base, source: { ...base.source, ...input, version: base.source.version + 1 } };
+        writes.push({ method, path, body });
+        return json(currentConfiguration.source);
+      }
+      if (component === "trigger") {
+        const input = body as Partial<typeof base.trigger>;
+        const inboundUrl = input.kind === "signed_webhook"
+          ? base.trigger.inboundUrl ?? "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO"
+          : null;
+        currentConfiguration = { ...base, trigger: { ...base.trigger, ...input, inboundUrl, version: base.trigger.version + 1 } };
+        writes.push({ method, path, body });
+        return json(currentConfiguration.trigger);
+      }
+      if (component === "llm") {
+        const input = body as Partial<NonNullable<typeof base.llm>>;
+        currentConfiguration = { ...base, llm: { ...base.llm, ...input, version: (base.llm?.version ?? 0) + 1 } };
+        writes.push({ method, path, body });
+        return json(currentConfiguration.llm);
+      }
+    }
     if (path === "/api/v1/projects/real-estate/configuration" && method === "PUT") {
       currentConfiguration = body as ReturnType<typeof configuration>;
       if (currentConfiguration.trigger.kind === "signed_webhook" && !currentConfiguration.trigger.inboundUrl) {
@@ -204,10 +247,11 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       return json(currentConfiguration);
     }
     if (path === "/api/v1/projects/real-estate/configuration/webhook-token" && method === "POST") {
-      const inboundUrl = "http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML";
-      if (currentConfiguration) {
-        currentConfiguration = { ...currentConfiguration, trigger: { ...currentConfiguration.trigger, inboundUrl } };
+      if (currentConfiguration?.trigger.kind !== "signed_webhook") {
+        return error(400, "invalid_request", "Project request is invalid.");
       }
+      const inboundUrl = "http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML";
+      currentConfiguration = { ...currentConfiguration, trigger: { ...currentConfiguration.trigger, inboundUrl } };
       writes.push({ method, path, body });
       return json({ inboundUrl });
     }
@@ -335,8 +379,6 @@ test("loads project-owned configuration, events, incidents, members, and audit r
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByText("https://git.example.internal/platform/real-estate-api.git", { exact: true })).toBeVisible();
   await expect(page.getByText("production@4f9c2b7", { exact: true })).toBeVisible();
-  await expect(page.getByText("cls-production", { exact: true })).toBeVisible();
-  await expect(page.getByText("backend-errors", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Members" }).click();
   await expect(page.getByRole("row", { name: /operator operator Yes Yes No/ })).toBeVisible();
@@ -371,9 +413,12 @@ test("administrator persists credentials, configuration, members, and incident l
   await expect(page.getByLabel("Git remote URL")).toHaveCount(0);
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
+  await expect(page.getByText("Save the signed webhook configuration first. The first save creates the inbound URL.", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Webhook signing credential")).toHaveCount(0);
   await expect(page.getByLabel("Webhook event types")).toHaveCount(0);
-
+  await page.getByRole("button", { name: "Save trigger" }).click();
+  await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO");
   await page.getByRole("tab", { name: "Git repository" }).click();
   await page.getByRole("button", { name: "New credential" }).click();
   await page.getByLabel("Git credential name").fill("git-http-ci");
@@ -401,6 +446,7 @@ test("administrator persists credentials, configuration, members, and incident l
   await expect(page.getByLabel("Deployed commit")).toHaveValue("0123456789abcdef0123456789abcdef01234567");
   await page.getByLabel("Production branch").selectOption("production");
   await expect(page.getByLabel("Deployed commit")).toHaveValue("abcdef0123456789abcdef0123456789abcdef01");
+  await page.getByRole("button", { name: "Save Git repository" }).click();
 
   await page.getByRole("tab", { name: "LLM provider" }).click();
   await expect(page.getByLabel("LLM base URL")).toHaveValue("https://api.openai.com");
@@ -416,10 +462,13 @@ test("administrator persists credentials, configuration, members, and incident l
   await page.getByRole("button", { name: "Test with hi" }).click();
   await expect(page.getByText("Chat probe succeeded.", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Save configuration" }).click();
-  await expect(page.getByText("Configuration saved.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save configuration" })).toBeVisible();
+  await page.getByRole("button", { name: "Save LLM provider" }).click();
   await expect(page.getByLabel("LLM model")).toHaveValue("gpt-5.6");
+
+  await page.getByRole("tab", { name: "Trigger" }).click();
+  await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO");
+  await page.getByRole("button", { name: "Regenerate URL" }).click();
+  await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML");
 
   await page.getByRole("link", { name: "Members" }).click();
   await page.getByLabel("Member username").fill("oncall");
@@ -433,14 +482,20 @@ test("administrator persists credentials, configuration, members, and incident l
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-ci", kind: "ssh_private_key", value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----\nkey-passphrase" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/members/oncall", body: { role: "operator" } },
     { method: "POST", path: "/api/v1/projects/real-estate/repository/refs", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", transport: "https", credentialSecretId: "secret-git" } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/trigger", body: { kind: "signed_webhook", signingSecretId: null, config: { schemaVersion: 1, eventTypes: ["alarm"], deduplicationKey: "title" }, enabled: true } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/repository", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", scmProvider: "yunxiao", transport: "https", credentialSecretId: "secret-git", productionBranch: "production", deployedCommit: "abcdef0123456789abcdef0123456789abcdef01" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "openai-prod", kind: "http_bearer", value: "sk-e2e-openai-key" } },
     { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
     { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6" } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/configuration/webhook-token", body: {} },
   ]));
-  expect(state.writes.some((write) => write.method === "PUT" && write.path.endsWith("/configuration"))).toBeTruthy();
   expect(state.getConfiguration()?.repository.productionBranch).toBe("production");
   expect(state.getConfiguration()?.repository.deployedCommit).toBe("abcdef0123456789abcdef0123456789abcdef01");
   expect(state.getConfiguration()?.source.config).toEqual({ schemaVersion: 1, endpoint: "https://mcp.internal/mcp", transport: "streamable_http", headers: {}, evidenceProfile: "errors-context", queryScope: "project" });
+  const triggerWrite = state.writes.find((write) => write.path.endsWith("/configuration/trigger"));
+  expect(triggerWrite?.body).not.toHaveProperty("llm");
+  expect(triggerWrite?.body).not.toHaveProperty(["trigger", "name"]);
 });
 
 const gitImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nfile-imported-secret-key\n-----END OPENSSH PRIVATE KEY-----";
@@ -533,6 +588,7 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
   await page.getByRole("tab", { name: "Trigger" }).click();
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
   await expect(page.getByLabel("Webhook credential value")).toHaveCount(0);
   await expect(page.getByLabel("Webhook SSH private key file")).toHaveCount(0);
   await expect(page.getByLabel("SSH private key file", { exact: true })).toHaveCount(0);
@@ -613,15 +669,14 @@ test("administrator edits Git, source, and webhook credentials without disclosin
   await page.getByRole("tab", { name: "Trigger" }).click();
   await page.getByLabel("Trigger type").selectOption("signed_webhook");
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
+  await expect(page.getByText("Save the signed webhook configuration first. The first save creates the inbound URL.", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Webhook signing credential")).toHaveCount(0);
-  await page.getByRole("button", { name: "Generate URL" }).click();
-  await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML");
 
   expect(state.writes).toEqual(expect.arrayContaining([
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git", body: { name: "git-http-renamed" } },
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-git", body: { name: "git-http-rotated", value: "deploy:rotated-https-token" } },
     { method: "PATCH", path: "/api/v1/projects/real-estate/secrets/secret-source", body: { name: "source-bearer-renamed", value: "rotated-source-token" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/configuration/webhook-token", body: {} },
   ]));
   expect(state.writes.some((write) => JSON.stringify(write.body).includes("ciphertext"))).toBeFalsy();
 });

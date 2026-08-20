@@ -17,6 +17,7 @@ routes:
 GET  /api/v1/auth/me
 GET  /api/v1/projects
 GET  /api/v1/projects/{projectKey}/configuration
+GET  /api/v1/projects/{projectKey}/configuration/draft
 GET  /api/v1/projects/{projectKey}/observations
 GET  /api/v1/projects/{projectKey}/incidents
 GET  /api/v1/projects/{projectKey}/members
@@ -24,8 +25,10 @@ GET  /api/v1/projects/{projectKey}/audit-events
 ```
 
 Writes use the matching typed functions on `api`, including
-`putConfiguration`, `createSecret`, `updateProjectName`, `updateSecret`,
-`upsertMember`, and `updateIncidentStatus`.
+`putConfigurationEnvironment`, `putConfigurationRepository`,
+`putConfigurationSource`, `putConfigurationTrigger`, `putConfigurationLLM`,
+`createSecret`, `updateProjectName`, `updateSecret`, `upsertMember`, and
+`updateIncidentStatus`.
 
 ```text
 PATCH /api/v1/projects/{projectKey}
@@ -40,17 +43,15 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
   and `manageConfiguration`.
 - Components use capabilities for action availability. A local role selector
   must never authorize a business action.
-- `ProjectConfiguration` owns one environment, repository, source, trigger, and
-  optional LLM snapshot. Source and trigger config objects must round-trip every
-  field for their selected kind. LLM stores `provider`, `baseUrl`,
-  `credentialSecretId`, and `model`; the API key itself is a write-only
-  `http_bearer` secret.
+- `ProjectConfiguration` is the complete read model. The editor uses `ProjectConfigurationDraft`, whose environment, repository, source, trigger, and optional LLM fields may be null while the project is being configured. Each component is saved independently and a component request must not include sibling configuration fields. Source and trigger config objects must round-trip every field for their selected kind. LLM stores `provider`, `baseUrl`, `credentialSecretId`, and `model`; the API key itself is a write-only `http_bearer` secret.
 - `POST /api/v1/projects/{projectKey}/llm/models` decrypts the selected bearer
   secret in the API process, calls the provider `/v1/models` endpoint, and
-  returns model IDs only. The UI must load that list before saving a new model.
+  returns model IDs only. The LLM Save control must load that list before
+  saving a new model.
 - `POST /api/v1/projects/{projectKey}/llm/chat` sends a bounded `hi` Chat
-  Completions probe with the selected model. Save stays disabled until this
-  probe succeeds. The response is `{status:"ok"}` and never includes model text.
+  Completions probe with the selected model. Only the LLM Save control stays
+  disabled until this probe succeeds. The response is `{status:"ok"}` and
+  never includes model text.
 - Secret values exist only in the write form and outgoing create/update request.
   Responses are metadata only; clear the input after success. `updateSecret`
   omits `value` for a name-only edit and never sends `kind`.
@@ -95,8 +96,7 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
 
 ### 5. Good/Base/Bad Cases
 
-- Good: an admin creates a write-only secret, links its returned ID, and saves
-  a complete configuration snapshot.
+- Good: an admin saves each project configuration component independently; component payloads contain only the addressed row.
 - Good: an admin renames a project or credential in place; the stable project
   key and secret ID stay in the URL and configuration references.
 - Base: a viewer reads project members, events, incidents, and audit data but
@@ -109,8 +109,7 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
 - Route-mock E2E must assert the exact project-scoped request path and body.
 - Cover login, empty project list, configured project, missing configuration,
   admin mutations, viewer denial, and mobile navigation.
-- When editing one field, assert unedited source/trigger config fields survive
-  the `PUT configuration` round trip.
+- When editing one component, assert the component PUT body contains no sibling fields and the draft cache preserves the other components.
 - Assert entered secret text is absent from rendered content after success.
 - Cover project rename, name-only versus rotation payloads, incomplete Git
   replacement drafts, and missing viewer identity/credential edit controls.

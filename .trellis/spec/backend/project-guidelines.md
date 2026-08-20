@@ -39,6 +39,18 @@ func (*projects.Service).UpdateSecret(context.Context, authdomain.User,
     string, string, string, []byte) (projectdomain.Secret, error)
 func (*projects.Service).PutConfiguration(context.Context, authdomain.User,
     string, projectdomain.Configuration) (projectdomain.Configuration, error)
+func (*projects.Service).GetConfigurationDraft(context.Context, authdomain.User, string)
+    (projectdomain.ConfigurationDraft, error)
+func (*projects.Service).PutConfigurationEnvironment(context.Context, authdomain.User, string, projectdomain.Environment)
+    (projectdomain.Environment, error)
+func (*projects.Service).PutConfigurationRepository(context.Context, authdomain.User, string, projectdomain.Repository)
+    (projectdomain.Repository, error)
+func (*projects.Service).PutConfigurationSource(context.Context, authdomain.User, string, projectdomain.Source)
+    (projectdomain.Source, error)
+func (*projects.Service).PutConfigurationTrigger(context.Context, authdomain.User, string, projectdomain.Trigger)
+    (projectdomain.Trigger, error)
+func (*projects.Service).PutConfigurationLLMProvider(context.Context, authdomain.User, string, projectdomain.LLMProvider)
+    (projectdomain.LLMProvider, error)
 func (*projects.Service).ProbeRepositoryRefs(context.Context, authdomain.User,
     string, string, string, string) (application.RepositoryRefs, error)
 func (*projects.Service).ProbeLLMModels(context.Context, authdomain.User,
@@ -68,7 +80,10 @@ GET      /api/v1/projects/{projectKey}/members
 PUT|DELETE /api/v1/projects/{projectKey}/members/{username}
 GET|POST /api/v1/projects/{projectKey}/secrets
 PATCH    /api/v1/projects/{projectKey}/secrets/{secretId}
-GET|PUT  /api/v1/projects/{projectKey}/configuration
+GET      /api/v1/projects/{projectKey}/configuration
+GET      /api/v1/projects/{projectKey}/configuration/draft
+PUT      /api/v1/projects/{projectKey}/configuration
+PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm}
 POST     /api/v1/projects/{projectKey}/configuration/webhook-token
 POST     /api/v1/projects/{projectKey}/llm/models
 POST     /api/v1/projects/{projectKey}/llm/chat
@@ -105,10 +120,7 @@ Migration `000004_project_scope.up.sql` owns `projects`, `project_environments`,
 source ownership to `incidents`. Existing incidents are backfilled into a
 deterministic legacy project only when legacy rows exist.
 
-The MVP storage constraints and configuration endpoint intentionally keep one
-environment, one repository, one source, and one trigger snapshot per project.
-Supporting multiple environments or connectors requires a later forward migration
-plus item-addressed API contracts; table names alone do not imply that support.
+The MVP storage constraints keep at most one environment, repository, source, trigger, and LLM provider row per project. The editor persists those component rows independently through the draft/component configuration routes; the complete configuration read becomes available once the required environment, repository, source, and trigger rows exist. Supporting multiple environments or connectors requires a later forward migration plus item-addressed API contracts; table names alone do not imply that support.
 
 - Repository: HTTPS or `ssh://` URL, SCM provider, credential reference, production
   branch, and immutable deployed commit.
@@ -172,10 +184,7 @@ A `signed_webhook` trigger stores three columns together or not at all:
 data is `projectID + triggerID + "webhook_token"`. Do not store the token in
 `project_secrets` or reuse `webhook_hmac`.
 
-`PutConfiguration` generates a token when kind is `signed_webhook` and the
-row has none. Later saves keep the existing token. Switching to `custom_rule`
-clears the three columns. `RotateWebhookToken` creates or replaces the token
-and writes audit `project.trigger.webhook_token` with metadata `{rotated}`.
+`PutConfigurationTrigger` generates a token when kind is `signed_webhook` and the row has none. Later component saves keep the existing token. Switching to `custom_rule` clears the three columns. `RotateWebhookToken` creates or replaces the token and writes audit `project.trigger.webhook_token` with metadata `{rotated}`. It reads the saved trigger only: a draft `signed_webhook` that has not been saved is still `400 invalid_request`.
 
 `GetConfiguration` sets `trigger.inboundUrl` only for a project admin. Operator
 and viewer receive `null`. List, log, and audit records never include the

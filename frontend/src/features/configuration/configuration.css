@@ -68,6 +68,13 @@
   gap: 8px;
 }
 
+.inbound-url-hint {
+  margin: 0;
+  color: #8a6d1f;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .inbound-url-copy {
   display: flex;
   flex-wrap: wrap;
@@ -268,6 +275,12 @@
   width: 14px;
   height: 14px;
   accent-color: #238173;
+}
+
+.setup-section-actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
 }
 
 .setup-footer {

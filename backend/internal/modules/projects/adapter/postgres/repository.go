@@ -330,9 +330,9 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		remoteURL: row.RemoteUrl, scmProvider: row.ScmProvider, transport: row.Transport,
 		repositorySecretID: row.RepositoryCredentialSecretID, productionBranch: row.ProductionBranch,
 		deployedCommit: row.DeployedCommit, repositoryVersion: row.RepositoryVersion, sourceID: row.SourceID,
-		sourceName: row.SourceName, sourceKind: row.SourceKind, sourceSecretID: row.SourceCredentialSecretID,
+		sourceKind: row.SourceKind, sourceSecretID: row.SourceCredentialSecretID,
 		sourceConfig: row.SourceConfig, sourceCapabilities: row.SourceCapabilities, sourceEnabled: row.SourceEnabled,
-		sourceVersion: row.SourceVersion, triggerID: row.TriggerID, triggerName: row.TriggerName,
+		sourceVersion: row.SourceVersion, triggerID: row.TriggerID,
 		triggerKind: row.TriggerKind, signingSecretID: row.SigningSecretID, triggerConfig: row.TriggerConfig,
 		triggerEnabled: row.TriggerEnabled, triggerVersion: row.TriggerVersion,
 		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
@@ -340,6 +340,212 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		llmID:             row.LlmID, llmProvider: row.LlmProvider, llmBaseURL: row.LlmBaseUrl,
 		llmSecretID: row.LlmCredentialSecretID, llmModel: row.LlmModel, llmVersion: row.LlmVersion,
 	})
+}
+
+func (r *Repository) GetConfigurationDraft(ctx context.Context, projectID string) (domain.ConfigurationDraft, error) {
+	projectUUID, err := uuidParameter(projectID, "project")
+	if err != nil {
+		return domain.ConfigurationDraft{}, err
+	}
+	draft := domain.ConfigurationDraft{}
+
+	environmentRow, err := r.queries.GetProjectEnvironment(platformpostgres.WithOperation(ctx, "project.configuration.environment.get"), projectUUID)
+	if err == nil {
+		environment, mapErr := mapEnvironmentRow(environmentRow)
+		if mapErr != nil {
+			return domain.ConfigurationDraft{}, mapErr
+		}
+		draft.Environment = &environment
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConfigurationDraft{}, newRepositoryError("query project environment", err)
+	}
+
+	repositoryRow, err := r.queries.GetProjectRepository(platformpostgres.WithOperation(ctx, "project.configuration.repository.get"), projectUUID)
+	if err == nil {
+		repository, mapErr := mapRepositoryRow(repositoryRow)
+		if mapErr != nil {
+			return domain.ConfigurationDraft{}, mapErr
+		}
+		draft.Repository = &repository
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConfigurationDraft{}, newRepositoryError("query project repository", err)
+	}
+
+	sourceRow, err := r.queries.GetProjectSource(platformpostgres.WithOperation(ctx, "project.configuration.source.get"), projectUUID)
+	if err == nil {
+		source, mapErr := mapSourceRow(sourceRow)
+		if mapErr != nil {
+			return domain.ConfigurationDraft{}, mapErr
+		}
+		draft.Source = &source
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConfigurationDraft{}, newRepositoryError("query project source", err)
+	}
+
+	triggerRow, err := r.queries.GetProjectTrigger(platformpostgres.WithOperation(ctx, "project.configuration.trigger.get"), projectUUID)
+	if err == nil {
+		trigger, mapErr := mapTriggerRow(triggerRow)
+		if mapErr != nil {
+			return domain.ConfigurationDraft{}, mapErr
+		}
+		draft.Trigger = &trigger
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConfigurationDraft{}, newRepositoryError("query project trigger", err)
+	}
+
+	llmRow, err := r.queries.GetProjectLLMProvider(platformpostgres.WithOperation(ctx, "project.configuration.llm.get"), projectUUID)
+	if err == nil {
+		provider, mapErr := mapLLMRow(llmRow)
+		if mapErr != nil {
+			return domain.ConfigurationDraft{}, mapErr
+		}
+		draft.LLM = &provider
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ConfigurationDraft{}, newRepositoryError("query project LLM provider", err)
+	}
+
+	return draft, nil
+}
+
+func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, environment domain.Environment, actorUserID, auditID string) (domain.Environment, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	environmentID, err := uuidParameter(environment.ID, "project environment")
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	row, err := r.queries.UpsertProjectEnvironment(platformpostgres.WithOperation(ctx, "project.configuration.environment.upsert"), projectdb.UpsertProjectEnvironmentParams{
+		EnvironmentID: environmentID, ProjectID: params.projectID, EnvironmentKey: environment.Key, EnvironmentName: environment.Name,
+		Service: environment.Service, AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if configurationConflict(err) {
+		return domain.Environment{}, application.ErrConflict
+	}
+	if err != nil {
+		return domain.Environment{}, newRepositoryError("upsert project environment", err)
+	}
+	return mapEnvironmentRow(projectdb.GetProjectEnvironmentRow{ID: row.ID, EnvironmentKey: row.EnvironmentKey, Name: row.Name, Service: row.Service, Version: row.Version})
+}
+
+func (r *Repository) UpsertRepository(ctx context.Context, projectID string, repository domain.Repository, actorUserID, auditID string) (domain.Repository, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	repositoryID, err := uuidParameter(repository.ID, "project repository")
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	row, err := r.queries.UpsertProjectRepository(platformpostgres.WithOperation(ctx, "project.configuration.repository.upsert"), projectdb.UpsertProjectRepositoryParams{
+		RepositoryID: repositoryID, ProjectID: params.projectID, RemoteUrl: repository.RemoteURL, ScmProvider: repository.SCMProvider,
+		RepositoryTransport: repository.Transport, CredentialSecretID: optionalUUID(repository.CredentialSecretID),
+		ProductionBranch: repository.ProductionBranch, DeployedCommit: repository.DeployedCommit, AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if configurationReferenceConflict(err) {
+		return domain.Repository{}, application.ErrInvalidInput
+	}
+	if configurationConflict(err) {
+		return domain.Repository{}, application.ErrConflict
+	}
+	if err != nil {
+		return domain.Repository{}, newRepositoryError("upsert project repository", err)
+	}
+	return mapRepositoryRow(projectdb.GetProjectRepositoryRow{ID: row.ID, RemoteUrl: row.RemoteUrl, ScmProvider: row.ScmProvider, Transport: row.Transport, CredentialSecretID: row.CredentialSecretID, ProductionBranch: row.ProductionBranch, DeployedCommit: row.DeployedCommit, Version: row.Version})
+}
+
+func (r *Repository) UpsertSource(ctx context.Context, projectID, environmentID string, source domain.Source, actorUserID, auditID string) (domain.Source, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.Source{}, err
+	}
+	sourceID, err := uuidParameter(source.ID, "project source")
+	if err != nil {
+		return domain.Source{}, err
+	}
+	environmentUUID, err := uuidParameter(environmentID, "project environment")
+	if err != nil {
+		return domain.Source{}, err
+	}
+	row, err := r.queries.UpsertProjectSource(platformpostgres.WithOperation(ctx, "project.configuration.source.upsert"), projectdb.UpsertProjectSourceParams{
+		SourceID: sourceID, ProjectID: params.projectID, EnvironmentID: environmentUUID, SourceKind: source.Kind,
+		CredentialSecretID: optionalUUID(source.CredentialSecretID), SourceConfig: source.Config, SourceCapabilities: source.Capabilities,
+		SourceEnabled: source.Enabled, AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if configurationReferenceConflict(err) {
+		return domain.Source{}, application.ErrInvalidInput
+	}
+	if configurationConflict(err) {
+		return domain.Source{}, application.ErrConflict
+	}
+	if err != nil {
+		return domain.Source{}, newRepositoryError("upsert project source", err)
+	}
+	return mapSourceRow(projectdb.GetProjectSourceRow{ID: row.ID, Kind: row.Kind, CredentialSecretID: row.CredentialSecretID, Config: row.Config, Capabilities: row.Capabilities, Enabled: row.Enabled, Version: row.Version})
+}
+
+func (r *Repository) UpsertTrigger(ctx context.Context, projectID, environmentID string, trigger domain.Trigger, actorUserID, auditID string) (domain.Trigger, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	triggerID, err := uuidParameter(trigger.ID, "project trigger")
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	environmentUUID, err := uuidParameter(environmentID, "project environment")
+	if err != nil {
+		return domain.Trigger{}, err
+	}
+	if err := domain.ValidateWebhookTokenColumns(trigger.IngressTokenHash, trigger.IngressTokenCiphertext, trigger.IngressTokenNonce); err != nil {
+		return domain.Trigger{}, application.ErrInvalidInput
+	}
+	row, err := r.queries.UpsertProjectTrigger(platformpostgres.WithOperation(ctx, "project.configuration.trigger.upsert"), projectdb.UpsertProjectTriggerParams{
+		TriggerID: triggerID, ProjectID: params.projectID, EnvironmentID: environmentUUID, TriggerKind: trigger.Kind,
+		SigningSecretID: optionalUUID(trigger.SigningSecretID), TriggerConfig: trigger.Config, TriggerEnabled: trigger.Enabled,
+		IngressTokenHash: trigger.IngressTokenHash, IngressTokenCiphertext: trigger.IngressTokenCiphertext, IngressTokenNonce: trigger.IngressTokenNonce,
+		AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if configurationReferenceConflict(err) {
+		return domain.Trigger{}, application.ErrInvalidInput
+	}
+	if configurationConflict(err) {
+		return domain.Trigger{}, application.ErrConflict
+	}
+	if err != nil {
+		return domain.Trigger{}, newRepositoryError("upsert project trigger", err)
+	}
+	return mapTriggerRow(projectdb.GetProjectTriggerRow{ID: row.ID, Kind: row.Kind, SigningSecretID: row.SigningSecretID, Config: row.Config, Enabled: row.Enabled, Version: row.Version, IngressTokenHash: row.IngressTokenHash, IngressTokenCiphertext: row.IngressTokenCiphertext, IngressTokenNonce: row.IngressTokenNonce})
+}
+
+func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, provider domain.LLMProvider, actorUserID, auditID string) (domain.LLMProvider, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	llmID, err := uuidParameter(provider.ID, "project LLM provider")
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	credentialID, err := uuidParameter(provider.CredentialSecretID, "LLM credential")
+	if err != nil {
+		return domain.LLMProvider{}, err
+	}
+	row, err := r.queries.UpsertProjectLLMProvider(platformpostgres.WithOperation(ctx, "project.configuration.llm.upsert"), projectdb.UpsertProjectLLMProviderParams{
+		LlmID: llmID, ProjectID: params.projectID, LlmProvider: provider.Provider, LlmBaseUrl: provider.BaseURL,
+		LlmCredentialSecretID: credentialID, LlmModel: provider.Model, AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if configurationReferenceConflict(err) {
+		return domain.LLMProvider{}, application.ErrInvalidInput
+	}
+	if configurationConflict(err) {
+		return domain.LLMProvider{}, application.ErrConflict
+	}
+	if err != nil {
+		return domain.LLMProvider{}, newRepositoryError("upsert project LLM provider", err)
+	}
+	return mapLLMRow(projectdb.GetProjectLLMProviderRow{ID: row.ID, Provider: row.Provider, BaseUrl: row.BaseUrl, CredentialSecretID: row.CredentialSecretID, Model: row.Model, Version: row.Version})
 }
 
 func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, configuration domain.Configuration, actorUserID, auditID string) (domain.Configuration, error) {
@@ -389,10 +595,10 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		ScmProvider: configuration.Repository.SCMProvider, RepositoryTransport: configuration.Repository.Transport,
 		RepositoryCredentialSecretID: optionalUUID(configuration.Repository.CredentialSecretID),
 		ProductionBranch:             configuration.Repository.ProductionBranch, DeployedCommit: configuration.Repository.DeployedCommit,
-		SourceID: sourceID, SourceName: configuration.Source.Name, SourceKind: configuration.Source.Kind,
+		SourceID: sourceID, SourceKind: configuration.Source.Kind,
 		SourceCredentialSecretID: optionalUUID(configuration.Source.CredentialSecretID), SourceConfig: configuration.Source.Config,
 		SourceCapabilities: configuration.Source.Capabilities, SourceEnabled: configuration.Source.Enabled,
-		TriggerID: triggerID, TriggerName: configuration.Trigger.Name, TriggerKind: configuration.Trigger.Kind,
+		TriggerID: triggerID, TriggerKind: configuration.Trigger.Kind,
 		SigningSecretID: optionalUUID(configuration.Trigger.SigningSecretID), TriggerConfig: configuration.Trigger.Config,
 		TriggerEnabled:   configuration.Trigger.Enabled,
 		IngressTokenHash: configuration.Trigger.IngressTokenHash, IngressTokenCiphertext: configuration.Trigger.IngressTokenCiphertext,
@@ -416,9 +622,9 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		remoteURL: row.RemoteUrl, scmProvider: row.ScmProvider, transport: row.Transport,
 		repositorySecretID: row.RepositoryCredentialSecretID, productionBranch: row.ProductionBranch,
 		deployedCommit: row.DeployedCommit, repositoryVersion: row.RepositoryVersion, sourceID: row.SourceID,
-		sourceName: row.SourceName, sourceKind: row.SourceKind, sourceSecretID: row.SourceCredentialSecretID,
+		sourceKind: row.SourceKind, sourceSecretID: row.SourceCredentialSecretID,
 		sourceConfig: row.SourceConfig, sourceCapabilities: row.SourceCapabilities, sourceEnabled: row.SourceEnabled,
-		sourceVersion: row.SourceVersion, triggerID: row.TriggerID, triggerName: row.TriggerName,
+		sourceVersion: row.SourceVersion, triggerID: row.TriggerID,
 		triggerKind: row.TriggerKind, signingSecretID: row.SigningSecretID, triggerConfig: row.TriggerConfig,
 		triggerEnabled: row.TriggerEnabled, triggerVersion: row.TriggerVersion,
 		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
@@ -526,14 +732,14 @@ type configurationRow struct {
 	productionBranch, deployedCommit                            string
 	repositoryVersion                                           int64
 	sourceID                                                    pgtype.UUID
-	sourceName, sourceKind                                      string
+	sourceKind                                                  string
 	sourceSecretID                                              pgtype.UUID
 	sourceConfig                                                []byte
 	sourceCapabilities                                          []string
 	sourceEnabled                                               bool
 	sourceVersion                                               int64
 	triggerID                                                   pgtype.UUID
-	triggerName, triggerKind                                    string
+	triggerKind                                                 string
 	signingSecretID                                             pgtype.UUID
 	triggerConfig                                               []byte
 	triggerEnabled                                              bool
@@ -556,10 +762,10 @@ func mapConfiguration(row configurationRow) (domain.Configuration, error) {
 		Repository: domain.Repository{ID: uuidString(row.repositoryID), RemoteURL: row.remoteURL, SCMProvider: row.scmProvider,
 			Transport: row.transport, CredentialSecretID: optionalUUIDString(row.repositorySecretID), ProductionBranch: row.productionBranch,
 			DeployedCommit: row.deployedCommit, Version: row.repositoryVersion},
-		Source: domain.Source{ID: uuidString(row.sourceID), Name: row.sourceName, Kind: row.sourceKind,
+		Source: domain.Source{ID: uuidString(row.sourceID), Kind: row.sourceKind,
 			CredentialSecretID: optionalUUIDString(row.sourceSecretID), Config: row.sourceConfig,
 			Capabilities: row.sourceCapabilities, Enabled: row.sourceEnabled, Version: row.sourceVersion},
-		Trigger: domain.Trigger{ID: uuidString(row.triggerID), Name: row.triggerName, Kind: row.triggerKind,
+		Trigger: domain.Trigger{ID: uuidString(row.triggerID), Kind: row.triggerKind,
 			SigningSecretID: optionalUUIDString(row.signingSecretID), Config: row.triggerConfig,
 			Enabled: row.triggerEnabled, Version: row.triggerVersion,
 			IngressTokenHash: row.ingressTokenHash, IngressTokenCiphertext: row.ingressTokenCiphertext,
@@ -570,6 +776,67 @@ func mapConfiguration(row configurationRow) (domain.Configuration, error) {
 		return domain.Configuration{}, fmt.Errorf("validate project configuration row: %w", err)
 	}
 	return configuration, nil
+}
+
+func mapEnvironmentRow(row projectdb.GetProjectEnvironmentRow) (domain.Environment, error) {
+	if !row.ID.Valid || row.Version <= 0 {
+		return domain.Environment{}, fmt.Errorf("project environment row has invalid generated values")
+	}
+	environment := domain.Environment{ID: uuidString(row.ID), Key: row.EnvironmentKey, Name: row.Name, Service: row.Service, Version: row.Version}
+	if err := domain.ValidateEnvironment(environment); err != nil {
+		return domain.Environment{}, fmt.Errorf("validate project environment row: %w", err)
+	}
+	return environment, nil
+}
+
+func mapRepositoryRow(row projectdb.GetProjectRepositoryRow) (domain.Repository, error) {
+	if !row.ID.Valid || row.Version <= 0 {
+		return domain.Repository{}, fmt.Errorf("project repository row has invalid generated values")
+	}
+	repository := domain.Repository{ID: uuidString(row.ID), RemoteURL: row.RemoteUrl, SCMProvider: row.ScmProvider, Transport: row.Transport,
+		CredentialSecretID: optionalUUIDString(row.CredentialSecretID), ProductionBranch: row.ProductionBranch, DeployedCommit: row.DeployedCommit, Version: row.Version}
+	if err := domain.ValidateRepository(repository); err != nil {
+		return domain.Repository{}, fmt.Errorf("validate project repository row: %w", err)
+	}
+	return repository, nil
+}
+
+func mapSourceRow(row projectdb.GetProjectSourceRow) (domain.Source, error) {
+	if !row.ID.Valid || row.Version <= 0 || !json.Valid(row.Config) {
+		return domain.Source{}, fmt.Errorf("project source row has invalid generated values")
+	}
+	source := domain.Source{ID: uuidString(row.ID), Kind: row.Kind, CredentialSecretID: optionalUUIDString(row.CredentialSecretID),
+		Config: row.Config, Capabilities: row.Capabilities, Enabled: row.Enabled, Version: row.Version}
+	if err := domain.ValidateSource(source); err != nil {
+		return domain.Source{}, fmt.Errorf("validate project source row: %w", err)
+	}
+	return source, nil
+}
+
+func mapTriggerRow(row projectdb.GetProjectTriggerRow) (domain.Trigger, error) {
+	if !row.ID.Valid || row.Version <= 0 || !json.Valid(row.Config) {
+		return domain.Trigger{}, fmt.Errorf("project trigger row has invalid generated values")
+	}
+	if err := domain.ValidateWebhookTokenColumns(row.IngressTokenHash, row.IngressTokenCiphertext, row.IngressTokenNonce); err != nil {
+		return domain.Trigger{}, fmt.Errorf("validate project trigger token row: %w", err)
+	}
+	trigger := domain.Trigger{ID: uuidString(row.ID), Kind: row.Kind, SigningSecretID: optionalUUIDString(row.SigningSecretID), Config: row.Config,
+		Enabled: row.Enabled, Version: row.Version, IngressTokenHash: row.IngressTokenHash, IngressTokenCiphertext: row.IngressTokenCiphertext, IngressTokenNonce: row.IngressTokenNonce}
+	if err := domain.ValidateTrigger(trigger); err != nil {
+		return domain.Trigger{}, fmt.Errorf("validate project trigger row: %w", err)
+	}
+	return trigger, nil
+}
+
+func mapLLMRow(row projectdb.GetProjectLLMProviderRow) (domain.LLMProvider, error) {
+	if !row.ID.Valid || !row.CredentialSecretID.Valid || row.Version <= 0 {
+		return domain.LLMProvider{}, fmt.Errorf("project LLM provider row has invalid generated values")
+	}
+	provider := domain.LLMProvider{ID: uuidString(row.ID), Provider: row.Provider, BaseURL: row.BaseUrl, CredentialSecretID: uuidString(row.CredentialSecretID), Model: row.Model, Version: row.Version}
+	if err := domain.ValidateLLMProvider(provider); err != nil {
+		return domain.LLMProvider{}, fmt.Errorf("validate project LLM provider row: %w", err)
+	}
+	return provider, nil
 }
 
 func mapProject(id pgtype.UUID, key, name, description, roleValue string, version int64, createdAt, updatedAt pgtype.Timestamptz) (domain.Project, error) {

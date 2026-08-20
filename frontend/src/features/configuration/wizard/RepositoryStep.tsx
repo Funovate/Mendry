@@ -1,4 +1,4 @@
-import { GitBranch, LoaderCircle, LockKeyhole, Pencil, Plus } from "lucide-react";
+import { Check, GitBranch, LoaderCircle, LockKeyhole, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { messageFromError, type ProjectConfiguration, type ProjectSecret } from "../../../api";
 import {
@@ -16,6 +16,7 @@ export function RepositoryStep({
   remoteUrl, setRemoteUrl, scmProvider, setScmProvider, transport, setTransport,
   repositorySecretId, setRepositorySecretId, productionBranch, deployedCommit, branches,
   onSelectBranch, onReadRemote, readingRemote, readRemoteError,
+  onSave, saving = false, canSave = false, saveError,
   knownSecrets, createCredential, creatingCredential, createCredentialError,
   updateCredential, updatingCredential = false, updateCredentialError,
 }: {
@@ -34,6 +35,10 @@ export function RepositoryStep({
   onReadRemote: () => void;
   readingRemote: boolean;
   readRemoteError?: unknown;
+  onSave: () => void;
+  saving?: boolean;
+  canSave?: boolean;
+  saveError?: unknown;
   knownSecrets: ProjectSecret[];
   createCredential: (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => Promise<ProjectSecret>;
   creatingCredential: boolean;
@@ -84,6 +89,12 @@ export function RepositoryStep({
         {readingRemote ? <LoaderCircle className="spin" size={16} /> : <GitBranch size={16} />}Read from remote
       </button>
       {readRemoteError !== undefined && readRemoteError !== null && <p className="credential-field-error">{messageFromError(readRemoteError)}</p>}
+    </div>
+    <div className="setup-section-actions">
+      <button className="primary-button" type="button" disabled={saving || !canSave} onClick={onSave}>
+        {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}Save Git repository
+      </button>
+      {saveError !== undefined && saveError !== null && <p className="credential-field-error" role="alert">{messageFromError(saveError)}</p>}
     </div>
   </section>;
 }

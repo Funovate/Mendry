@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify migration immutability, sqlc reproducibility, schema checks, and integration coverage."}
+{"file":".trellis/spec/backend/project-guidelines.md","reason":"Verify project-scoped cardinality, webhook behavior, source binding, and API safety contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify backend formatting, vet, tests, race tests, build, generated code, and documentation requirements."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify strict Zod/TypeScript contract ownership and removal of obsolete DTO fields."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend lint, typecheck, unit, build, Playwright request bodies, and responsive UI checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review complete field flow and ensure no boundary retains a stale name assumption."}
+{"file":".trellis/tasks/08-19-remove-redundant-configuration-names/research/existing-model.md","reason":"Review against confirmed current model, downstream incident dependency, and recorded blast radius."}

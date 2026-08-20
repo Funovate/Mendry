@@ -120,7 +120,7 @@ func (r *Repository) create(ctx context.Context, queries querier, params inciden
 		return domain.Incident{}, newRepositoryError("resolve incident source", err)
 	}
 	params.EnvironmentID = scope.EnvironmentID
-	params.SourceName = scope.Name
+	params.Source = scope.Source
 	row, err := queries.CreateIncident(platformpostgres.WithOperation(ctx, "incident.create"), params)
 	if fingerprintConflict(err) {
 		return domain.Incident{}, application.ErrConflict

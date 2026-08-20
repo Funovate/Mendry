@@ -62,52 +62,68 @@ const projectSecretSchema = z.object({
   updatedAt: z.string(),
 });
 
+const environmentSchema = z.object({
+  id: z.string().optional(),
+  key: z.string(),
+  name: z.string(),
+  service: z.string().nullable(),
+  version: z.number().optional(),
+});
+
+const repositorySchema = z.object({
+  id: z.string().optional(),
+  remoteUrl: z.string(),
+  scmProvider: z.enum(["github", "gitlab", "yunxiao", "gitee", "generic"]),
+  transport: z.enum(["https", "ssh"]),
+  credentialSecretId: z.string().nullable(),
+  productionBranch: z.string(),
+  deployedCommit: z.string(),
+  version: z.number().optional(),
+});
+
+const sourceSchema = z.object({
+  id: z.string().optional(),
+  kind: sourceKindSchema,
+  credentialSecretId: z.string().nullable(),
+  config: unknownRecordSchema,
+  capabilities: z.array(z.string()),
+  enabled: z.boolean(),
+  version: z.number().optional(),
+});
+
+const triggerSchema = z.object({
+  id: z.string().optional(),
+  kind: triggerKindSchema,
+  signingSecretId: z.string().nullable().optional(),
+  inboundUrl: z.string().nullable().optional(),
+  config: unknownRecordSchema,
+  enabled: z.boolean(),
+  version: z.number().optional(),
+});
+
+const llmProviderSchema = z.object({
+  id: z.string().optional(),
+  provider: z.literal("openai"),
+  baseUrl: z.string(),
+  credentialSecretId: z.string(),
+  model: z.string(),
+  version: z.number().optional(),
+});
+
 const projectConfigurationSchema = z.object({
-  environment: z.object({
-    id: z.string().optional(),
-    key: z.string(),
-    name: z.string(),
-    service: z.string().nullable(),
-    version: z.number().optional(),
-  }),
-  repository: z.object({
-    id: z.string().optional(),
-    remoteUrl: z.string(),
-    scmProvider: z.enum(["github", "gitlab", "yunxiao", "gitee", "generic"]),
-    transport: z.enum(["https", "ssh"]),
-    credentialSecretId: z.string().nullable(),
-    productionBranch: z.string(),
-    deployedCommit: z.string(),
-    version: z.number().optional(),
-  }),
-  source: z.object({
-    id: z.string().optional(),
-    name: z.string(),
-    kind: sourceKindSchema,
-    credentialSecretId: z.string().nullable(),
-    config: unknownRecordSchema,
-    capabilities: z.array(z.string()),
-    enabled: z.boolean(),
-    version: z.number().optional(),
-  }),
-  trigger: z.object({
-    id: z.string().optional(),
-    name: z.string(),
-    kind: triggerKindSchema,
-    signingSecretId: z.string().nullable().optional(),
-    inboundUrl: z.string().nullable().optional(),
-    config: unknownRecordSchema,
-    enabled: z.boolean(),
-    version: z.number().optional(),
-  }),
-  llm: z.object({
-    id: z.string().optional(),
-    provider: z.literal("openai"),
-    baseUrl: z.string(),
-    credentialSecretId: z.string(),
-    model: z.string(),
-    version: z.number().optional(),
-  }).nullish(),
+  environment: environmentSchema,
+  repository: repositorySchema,
+  source: sourceSchema,
+  trigger: triggerSchema,
+  llm: llmProviderSchema.nullish(),
+});
+
+const projectConfigurationDraftSchema = z.object({
+  environment: environmentSchema.nullable(),
+  repository: repositorySchema.nullable(),
+  source: sourceSchema.nullable(),
+  trigger: triggerSchema.nullable(),
+  llm: llmProviderSchema.nullable(),
 });
 
 const llmModelsSchema = z.object({
@@ -245,6 +261,7 @@ export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export type ProjectSecret = z.infer<typeof projectSecretSchema>;
 export type RepositoryRefs = z.infer<typeof repositoryRefsSchema>;
 export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
+export type ProjectConfigurationDraft = z.infer<typeof projectConfigurationDraftSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
@@ -375,8 +392,19 @@ export const api = {
   probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
     requestData(projectPath(projectKey, "/llm/chat"), llmChatProbeSchema, { method: "POST", body: JSON.stringify(input) }),
   getConfiguration: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { signal }),
+  getConfigurationDraft: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration/draft"), projectConfigurationDraftSchema, { signal }),
   putConfiguration: (projectKey: string, configuration: ProjectConfiguration) =>
     requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { method: "PUT", body: JSON.stringify(configuration) }),
+  putConfigurationEnvironment: (projectKey: string, input: Omit<ProjectConfiguration["environment"], "id" | "version">) =>
+    requestData(projectPath(projectKey, "/configuration/environment"), environmentSchema, { method: "PUT", body: JSON.stringify(input) }),
+  putConfigurationRepository: (projectKey: string, input: Omit<ProjectConfiguration["repository"], "id" | "version">) =>
+    requestData(projectPath(projectKey, "/configuration/repository"), repositorySchema, { method: "PUT", body: JSON.stringify(input) }),
+  putConfigurationSource: (projectKey: string, input: Omit<ProjectConfiguration["source"], "id" | "version">) =>
+    requestData(projectPath(projectKey, "/configuration/source"), sourceSchema, { method: "PUT", body: JSON.stringify(input) }),
+  putConfigurationTrigger: (projectKey: string, input: Omit<ProjectConfiguration["trigger"], "id" | "version" | "inboundUrl">) =>
+    requestData(projectPath(projectKey, "/configuration/trigger"), triggerSchema, { method: "PUT", body: JSON.stringify(input) }),
+  putConfigurationLLM: (projectKey: string, input: Omit<NonNullable<ProjectConfiguration["llm"]>, "id" | "version">) =>
+    requestData(projectPath(projectKey, "/configuration/llm"), llmProviderSchema, { method: "PUT", body: JSON.stringify(input) }),
   rotateWebhookToken: (projectKey: string) =>
     requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
   listObservations: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/observations?limit=100"), observationSchema, { signal }),

@@ -216,10 +216,10 @@ SELECT e.id AS environment_id, e.environment_key, e.name AS environment_name, e.
        r.id AS repository_id, r.remote_url, r.scm_provider, r.transport,
        r.credential_secret_id AS repository_credential_secret_id,
        r.production_branch, r.deployed_commit, r.version AS repository_version,
-       s.id AS source_id, s.name AS source_name, s.kind AS source_kind,
+       s.id AS source_id, s.kind AS source_kind,
        s.credential_secret_id AS source_credential_secret_id, s.config AS source_config,
        s.capabilities AS source_capabilities, s.enabled AS source_enabled, s.version AS source_version,
-       t.id AS trigger_id, t.name AS trigger_name, t.kind AS trigger_kind,
+       t.id AS trigger_id, t.kind AS trigger_kind,
        t.signing_secret_id, t.config AS trigger_config, t.enabled AS trigger_enabled,
        t.version AS trigger_version,
        t.ingress_token_hash, t.ingress_token_ciphertext, t.ingress_token_nonce,
@@ -270,16 +270,15 @@ WITH changed_environment AS (
               production_branch, deployed_commit, version
 ), changed_source AS (
     INSERT INTO project_sources (
-        id, project_id, environment_id, name, kind, credential_secret_id,
+        id, project_id, environment_id, kind, credential_secret_id,
         config, capabilities, enabled
     )
     SELECT sqlc.arg(source_id), sqlc.arg(project_id), changed_environment.id,
-           sqlc.arg(source_name), sqlc.arg(source_kind), sqlc.narg(source_credential_secret_id),
+           sqlc.arg(source_kind), sqlc.narg(source_credential_secret_id),
            sqlc.arg(source_config), sqlc.arg(source_capabilities), sqlc.arg(source_enabled)
     FROM changed_environment
     ON CONFLICT (project_id) DO UPDATE
     SET environment_id = EXCLUDED.environment_id,
-        name = EXCLUDED.name,
         kind = EXCLUDED.kind,
         credential_secret_id = EXCLUDED.credential_secret_id,
         config = EXCLUDED.config,
@@ -287,20 +286,19 @@ WITH changed_environment AS (
         enabled = EXCLUDED.enabled,
         version = project_sources.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, name, kind, credential_secret_id, config, capabilities, enabled, version
+    RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
 ), changed_trigger AS (
     INSERT INTO project_triggers (
-        id, project_id, environment_id, name, kind, signing_secret_id, config, enabled,
+        id, project_id, environment_id, kind, signing_secret_id, config, enabled,
         ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
     )
     SELECT sqlc.arg(trigger_id), sqlc.arg(project_id), changed_environment.id,
-           sqlc.arg(trigger_name), sqlc.arg(trigger_kind), sqlc.narg(signing_secret_id),
+           sqlc.arg(trigger_kind), sqlc.narg(signing_secret_id),
            sqlc.arg(trigger_config), sqlc.arg(trigger_enabled),
            sqlc.narg(ingress_token_hash), sqlc.narg(ingress_token_ciphertext), sqlc.narg(ingress_token_nonce)
     FROM changed_environment
     ON CONFLICT (project_id) DO UPDATE
     SET environment_id = EXCLUDED.environment_id,
-        name = EXCLUDED.name,
         kind = EXCLUDED.kind,
         signing_secret_id = EXCLUDED.signing_secret_id,
         config = EXCLUDED.config,
@@ -310,7 +308,7 @@ WITH changed_environment AS (
         ingress_token_nonce = EXCLUDED.ingress_token_nonce,
         version = project_triggers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, name, kind, signing_secret_id, config, enabled, version,
+    RETURNING id, kind, signing_secret_id, config, enabled, version,
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 ), changed_llm AS (
     INSERT INTO project_llm_providers (
@@ -349,13 +347,11 @@ SELECT changed_environment.id AS environment_id,
        changed_repository.credential_secret_id AS repository_credential_secret_id,
        changed_repository.production_branch, changed_repository.deployed_commit,
        changed_repository.version AS repository_version,
-       changed_source.id AS source_id, changed_source.name AS source_name,
-       changed_source.kind AS source_kind,
+       changed_source.id AS source_id, changed_source.kind AS source_kind,
        changed_source.credential_secret_id AS source_credential_secret_id,
        changed_source.config AS source_config, changed_source.capabilities AS source_capabilities,
        changed_source.enabled AS source_enabled, changed_source.version AS source_version,
-       changed_trigger.id AS trigger_id, changed_trigger.name AS trigger_name,
-       changed_trigger.kind AS trigger_kind, changed_trigger.signing_secret_id,
+       changed_trigger.id AS trigger_id, changed_trigger.kind AS trigger_kind, changed_trigger.signing_secret_id,
        changed_trigger.config AS trigger_config, changed_trigger.enabled AS trigger_enabled,
        changed_trigger.version AS trigger_version,
        changed_trigger.ingress_token_hash, changed_trigger.ingress_token_ciphertext,
@@ -406,3 +402,183 @@ FROM audit_events
 WHERE project_id = sqlc.arg(project_id)
 ORDER BY occurred_at DESC, id DESC
 LIMIT sqlc.arg(result_limit);
+
+-- name: GetProjectEnvironment :one
+SELECT id, environment_key, name, service, version
+FROM project_environments
+WHERE project_id = sqlc.arg(project_id)
+ORDER BY created_at
+LIMIT 1;
+
+-- name: GetProjectRepository :one
+SELECT id, remote_url, scm_provider, transport, credential_secret_id,
+       production_branch, deployed_commit, version
+FROM project_repositories
+WHERE project_id = sqlc.arg(project_id)
+LIMIT 1;
+
+-- name: GetProjectSource :one
+SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
+FROM project_sources
+WHERE project_id = sqlc.arg(project_id)
+LIMIT 1;
+
+-- name: GetProjectTrigger :one
+SELECT id, kind, signing_secret_id, config, enabled, version,
+       ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+FROM project_triggers
+WHERE project_id = sqlc.arg(project_id)
+LIMIT 1;
+
+-- name: GetProjectLLMProvider :one
+SELECT id, provider, base_url, credential_secret_id, model, version
+FROM project_llm_providers
+WHERE project_id = sqlc.arg(project_id)
+LIMIT 1;
+
+-- name: UpsertProjectEnvironment :one
+WITH changed_environment AS (
+    INSERT INTO project_environments (id, project_id, environment_key, name, service)
+    VALUES (sqlc.arg(environment_id), sqlc.arg(project_id), sqlc.arg(environment_key),
+            sqlc.arg(environment_name), sqlc.narg(service))
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_key = EXCLUDED.environment_key,
+        name = EXCLUDED.name,
+        service = EXCLUDED.service,
+        version = project_environments.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, environment_key, name, service, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
+           'project.configuration.updated', 'project', sqlc.arg(project_id),
+           'Project environment configuration updated.',
+           jsonb_build_object('environmentKey', changed_environment.environment_key)
+    FROM changed_environment
+ )
+SELECT id, environment_key, name, service, version
+FROM changed_environment;
+
+-- name: UpsertProjectRepository :one
+WITH changed_repository AS (
+    INSERT INTO project_repositories (
+        id, project_id, remote_url, scm_provider, transport, credential_secret_id,
+        production_branch, deployed_commit
+    ) VALUES (
+        sqlc.arg(repository_id), sqlc.arg(project_id), sqlc.arg(remote_url),
+        sqlc.arg(scm_provider), sqlc.arg(repository_transport),
+        sqlc.narg(credential_secret_id), sqlc.arg(production_branch), sqlc.arg(deployed_commit)
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET remote_url = EXCLUDED.remote_url,
+        scm_provider = EXCLUDED.scm_provider,
+        transport = EXCLUDED.transport,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        production_branch = EXCLUDED.production_branch,
+        deployed_commit = EXCLUDED.deployed_commit,
+        version = project_repositories.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, remote_url, scm_provider, transport, credential_secret_id,
+              production_branch, deployed_commit, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
+           'project.configuration.updated', 'project', sqlc.arg(project_id),
+           'Project repository configuration updated.',
+           jsonb_build_object('scmProvider', changed_repository.scm_provider, 'remoteUrl', changed_repository.remote_url)
+    FROM changed_repository
+ )
+SELECT id, remote_url, scm_provider, transport, credential_secret_id,
+       production_branch, deployed_commit, version
+FROM changed_repository;
+
+-- name: UpsertProjectSource :one
+WITH changed_source AS (
+    INSERT INTO project_sources (
+        id, project_id, environment_id, kind, credential_secret_id, config, capabilities, enabled
+    ) VALUES (
+        sqlc.arg(source_id), sqlc.arg(project_id), sqlc.arg(environment_id), sqlc.arg(source_kind),
+        sqlc.narg(credential_secret_id), sqlc.arg(source_config), sqlc.arg(source_capabilities), sqlc.arg(source_enabled)
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_id = EXCLUDED.environment_id,
+        kind = EXCLUDED.kind,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        config = EXCLUDED.config,
+        capabilities = EXCLUDED.capabilities,
+        enabled = EXCLUDED.enabled,
+        version = project_sources.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
+           'project.configuration.updated', 'project', sqlc.arg(project_id),
+           'Project collection source configuration updated.',
+           jsonb_build_object('sourceKind', changed_source.kind)
+    FROM changed_source
+ )
+SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
+FROM changed_source;
+
+-- name: UpsertProjectTrigger :one
+WITH changed_trigger AS (
+    INSERT INTO project_triggers (
+        id, project_id, environment_id, kind, signing_secret_id, config, enabled,
+        ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+    ) VALUES (
+        sqlc.arg(trigger_id), sqlc.arg(project_id), sqlc.arg(environment_id), sqlc.arg(trigger_kind),
+        sqlc.narg(signing_secret_id), sqlc.arg(trigger_config), sqlc.arg(trigger_enabled),
+        sqlc.narg(ingress_token_hash), sqlc.narg(ingress_token_ciphertext), sqlc.narg(ingress_token_nonce)
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET environment_id = EXCLUDED.environment_id,
+        kind = EXCLUDED.kind,
+        signing_secret_id = EXCLUDED.signing_secret_id,
+        config = EXCLUDED.config,
+        enabled = EXCLUDED.enabled,
+        ingress_token_hash = EXCLUDED.ingress_token_hash,
+        ingress_token_ciphertext = EXCLUDED.ingress_token_ciphertext,
+        ingress_token_nonce = EXCLUDED.ingress_token_nonce,
+        version = project_triggers.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, kind, signing_secret_id, config, enabled, version,
+              ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
+           'project.configuration.updated', 'project', sqlc.arg(project_id),
+           'Project trigger configuration updated.',
+           jsonb_build_object('triggerKind', changed_trigger.kind)
+    FROM changed_trigger
+ )
+SELECT id, kind, signing_secret_id, config, enabled, version,
+       ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
+FROM changed_trigger;
+
+-- name: UpsertProjectLLMProvider :one
+WITH changed_llm AS (
+    INSERT INTO project_llm_providers (
+        id, project_id, provider, base_url, credential_secret_id, model
+    ) VALUES (
+        sqlc.arg(llm_id), sqlc.arg(project_id), sqlc.arg(llm_provider),
+        sqlc.arg(llm_base_url), sqlc.arg(llm_credential_secret_id), sqlc.arg(llm_model)
+    )
+    ON CONFLICT (project_id) DO UPDATE
+    SET provider = EXCLUDED.provider,
+        base_url = EXCLUDED.base_url,
+        credential_secret_id = EXCLUDED.credential_secret_id,
+        model = EXCLUDED.model,
+        version = project_llm_providers.version + 1,
+        updated_at = clock_timestamp()
+    RETURNING id, provider, base_url, credential_secret_id, model, version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
+           'project.configuration.updated', 'project', sqlc.arg(project_id),
+           'Project LLM provider configuration updated.',
+           jsonb_build_object('llmProvider', changed_llm.provider, 'llmModel', changed_llm.model)
+    FROM changed_llm
+ )
+SELECT id, provider, base_url, credential_secret_id, model, version
+FROM changed_llm;

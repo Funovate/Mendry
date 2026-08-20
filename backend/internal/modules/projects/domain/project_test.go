@@ -45,8 +45,8 @@ func validConfiguration() Configuration {
 	return Configuration{
 		Environment: Environment{Key: "production", Name: "Production"},
 		Repository:  Repository{RemoteURL: "https://github.com/example/service.git", SCMProvider: "github", Transport: "https", ProductionBranch: "main", DeployedCommit: "0123456789abcdef0123456789abcdef01234567"},
-		Source:      Source{Name: "production-mcp", Kind: "mcp", Config: json.RawMessage(`{"schemaVersion":1,"endpoint":"https://mcp.example.com","transport":"http","headers":{"X-Tenant":"payments"},"evidenceProfile":"default","queryScope":"logs"}`), Capabilities: []string{"pull_collection", "context_collection"}, Enabled: true},
-		Trigger: Trigger{Name: "error-events", Kind: "signed_webhook", Config: json.RawMessage(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true,
+		Source:      Source{Kind: "mcp", Config: json.RawMessage(`{"schemaVersion":1,"endpoint":"https://mcp.example.com","transport":"http","headers":{"X-Tenant":"payments"},"evidenceProfile":"default","queryScope":"logs"}`), Capabilities: []string{"pull_collection", "context_collection"}, Enabled: true},
+		Trigger: Trigger{Kind: "signed_webhook", Config: json.RawMessage(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true,
 			SigningSecretID: stringPointer("019ff544-405c-7d24-9f10-cb3fc579605c")},
 		LLM: &LLMProvider{Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: "019ff544-405c-7d24-9f10-cb3fc579605c", Model: "gpt-5.6"},
 	}

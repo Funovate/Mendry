@@ -30,7 +30,13 @@ type service interface {
 	UpdateSecret(context.Context, authdomain.User, string, string, string, []byte) (domain.Secret, error)
 	ListSecrets(context.Context, authdomain.User, string) (application.ListResult[domain.Secret], error)
 	GetConfiguration(context.Context, authdomain.User, string) (domain.Configuration, error)
+	GetConfigurationDraft(context.Context, authdomain.User, string) (domain.ConfigurationDraft, error)
 	PutConfiguration(context.Context, authdomain.User, string, domain.Configuration) (domain.Configuration, error)
+	PutConfigurationEnvironment(context.Context, authdomain.User, string, domain.Environment) (domain.Environment, error)
+	PutConfigurationRepository(context.Context, authdomain.User, string, domain.Repository) (domain.Repository, error)
+	PutConfigurationSource(context.Context, authdomain.User, string, domain.Source) (domain.Source, error)
+	PutConfigurationTrigger(context.Context, authdomain.User, string, domain.Trigger) (domain.Trigger, error)
+	PutConfigurationLLMProvider(context.Context, authdomain.User, string, domain.LLMProvider) (domain.LLMProvider, error)
 	RotateWebhookToken(context.Context, authdomain.User, string) (string, error)
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
 	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
@@ -67,7 +73,9 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects/{projectKey}/secrets", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.createSecret)))
 	mux.Handle("PATCH /api/v1/projects/{projectKey}/secrets/{secretId}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.updateSecret)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getConfiguration)))
+	mux.Handle("GET /api/v1/projects/{projectKey}/configuration/draft", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getConfigurationDraft)))
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfiguration)))
+	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration/{component}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfigurationComponent)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/webhook-token", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.rotateWebhookToken)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/repository/refs", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeRepositoryRefs)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/models", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMModels)))
@@ -159,7 +167,6 @@ type gitBranchResponse struct {
 }
 
 type sourceRequest struct {
-	Name               string          `json:"name"`
 	Kind               string          `json:"kind"`
 	CredentialSecretID *string         `json:"credentialSecretId"`
 	Config             json.RawMessage `json:"config"`
@@ -168,7 +175,6 @@ type sourceRequest struct {
 }
 
 type triggerRequest struct {
-	Name            string          `json:"name"`
 	Kind            string          `json:"kind"`
 	SigningSecretID *string         `json:"signingSecretId"`
 	Config          json.RawMessage `json:"config"`
@@ -221,6 +227,14 @@ type configurationResponse struct {
 	LLM         *llmResponse        `json:"llm"`
 }
 
+type configurationDraftResponse struct {
+	Environment *environmentResponse `json:"environment"`
+	Repository  *repositoryResponse  `json:"repository"`
+	Source      *sourceResponse      `json:"source"`
+	Trigger     *triggerResponse     `json:"trigger"`
+	LLM         *llmResponse         `json:"llm"`
+}
+
 type llmResponse struct {
 	ID                 string `json:"id"`
 	Provider           string `json:"provider"`
@@ -255,7 +269,6 @@ type repositoryResponse struct {
 
 type sourceResponse struct {
 	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
 	Kind               string          `json:"kind"`
 	CredentialSecretID *string         `json:"credentialSecretId"`
 	Config             json.RawMessage `json:"config"`
@@ -266,7 +279,6 @@ type sourceResponse struct {
 
 type triggerResponse struct {
 	ID              string          `json:"id"`
-	Name            string          `json:"name"`
 	Kind            string          `json:"kind"`
 	SigningSecretID *string         `json:"signingSecretId"`
 	InboundURL      *string         `json:"inboundUrl"`
@@ -537,6 +549,85 @@ func (h *Handler) getConfiguration(writer nethttp.ResponseWriter, request *netht
 	writeJSON(writer, request, nethttp.StatusOK, mapConfiguration(configuration))
 }
 
+func (h *Handler) getConfigurationDraft(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	draft, err := h.service.GetConfigurationDraft(request.Context(), principal, request.PathValue("projectKey"))
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, mapConfigurationDraft(draft))
+}
+
+func (h *Handler) putConfigurationComponent(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	projectKey := request.PathValue("projectKey")
+	var response any
+	var err error
+
+	switch request.PathValue("component") {
+	case "environment":
+		var payload environmentRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		var saved domain.Environment
+		saved, err = h.service.PutConfigurationEnvironment(request.Context(), principal, projectKey, domain.Environment{Key: payload.Key, Name: payload.Name, Service: payload.Service})
+		response = mapEnvironment(saved)
+	case "repository":
+		var payload repositoryRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		var saved domain.Repository
+		saved, err = h.service.PutConfigurationRepository(request.Context(), principal, projectKey, domain.Repository{RemoteURL: payload.RemoteURL, SCMProvider: payload.SCMProvider, Transport: payload.Transport, CredentialSecretID: payload.CredentialSecretID, ProductionBranch: payload.ProductionBranch, DeployedCommit: payload.DeployedCommit})
+		response = mapRepository(saved)
+	case "source":
+		var payload sourceRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		var saved domain.Source
+		saved, err = h.service.PutConfigurationSource(request.Context(), principal, projectKey, domain.Source{Kind: payload.Kind, CredentialSecretID: payload.CredentialSecretID, Config: payload.Config, Capabilities: payload.Capabilities, Enabled: payload.Enabled})
+		response = mapSource(saved)
+	case "trigger":
+		var payload triggerRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		var saved domain.Trigger
+		saved, err = h.service.PutConfigurationTrigger(request.Context(), principal, projectKey, domain.Trigger{Kind: payload.Kind, SigningSecretID: payload.SigningSecretID, Config: payload.Config, Enabled: payload.Enabled})
+		response = mapTrigger(saved)
+	case "llm":
+		var payload llmRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		provider := mapLLMRequest(&payload)
+		if provider == nil {
+			writeApplicationError(writer, request, application.ErrInvalidInput)
+			return
+		}
+		var saved domain.LLMProvider
+		saved, err = h.service.PutConfigurationLLMProvider(request.Context(), principal, projectKey, *provider)
+		response = mapLLM(saved)
+	default:
+		writeApplicationError(writer, request, application.ErrInvalidInput)
+		return
+	}
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, response)
+}
+
 func (h *Handler) putConfiguration(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	var payload configurationRequest
 	if !decodeJSON(writer, request, &payload) {
@@ -551,9 +642,9 @@ func (h *Handler) putConfiguration(writer nethttp.ResponseWriter, request *netht
 		Repository: domain.Repository{RemoteURL: payload.Repository.RemoteURL, SCMProvider: payload.Repository.SCMProvider,
 			Transport: payload.Repository.Transport, CredentialSecretID: payload.Repository.CredentialSecretID,
 			ProductionBranch: payload.Repository.ProductionBranch, DeployedCommit: payload.Repository.DeployedCommit},
-		Source: domain.Source{Name: payload.Source.Name, Kind: payload.Source.Kind, CredentialSecretID: payload.Source.CredentialSecretID,
+		Source: domain.Source{Kind: payload.Source.Kind, CredentialSecretID: payload.Source.CredentialSecretID,
 			Config: payload.Source.Config, Capabilities: payload.Source.Capabilities, Enabled: payload.Source.Enabled},
-		Trigger: domain.Trigger{Name: payload.Trigger.Name, Kind: payload.Trigger.Kind, SigningSecretID: payload.Trigger.SigningSecretID,
+		Trigger: domain.Trigger{Kind: payload.Trigger.Kind, SigningSecretID: payload.Trigger.SigningSecretID,
 			Config: payload.Trigger.Config, Enabled: payload.Trigger.Enabled},
 		LLM: mapLLMRequest(payload.LLM),
 	})
@@ -632,21 +723,56 @@ func mapSecret(secret domain.Secret) secretResponse {
 }
 
 func mapConfiguration(configuration domain.Configuration) configurationResponse {
-	return configurationResponse{
-		Environment: environmentResponse{ID: configuration.Environment.ID, Key: configuration.Environment.Key,
-			Name: configuration.Environment.Name, Service: configuration.Environment.Service, Version: configuration.Environment.Version},
-		Repository: repositoryResponse{ID: configuration.Repository.ID, RemoteURL: configuration.Repository.RemoteURL,
-			SCMProvider: configuration.Repository.SCMProvider, Transport: configuration.Repository.Transport,
-			CredentialSecretID: configuration.Repository.CredentialSecretID, ProductionBranch: configuration.Repository.ProductionBranch,
-			DeployedCommit: configuration.Repository.DeployedCommit, Version: configuration.Repository.Version},
-		Source: sourceResponse{ID: configuration.Source.ID, Name: configuration.Source.Name, Kind: configuration.Source.Kind,
-			CredentialSecretID: configuration.Source.CredentialSecretID, Config: configuration.Source.Config,
-			Capabilities: configuration.Source.Capabilities, Enabled: configuration.Source.Enabled, Version: configuration.Source.Version},
-		Trigger: triggerResponse{ID: configuration.Trigger.ID, Name: configuration.Trigger.Name, Kind: configuration.Trigger.Kind,
-			SigningSecretID: configuration.Trigger.SigningSecretID, InboundURL: optionalString(configuration.Trigger.InboundURL),
-			Config: configuration.Trigger.Config, Enabled: configuration.Trigger.Enabled, Version: configuration.Trigger.Version},
-		LLM: mapLLMResponse(configuration.LLM),
+	return configurationResponse{Environment: mapEnvironment(configuration.Environment), Repository: mapRepository(configuration.Repository), Source: mapSource(configuration.Source), Trigger: mapTrigger(configuration.Trigger), LLM: mapLLMResponse(configuration.LLM)}
+}
+
+func mapConfigurationDraft(draft domain.ConfigurationDraft) configurationDraftResponse {
+	response := configurationDraftResponse{LLM: mapLLMResponse(draft.LLM)}
+	if draft.Environment != nil {
+		value := mapEnvironment(*draft.Environment)
+		response.Environment = &value
 	}
+	if draft.Repository != nil {
+		value := mapRepository(*draft.Repository)
+		response.Repository = &value
+	}
+	if draft.Source != nil {
+		value := mapSource(*draft.Source)
+		response.Source = &value
+	}
+	if draft.Trigger != nil {
+		value := mapTrigger(*draft.Trigger)
+		response.Trigger = &value
+	}
+	return response
+}
+
+func mapEnvironment(environment domain.Environment) environmentResponse {
+	return environmentResponse{ID: environment.ID, Key: environment.Key, Name: environment.Name, Service: environment.Service, Version: environment.Version}
+}
+
+func mapRepository(repository domain.Repository) repositoryResponse {
+	return repositoryResponse{ID: repository.ID, RemoteURL: repository.RemoteURL, SCMProvider: repository.SCMProvider, Transport: repository.Transport, CredentialSecretID: repository.CredentialSecretID, ProductionBranch: repository.ProductionBranch, DeployedCommit: repository.DeployedCommit, Version: repository.Version}
+}
+
+func mapSource(source domain.Source) sourceResponse {
+	return sourceResponse{ID: source.ID, Kind: source.Kind, CredentialSecretID: source.CredentialSecretID, Config: source.Config, Capabilities: source.Capabilities, Enabled: source.Enabled, Version: source.Version}
+}
+
+func mapTrigger(trigger domain.Trigger) triggerResponse {
+	return triggerResponse{ID: trigger.ID, Kind: trigger.Kind, SigningSecretID: trigger.SigningSecretID, InboundURL: optionalString(trigger.InboundURL), Config: trigger.Config, Enabled: trigger.Enabled, Version: trigger.Version}
+}
+
+func mapLLM(provider domain.LLMProvider) llmResponse {
+	return llmResponse{ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL, CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, Version: provider.Version}
+}
+
+func mapLLMResponse(provider *domain.LLMProvider) *llmResponse {
+	if provider == nil {
+		return nil
+	}
+	response := mapLLM(*provider)
+	return &response
 }
 
 func mapLLMRequest(payload *llmRequest) *domain.LLMProvider {
@@ -656,16 +782,6 @@ func mapLLMRequest(payload *llmRequest) *domain.LLMProvider {
 	return &domain.LLMProvider{
 		Provider: payload.Provider, BaseURL: payload.BaseURL,
 		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model,
-	}
-}
-
-func mapLLMResponse(provider *domain.LLMProvider) *llmResponse {
-	if provider == nil {
-		return nil
-	}
-	return &llmResponse{
-		ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL,
-		CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, Version: provider.Version,
 	}
 }
 

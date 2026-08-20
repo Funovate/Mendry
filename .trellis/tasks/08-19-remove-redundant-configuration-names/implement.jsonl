@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index and pre-development routing for the project configuration contract."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Forward migration, sqlc generation, PostgreSQL comments, and integration-test requirements."}
+{"file":".trellis/spec/backend/project-guidelines.md","reason":"Authoritative one-component-per-project, source/trigger, webhook, incident, and project-boundary contracts."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend pre-development and full quality checklist."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Zod-owned HTTP DTO and strict API contract requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The field removal crosses database, domain, HTTP, generated SQL, and frontend boundaries."}
+{"file":".trellis/tasks/08-19-remove-redundant-configuration-names/research/existing-model.md","reason":"Codebase evidence, data flow, incident dependency, migration boundary, and GitNexus impact results."}

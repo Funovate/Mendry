@@ -46,7 +46,7 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 10 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 {
+	if len(migrations) != 11 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	if migrations[1].Name != "create_mvp_data" {
@@ -76,6 +76,9 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 
 	if migrations[9].Name != "webhook_ingress_token" {
 		t.Fatalf("migration 000010 name = %q", migrations[9].Name)
+	}
+	if migrations[10].Name != "remove_configuration_names" {
+		t.Fatalf("migration 000011 name = %q", migrations[10].Name)
 	}
 	requiredSchema := []string{
 		"CREATE TABLE users",
@@ -190,6 +193,19 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	}
 	if columnCommentCount := strings.Count(migrations[7].SQL, "COMMENT ON COLUMN "); columnCommentCount != expectedRemediationColumnCommentCount {
 		t.Errorf("migration 000008 column comment count = %d, want %d", columnCommentCount, expectedRemediationColumnCommentCount)
+	}
+
+	requiredConfigurationNameRemoval := []string{
+		"DROP CONSTRAINT project_sources_project_name_unique",
+		"DROP CONSTRAINT project_sources_name_bounded",
+		"DROP COLUMN name",
+		"DROP CONSTRAINT project_triggers_project_name_unique",
+		"DROP CONSTRAINT project_triggers_name_bounded",
+	}
+	for _, fragment := range requiredConfigurationNameRemoval {
+		if !strings.Contains(migrations[10].SQL, fragment) {
+			t.Errorf("migration 000011 does not contain %q", fragment)
+		}
 	}
 
 	requiredWebhookTokenSchema := []string{

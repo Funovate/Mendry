@@ -173,7 +173,7 @@ not infer permissions from a local role switch.
 | `operator` | yes | yes | no |
 | `viewer` | yes | no | no |
 
-The current MVP persists one coherent configuration snapshot per project:
+The current MVP stores at most one row for each configuration component per project. The editor saves environment, Git repository, source, trigger, and optional LLM provider independently; the complete configuration read is available once the required environment, repository, source, and trigger rows exist:
 
 | Resource | Persisted fields |
 |---|---|
@@ -181,8 +181,10 @@ The current MVP persists one coherent configuration snapshot per project:
 | Git repository | remote URL, SCM provider, `https`/`ssh` transport, credential reference, production branch, deployed commit |
 | Source | `ssh`, `cloud`, or `mcp`; typed config, credential reference, capabilities, enabled state |
 | Trigger | `signed_webhook` or `custom_rule`; typed config, optional signing-secret reference, enabled state; signed webhook also stores a hashed inbound token |
+| LLM provider | OpenAI-compatible base URL, credential reference, and selected model |
 | Credential | stable ID/name/kind and AES-256-GCM ciphertext/nonce; reads expose metadata only |
 
+The editor reads partial state from `GET /configuration/draft`. Each component write uses `PUT /configuration/{component}` and sends only that component's fields. The legacy complete `PUT /configuration` remains available for clients that already submit a full snapshot.
 SSH configuration stores host, port, user, project folder, log path, and
 `tail`/`snapshot` mode. MCP configuration stores endpoint, transport, safe headers,
 evidence profile, query scope, and capabilities. Trigger configuration stores
@@ -204,7 +206,10 @@ GET|POST /api/v1/projects
 GET      /api/v1/projects/{projectKey}
 GET|PUT|DELETE /api/v1/projects/{projectKey}/members[/{username}]
 GET|POST /api/v1/projects/{projectKey}/secrets
-GET|PUT  /api/v1/projects/{projectKey}/configuration
+GET      /api/v1/projects/{projectKey}/configuration
+GET      /api/v1/projects/{projectKey}/configuration/draft
+PUT      /api/v1/projects/{projectKey}/configuration
+PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm}
 POST     /api/v1/projects/{projectKey}/configuration/webhook-token
 GET|POST /api/v1/projects/{projectKey}/observations
 GET|POST /api/v1/projects/{projectKey}/incidents
@@ -228,19 +233,13 @@ curl -X PUT -b /tmp/fixthe-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/members/oncall.operator
 ```
 
-Persist an initial Git, Cloud log, and custom-rule configuration. The IDs in the
-response are stable references used by observations and incidents:
+Persist each configuration component independently. For example, saving a signed webhook does not require an LLM model:
 
 ```bash
 curl -X PUT -b /tmp/fixthe-cookie.txt \
   -H 'Content-Type: application/json' \
-  -d '{
-    "environment":{"key":"production","name":"Production","service":"checkout-backend"},
-    "repository":{"remoteUrl":"https://git.example.internal/platform/checkout-api.git","scmProvider":"github","transport":"https","credentialSecretId":null,"productionBranch":"main","deployedCommit":"4f9c2b7"},
-    "source":{"name":"production-logs","kind":"cloud","credentialSecretId":null,"config":{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"checkout-logset"},"capabilities":["pull_collection"],"enabled":true},
-    "trigger":{"name":"backend-errors","kind":"custom_rule","signingSecretId":null,"config":{"schemaVersion":1,"groupingWindowSeconds":900,"matchExpression":"level=ERROR service=checkout-backend"},"enabled":true}
-  }' \
-  http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration
+  -d '{"kind":"signed_webhook","signingSecretId":null,"config":{"schemaVersion":1,"eventTypes":["alarm"],"deduplicationKey":"title"},"enabled":true}' \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/trigger
 ```
 
 Create credentials separately, then use the returned ID as

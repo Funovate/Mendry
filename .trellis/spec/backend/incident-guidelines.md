@@ -106,7 +106,7 @@ Successful incident JSON fields are:
   "fingerprint": "pg:latency",
   "status": "Open",
   "priority": "P2",
-  "source": "production-logs",
+  "source": "cloud",
   "sourceId": "019...",
   "environmentId": "019...",
   "firstSeen": "2026-08-13T01:02:03Z",

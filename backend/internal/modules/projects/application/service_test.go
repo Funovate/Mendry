@@ -85,6 +85,66 @@ func (f *fakeRepository) GetConfiguration(context.Context, string) (domain.Confi
 	}
 	return f.configuration, f.error
 }
+
+func (f *fakeRepository) GetConfigurationDraft(context.Context, string) (domain.ConfigurationDraft, error) {
+	draft := domain.ConfigurationDraft{}
+	if f.configuration.Environment.ID != "" {
+		environment := f.configuration.Environment
+		draft.Environment = &environment
+	}
+	if f.configuration.Repository.ID != "" {
+		repository := f.configuration.Repository
+		draft.Repository = &repository
+	}
+	if f.configuration.Source.ID != "" {
+		source := f.configuration.Source
+		draft.Source = &source
+	}
+	if f.configuration.Trigger.ID != "" {
+		trigger := f.configuration.Trigger
+		draft.Trigger = &trigger
+	}
+	if f.configuration.LLM != nil {
+		provider := *f.configuration.LLM
+		draft.LLM = &provider
+	}
+	return draft, f.error
+}
+
+func (f *fakeRepository) UpsertEnvironment(_ context.Context, projectID string, environment domain.Environment, _, _ string) (domain.Environment, error) {
+	f.projectID = projectID
+	environment.Version++
+	f.configuration.Environment = environment
+	return environment, f.error
+}
+
+func (f *fakeRepository) UpsertRepository(_ context.Context, projectID string, repository domain.Repository, _, _ string) (domain.Repository, error) {
+	f.projectID = projectID
+	repository.Version++
+	f.configuration.Repository = repository
+	return repository, f.error
+}
+
+func (f *fakeRepository) UpsertSource(_ context.Context, projectID, _ string, source domain.Source, _, _ string) (domain.Source, error) {
+	f.projectID = projectID
+	source.Version++
+	f.configuration.Source = source
+	return source, f.error
+}
+
+func (f *fakeRepository) UpsertTrigger(_ context.Context, projectID, _ string, trigger domain.Trigger, _, _ string) (domain.Trigger, error) {
+	f.projectID = projectID
+	trigger.Version++
+	f.configuration.Trigger = trigger
+	return trigger, f.error
+}
+
+func (f *fakeRepository) UpsertLLMProvider(_ context.Context, projectID string, provider domain.LLMProvider, _, _ string) (domain.LLMProvider, error) {
+	f.projectID = projectID
+	provider.Version++
+	f.configuration.LLM = &provider
+	return provider, f.error
+}
 func (f *fakeRepository) UpsertConfiguration(_ context.Context, projectID string, configuration domain.Configuration, _, _ string) (domain.Configuration, error) {
 	f.projectID, f.configuration = projectID, configuration
 	return configuration, f.error
@@ -276,6 +336,23 @@ func TestConfigurationWriteRequiresProjectAdminAndAssignsOwnedIDs(t *testing.T) 
 	}
 }
 
+func TestPutConfigurationTriggerSavesWithoutLLM(t *testing.T) {
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments", Name: "Payments", Role: domain.RoleAdmin}}
+	cipher := &fakeCipher{}
+	service := newService(t, repository, cipher)
+	service.newWebhookToken = func() (string, error) { return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", nil }
+	trigger := validConfiguration().Trigger
+	trigger.SigningSecretID = nil
+
+	saved, err := service.PutConfigurationTrigger(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", trigger)
+	if err != nil {
+		t.Fatalf("PutConfigurationTrigger() error = %v", err)
+	}
+	if saved.Kind != "signed_webhook" || saved.InboundURL == "" || repository.configuration.LLM != nil {
+		t.Fatalf("saved trigger = %#v configuration = %#v", saved, repository.configuration)
+	}
+}
+
 func newService(t *testing.T, repository Repository, cipher Cipher) *Service {
 	t.Helper()
 	ids := []string{"019ff544-405c-7d31-9f10-cb3fc579605c", "019ff544-405c-7d32-9f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c", "019ff544-405c-7d35-9f10-cb3fc579605c", "019ff544-405c-7d36-9f10-cb3fc579605c"}
@@ -296,9 +373,9 @@ func validConfiguration() domain.Configuration {
 		Environment: domain.Environment{Key: "production", Name: "Production"},
 		Repository: domain.Repository{RemoteURL: "https://github.com/example/service.git", SCMProvider: "github", Transport: "https",
 			ProductionBranch: "main", DeployedCommit: "0123456789abcdef0123456789abcdef01234567"},
-		Source: domain.Source{Name: "production-mcp", Kind: "mcp", Config: json.RawMessage(`{"schemaVersion":1,"endpoint":"https://mcp.example.com","transport":"http","headers":{},"evidenceProfile":"default","queryScope":"logs"}`),
+		Source: domain.Source{Kind: "mcp", Config: json.RawMessage(`{"schemaVersion":1,"endpoint":"https://mcp.example.com","transport":"http","headers":{},"evidenceProfile":"default","queryScope":"logs"}`),
 			Capabilities: []string{"pull_collection"}, Enabled: true},
-		Trigger: domain.Trigger{Name: "error-events", Kind: "signed_webhook", SigningSecretID: &secretID,
+		Trigger: domain.Trigger{Kind: "signed_webhook", SigningSecretID: &secretID,
 			Config: json.RawMessage(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true},
 		LLM: &domain.LLMProvider{Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretID, Model: "gpt-5.6"},
 	}
@@ -410,6 +487,24 @@ func TestGetConfigurationRevealsInboundURLOnlyForAdmin(t *testing.T) {
 	operator, err := service.GetConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments")
 	if err != nil || operator.Trigger.InboundURL != "" {
 		t.Fatalf("operator GetConfiguration() = %#v, %v", operator.Trigger, err)
+	}
+}
+
+func TestRotateWebhookTokenRejectsNonSignedWebhook(t *testing.T) {
+	configuration := validConfiguration()
+	configuration.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
+	configuration.Trigger.Kind = "custom_rule"
+	configuration.Trigger.Config = json.RawMessage(`{"schemaVersion":1,"groupingWindowSeconds":60,"matchExpression":"level=ERROR"}`)
+	repository := &fakeRepository{
+		project:       domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin},
+		configuration: configuration,
+	}
+	service := newService(t, repository, &fakeCipher{})
+	if _, err := service.RotateWebhookToken(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments"); err != ErrInvalidInput {
+		t.Fatalf("error = %v", err)
+	}
+	if repository.rotated {
+		t.Fatal("token rotated for custom_rule")
 	}
 }
 
