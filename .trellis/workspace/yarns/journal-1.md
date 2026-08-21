@@ -19,7 +19,8 @@
 
 ### Main Changes
 
-(Add details)
+- Moved `08-20-remediation-harness-observability` to the August archive.
+- Kept all shared dirty-worktree business changes uncommitted.
 
 ### Git Commits
 
@@ -241,3 +242,34 @@ Closed the source/trigger alias-removal task after backend/frontend quality gate
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Archive remediation harness observability
+
+**Date**: 2026-08-21
+**Task**: Archive remediation harness observability
+**Branch**: `main`
+
+### Summary
+
+Archived 08-20-remediation-harness-observability as explicitly requested. Business-code changes remain uncommitted in the shared dirty worktree; archive metadata was committed separately.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No work commits; the archive-only commit is intentionally excluded.)
+
+### Testing
+
+- [OK] Confirmed the task is `completed` and absent from the active task list.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Commit the shared business-code changes later under their correct task boundaries.
