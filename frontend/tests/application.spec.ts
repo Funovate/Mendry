@@ -375,6 +375,16 @@ test("loads project-owned configuration, events, incidents, members, and audit r
   await page.getByRole("link", { name: "Event stream" }).click();
   await expect(page.getByText("validator instance for language fr not registered", { exact: false })).toBeVisible();
   await expect(page.getByText("real-estate-backend", { exact: true })).toBeVisible();
+  const expectedTimestamp = await page.evaluate((value) => new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value)), "2026-08-13T07:59:00Z");
+  await expect(page.locator("time")).toHaveText(expectedTimestamp);
+  await expect(page.locator("time")).toHaveAttribute("datetime", "2026-08-13T07:59:00Z");
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByText("https://git.example.internal/platform/real-estate-api.git", { exact: true })).toBeVisible();
