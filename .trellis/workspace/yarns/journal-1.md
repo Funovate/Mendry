@@ -306,3 +306,36 @@ Updated Event stream timestamps to include localized year, month, day, and time 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Archive remediation error observability
+
+**Date**: 2026-08-21
+**Task**: Archive remediation error observability
+**Branch**: `main`
+
+### Summary
+
+Committed remediation harness error diagnostics and bounded SSH/tool/model failure details as 918480a; archived remediation-error-observability as 2f68cd6. Existing unrelated worktree changes were left untouched.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `918480a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
