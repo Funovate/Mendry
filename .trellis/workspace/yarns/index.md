@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-08-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~274 | Active |
+| `journal-1.md` | ~308 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-08-21 | Event stream date timestamps | `fcd7bfd` | `main` |
 | 8 | 2026-08-21 | Archive remediation harness observability | - | `main` |
 | 7 | 2026-08-20 | Remove redundant configuration names | `b8d7508` | `main` |
 | 6 | 2026-08-19 | Signed inbound webhook URL and ingress | `2142337`, `4de0001`, `537ee64` | `main` |

@@ -273,3 +273,36 @@ Archived 08-20-remediation-harness-observability as explicitly requested. Busine
 ### Next Steps
 
 - Commit the shared business-code changes later under their correct task boundaries.
+
+
+## Session 9: Event stream date timestamps
+
+**Date**: 2026-08-21
+**Task**: Event stream date timestamps
+**Branch**: `main`
+
+### Summary
+
+Updated Event stream timestamps to include localized year, month, day, and time through seconds; added semantic datetime metadata and Playwright regression coverage. Frontend lint, type-check, unit tests, build, full E2E, diff checks, and staged GitNexus change detection passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fcd7bfd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
