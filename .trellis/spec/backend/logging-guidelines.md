@@ -85,6 +85,17 @@ and its following stack or SQL are not interleaved with another slog record.
   a redacted provider response body when one was read, and a
   low-cardinality `error_class` on failure. See
   [Outbound LLM Requests](#outbound-llm-requests).
+- Asynchronous or synchronous remediation failures emit one `remediation.failed`
+  record with the trigger reason, lifecycle generation, error type/message, bounded
+  cause chain, and `error_stack`/`error_stack_source`. The record must not include
+  webhook bodies, model prompts, provider payloads, credentials, or raw evidence.
+- Remediation model-turn and tool completion records add the failure class and
+  bounded operator `error_message`; tool failures also add the safe
+  `error_code` and `retryable` decision. These fields identify the failing
+  boundary before the terminal `remediation.failed` event.
+- SSH evidence completion records include the actual bounded remote command and
+  bounded command failure diagnostic so an internal operator can reproduce the
+  process boundary. They do not include stdout or plaintext private-key bytes.
 - Outbound Git `ls-remote` probes emit one `git.request.completed` record with
   operation, public host, public path, duration, outcome, a redacted public
   command identity, captured stdout/stderr when present, and a
@@ -99,7 +110,7 @@ strings, request/response bodies, database arguments, user source, evidence, or
 arbitrary high-cardinality identifiers. A redacted string representation is
 defense in depth, not permission to pass a secret to the logger.
 
-There are four explicit exceptions:
+There are five explicit exceptions:
 
 - The failure-only request snapshot described in
   [Error Request Snapshots](#error-request-snapshots) covers a redacted,
@@ -117,6 +128,11 @@ There are four explicit exceptions:
 - `FIXTHE_HTTP_REQUEST_DEBUG=true` attaches the complete inbound request and
   response to the existing INFO `http.request.completed` record. See
   [Inbound HTTP Request Debug](#inbound-http-request-debug).
+
+- Private remediation logs may include bounded original failure diagnostics and
+  the actual SSH remote command. This exception is limited to operator failure
+  records and does not authorize model prompts, tool payloads, evidence bodies,
+  stdout, or plaintext private-key bytes.
 
 Neither of the first two exceptions permits independently attaching headers,
 cookies, response bodies, raw SQL, bind values, Redis key/value data, or
@@ -552,5 +568,148 @@ Never log API tokens, HTTPS userinfo, PEM private-key material,
 `GIT_SSH_COMMAND`, or temp key paths. Application code still maps a failed
 probe to `ErrGitUnreachable` for the client; the outbound record is what
 operators use to distinguish a bad URL, a rejected credential, DNS failure,
-or timeout. Remediation `adapter/git.Reader` clone/fetch/ls-tree/cat-file
-commands remain uninstrumented and can reuse `LogGitRequest` later.
+or timeout. Remediation `adapter/git.Reader` emits the same contract for
+network `clone` and `fetch`; local `ls-tree` / `cat-file` commands remain
+covered by the correlated remediation context/tool progress events.
+
+## Scenario: Remediation Console Trace
+
+### 1. Scope / Trigger
+
+Use this contract when changing remediation lifecycle progress, model/tool
+observation, context payloads, Git/SSH adapter logging, or console projection.
+The trace is written only to the injected backend logger; it adds no database
+table, API, frontend surface, or vendor exporter.
+
+### 2. Signatures
+
+```go
+type application.RunObserver interface {
+    RunStarted(context.Context, application.RunStartedObservation)
+    StateTransitioned(context.Context, application.StateTransitionObservation)
+    ContextCompleted(context.Context, application.ContextObservation)
+    ModelTurnCompleted(context.Context, application.ModelTurnObservation)
+    ToolCompleted(context.Context, application.ToolObservation)
+    RunCompleted(context.Context, application.RunCompletedObservation)
+}
+
+func observability.SnapshotRemediationPayload(any) (observability.PayloadSnapshot, error)
+func observability.SnapshotDiagnostic(string) (string, bool)
+func logging.NewObserver(*slog.Logger) (*logging.Observer, error)
+```
+
+Existing coordinator constructors install a no-op observer. Bootstrap uses
+`NewRemediationCoordinatorWithObservedRuntime`; frozen domain ports do not gain
+logger, credential, or trace methods.
+
+### 3. Contracts
+
+Progress events are metadata-only and visible at `INFO`:
+
+| Event | Required purpose |
+|---|---|
+| `remediation.run.started` | queued run identity and trigger metadata |
+| `remediation.state.transitioned` | committed `from_state` / `to_state` plus effect counters |
+| `remediation.context.completed` | repository/evidence operation, duration, bytes, outcome |
+| `remediation.model_turn.completed` | phase, global run sequence, duration, envelope, usage, outcome; failed turns add `error_class` and bounded `error_message` |
+| `remediation.tool.completed` | phase, global run sequence, tool, duration, bytes, rejection/outcome; failed calls add `error_class`, safe `error_code`, `retryable`, and bounded `error_message` |
+| `remediation.run.completed` | terminal state, duration, aggregate counters, outcome |
+
+`ModelTurnObservation.ErrorMessage` is populated for provider, protocol, and
+strict envelope decode failures. `ToolObservation.ErrorMessage` is populated
+for adapter and policy failures, while `ErrorCode` and `Retryable` retain the
+safe model-facing classification. The logging adapter projects these fields
+through `SnapshotDiagnostic`, capped at `DiagnosticMaxBytes` on a UTF-8
+boundary and marked with `error_message_truncated` when capped. These operator
+diagnostics never enter `AgentConversation` or a subsequent provider request.
+
+SSH evidence completion adds `ssh.command` with the actual remote command and
+uses `error_class=command` for an executed command failure. Source-loading
+failures without a command retain the ordinary outbound classification.
+
+Payload events are `DEBUG` only:
+`remediation.context.payload`, `remediation.model_turn.payload`, and
+`remediation.tool.payload`. Every present payload includes `run_id`, phase,
+`payload_kind`, `payload`, complete redacted `payload_bytes`,
+`payload_logged_bytes`, `payload_truncated`, and `payload_sha256`. Model and
+tool records share one monotonically increasing in-process sequence per run.
+
+The payload pipeline deterministically serializes structured values, redacts
+the complete payload, hashes that complete redacted text, then truncates the
+logged prefix to 64 KiB on a valid UTF-8 boundary. It redacts sensitive keys
+including `value`, password/token/secret/authorization/API-key/credential
+assignments, bearer and `sk-...` values, HTTPS userinfo, and PEM private keys.
+It never hashes the unredacted input.
+
+Console removes `payload` from the inline tint attributes and writes a labeled
+`remediation_payload[<kind>]:` following block under the shared output mutex.
+JSON keeps the same payload as a structured string field. Trace/span IDs remain
+owned by `observability.Log` and appear only when the context has a valid span.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Default `INFO` | Progress records present; no prompt, source, evidence, model, or tool payload |
+| `DEBUG` | Bounded redacted payload records present and correlated |
+| Payload over 64 KiB | UTF-8 prefix, `payload_truncated=true`, complete redacted byte count/hash |
+| Structured sensitive key or secret-shaped text | Replace value before hashing/logging |
+| Provider/tool/context failure | Completion metadata with low-cardinality class and bounded operator reason; no payload at INFO |
+| SSH command failure | Completion includes actual remote command, command class, exit/stderr diagnostic, and truncation marker when needed |
+| Tool adapter failure | INFO event distinguishes `error_class=adapter` from `error_class=policy`; model sees only the safe error object |
+| Envelope unknown field | Strict decode still fails; model-turn log includes the concrete validation error |
+| Run failure | `remediation.run.completed` plus boundary-owned `remediation.failed`; stack only on the latter |
+| Nil observer / adapter logger | No-op compatibility, with lifecycle behavior unchanged |
+
+### 5. Good/Base/Bad Cases
+
+- Good: operators follow one `run_id` through state, context, model and tool
+  sequence records, then enable `DEBUG` temporarily for redacted payload blocks.
+- Base: `INFO` shows where a successful run is spending time without logging
+  repository content, production evidence, prompts, or responses.
+- Bad: logging plaintext credentials, hashing the unredacted payload, presenting
+  a truncated payload as complete, using separate model/tool sequence counters,
+  or persisting trace payloads in the application database.
+
+### 6. Tests Required
+
+- JSON and console tests assert stable event/field names, complete IDs, labeled
+  payload blocks, physical newlines, and atomic concurrent output.
+- Snapshot tests cover multibyte truncation, deterministic structured JSON,
+  byte/hash metadata, sensitive keys, bearer/API tokens, assignments,
+  authenticated URLs, and PEM blocks.
+- Coordinator tests assert start/transition/context/model/tool/terminal order and
+  one monotonic sequence shared by model and tool observations.
+- Failure projection tests assert SSH command/stderr, tool code/retryability,
+  policy-versus-adapter class, and model decode reasons at the completion event;
+  adapter diagnostics must not appear in a later model message.
+- Logger capture tests prove payload markers remain absent at `INFO` and `DEBUG`;
+  failure records retain their bounded operator diagnostic, `INFO` has no
+  payload field, and `DEBUG` payload fields never exceed 64 KiB.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+logger.Info("model turn", "prompt", turn.UserMessage, "api_key", plaintext)
+```
+
+#### Correct
+
+```go
+observer.ModelTurnCompleted(ctx, application.ModelTurnObservation{
+    Run: runIdentity, Phase: phase, Sequence: sequence,
+    Request: turn, Response: result,
+}) // logging adapter emits INFO metadata and DEBUG redacted snapshots.
+```
+
+For a failure, the correct split is an operator-only diagnostic observation:
+
+```go
+observer.ModelTurnCompleted(ctx, application.ModelTurnObservation{
+    Outcome: "failure", FailureClass: "decode",
+    ErrorMessage: `decode agent envelope: envelope decode: json: unknown field "type"`,
+})
+// AgentConversation still receives only the existing safe tool error object.
+```

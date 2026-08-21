@@ -341,3 +341,17 @@ func truncateUTF8(value string, limit int) (string, bool) {
 	}
 	return value[:cut], true
 }
+
+// ClassifyCommand 保留 context 失败分类，并将其他命令失败归类为 command；SSH evidence 执行使用它避免 generic internal 隐藏进程边界。
+func ClassifyCommand(ctx context.Context, err error) string {
+	if err == nil {
+		return ""
+	}
+	if class := classifyContextError(ctx.Err()); class != "" {
+		return class
+	}
+	if class := classifyContextError(err); class != "" {
+		return class
+	}
+	return OutboundCommand
+}
