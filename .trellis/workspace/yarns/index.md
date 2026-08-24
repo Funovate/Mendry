@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~374 | Active |
+| `journal-1.md` | ~407 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-24 | Adjust remediation timeout model | `ea85854` | `main` |
 | 11 | 2026-08-24 | Reduce remediation prompt cost and expose cache metrics | `56ae60d` | `main` |
 | 10 | 2026-08-21 | Archive remediation error observability | `918480a` | `main` |
 | 9 | 2026-08-21 | Event stream date timestamps | `fcd7bfd` | `main` |

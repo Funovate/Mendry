@@ -372,3 +372,36 @@ Implemented deferred phase-aware MCP tool activation, incremental provider-nativ
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Adjust remediation timeout model
+
+**Date**: 2026-08-24
+**Task**: Adjust remediation timeout model
+**Branch**: `main`
+
+### Summary
+
+Added a five-minute shared logical model-turn timeout, raised the remediation run work ceiling to 20 minutes, enforced run-bounded model and tool contexts, and preserved terminal persistence after elapsed exhaustion.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ea85854` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
