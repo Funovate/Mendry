@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 	"time"
 
 	"fixthe/backend/internal/modules/remediation/domain"
@@ -71,6 +73,9 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 	if !catalog.hasDefinition(phase, tool) {
 		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "tool is not in the run catalog"}
 	}
+	if tool == ToolSourceSearchTools {
+		return searchAndActivateTools(catalog, phase, params)
+	}
 	if tool == ToolSourceRefreshTools {
 		if err := g.refreshCatalog(ctx, catalog); err != nil {
 			return ToolResult{
@@ -123,6 +128,94 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 	// A catalog entry with no dynamic route is a built-in tool. The legacy
 	// validator still owns path and adapter-specific parameter bounds.
 	return g.ExecuteTool(ctx, phase, ref, scope, tool, params)
+}
+
+type toolSearchMatch struct {
+	name        string
+	description string
+	rank        int
+	original    string
+}
+
+func searchAndActivateTools(catalog *ToolCatalog, phase domain.RunState, params map[string]interface{}) (ToolResult, error) {
+	if err := validateDynamicArguments(toolParameterSchema(ToolSourceSearchTools), params); err != nil {
+		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolSourceSearchTools, Message: err.Error()}
+	}
+	query, _ := params["query"].(string)
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolSourceSearchTools, Message: "arguments.query must not be blank"}
+	}
+	limit := defaultToolSearchLimit
+	if raw, ok := params["limit"]; ok {
+		value, _ := numericValue(raw)
+		limit = int(value)
+	}
+
+	matches := make([]toolSearchMatch, 0, len(catalog.routes))
+	for publicName, route := range catalog.routes {
+		if _, allowed := route.phases[phase]; !allowed {
+			continue
+		}
+		rank, matched := toolSearchRank(query, route.call.Name, publicName, route.definition.Description)
+		if !matched {
+			continue
+		}
+		matches = append(matches, toolSearchMatch{
+			name: publicName, original: route.call.Name, rank: rank,
+			description: boundedText(route.definition.Description, maxToolSearchDescription),
+		})
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].rank != matches[j].rank {
+			return matches[i].rank < matches[j].rank
+		}
+		if matches[i].original != matches[j].original {
+			return matches[i].original < matches[j].original
+		}
+		return matches[i].name < matches[j].name
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	compact := make([]map[string]interface{}, 0, len(matches))
+	for _, match := range matches {
+		catalog.activated[match.name] = struct{}{}
+		compact = append(compact, map[string]interface{}{
+			"name": match.name, "description": match.description,
+		})
+	}
+	catalog.rebuild()
+	return ToolResult{
+		Tool:    ToolSourceSearchTools,
+		Summary: fmt.Sprintf("Activated %d approved MCP tools", len(matches)),
+		Payload: map[string]interface{}{
+			"matches": compact,
+			"count":   len(matches),
+			"catalog": catalog.Version(),
+		},
+	}, nil
+}
+
+func toolSearchRank(query, originalName, publicName, description string) (int, bool) {
+	originalName = strings.ToLower(originalName)
+	publicName = strings.ToLower(publicName)
+	description = strings.ToLower(description)
+	switch {
+	case query == originalName || query == publicName:
+		return 0, true
+	case strings.Contains(originalName, query) || strings.Contains(publicName, query):
+		return 1, true
+	case strings.Contains(description, query):
+		return 2, true
+	}
+	searchable := originalName + " " + publicName + " " + description
+	for _, term := range strings.Fields(query) {
+		if !strings.Contains(searchable, term) {
+			return 0, false
+		}
+	}
+	return 3, true
 }
 
 func boundDynamicPayload(value any) (any, int64, bool) {

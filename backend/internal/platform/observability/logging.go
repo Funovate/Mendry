@@ -52,8 +52,11 @@ const (
 	FieldHTTPStatus            = "http.status"
 	FieldHTTPRequest           = "http.request"
 	FieldHTTPRequestTruncated  = "http.request_truncated"
+	FieldHTTPRequestHeaders    = "http.request_headers"
+	FieldHTTPRequestQuery      = "http.request_query"
 	FieldHTTPResponse          = "http.response"
 	FieldHTTPResponseTruncated = "http.response_truncated"
+	FieldHTTPResponseHeaders   = "http.response_headers"
 	FieldRequestBody           = "request_body"
 	FieldRequestQuery          = "request_query"
 	FieldBodyTruncated         = "body_truncated"
@@ -90,8 +93,14 @@ const (
 	FieldModelTokens           = "model_tokens"
 	FieldModelCalls            = "model_calls"
 	FieldToolCalls             = "tool_calls"
+	FieldToolCount             = "tool_count"
+	FieldToolSchemaBytes       = "tool_schema_bytes"
+	FieldRequestBytes          = "request_bytes"
+	FieldModelCacheHitTokens   = "model_cache_hit_tokens"
+	FieldModelCacheMissTokens  = "model_cache_miss_tokens"
 	FieldRepositoryBytes       = "repository_bytes"
 	FieldEvidenceBytes         = "evidence_bytes"
+	FieldBudgetExhaustedReason = "budget_exhausted_reason"
 	FieldTerminalState         = "terminal_state"
 	FieldCredentialSecretID    = "credential_secret_id"
 	FieldCredentialKind        = "credential_kind"
@@ -272,6 +281,11 @@ func (h consoleHandler) Handle(ctx context.Context, record slog.Record) error {
 	component := h.component
 	attrs := make([]slog.Attr, 0, record.NumAttrs())
 	stacks := append([]string(nil), h.stacks...)
+	// 先读 event，再决定是否把 http.request / http.response 投影成后续物理行；
+	// slog 不保证 attr 顺序，出站 llm/git 记录复用同一对 body key。
+	event := recordEvent(record)
+	payloadKind := recordStringAttr(record, FieldPayloadKind)
+	debugValues := make(map[string]string)
 	record.Attrs(func(attr slog.Attr) bool {
 		if !h.grouped && attr.Key == FieldComponent && attr.Value.Kind() == slog.KindString {
 			component = attr.Value.String()
@@ -283,9 +297,25 @@ func (h consoleHandler) Handle(ctx context.Context, record slog.Record) error {
 			}
 			return true
 		}
+		if !h.grouped && inboundHTTPDebugField(event, attr.Key) && attr.Value.Kind() == slog.KindString {
+			debugValues[attr.Key] = attr.Value.String()
+			return true
+		}
+		if !h.grouped && remediationPayloadField(event, attr.Key) && attr.Value.Kind() == slog.KindString {
+			debugValues[attr.Key] = attr.Value.String()
+			return true
+		}
 		attrs = append(attrs, attr)
 		return true
 	})
+	for _, key := range inboundHTTPDebugFieldOrder {
+		if block := formatInboundHTTPDebugBlock(key, debugValues[key]); block != "" {
+			stacks = append(stacks, block)
+		}
+	}
+	if payload := debugValues[FieldPayload]; payload != "" {
+		stacks = append(stacks, formatRemediationPayloadBlock(payloadKind, payload))
+	}
 
 	if component != "" {
 		record.Message = fmt.Sprintf("[%s] %s", component, record.Message)
@@ -311,8 +341,103 @@ func (h consoleHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
+func recordEvent(record slog.Record) string {
+	var event string
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == FieldEvent && attr.Value.Kind() == slog.KindString {
+			event = attr.Value.String()
+			return false
+		}
+		return true
+	})
+	return event
+}
+
+func recordStringAttr(record slog.Record, key string) string {
+	var value string
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == key && attr.Value.Kind() == slog.KindString {
+			value = attr.Value.String()
+			return false
+		}
+		return true
+	})
+	return value
+}
+
 func consoleStackField(key string) bool {
 	return key == FieldErrorStack || key == FieldStack || key == FieldDBQueryText
+}
+
+// inboundHTTPDebugField 只剥离入站 completed 记录上的大块转储字段。
+// 出站 llm/git 记录复用 http.request / http.response，必须继续走 tint 的
+// request= / response= 短别名，不能改成后续物理行。
+var inboundHTTPDebugFieldOrder = []string{
+	FieldHTTPRequestHeaders,
+	FieldHTTPRequestQuery,
+	FieldHTTPRequest,
+	FieldHTTPResponseHeaders,
+	FieldHTTPResponse,
+}
+
+func inboundHTTPDebugField(event, key string) bool {
+	if event != EventHTTPCompleted {
+		return false
+	}
+	switch key {
+	case FieldHTTPRequest, FieldHTTPResponse, FieldHTTPRequestHeaders, FieldHTTPResponseHeaders, FieldHTTPRequestQuery:
+		return true
+	default:
+		return false
+	}
+}
+
+func remediationPayloadField(event, key string) bool {
+	if key != FieldPayload {
+		return false
+	}
+	switch event {
+	case EventRemediationContextPayload, EventRemediationModelPayload, EventRemediationToolPayload:
+		return true
+	default:
+		return false
+	}
+}
+
+func formatRemediationPayloadBlock(kind, payload string) string {
+	label := "remediation_payload"
+	if kind != "" {
+		label += "[" + kind + "]"
+	}
+	return label + ":\n" + payload
+}
+
+func formatInboundHTTPDebugBlock(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	label := inboundHTTPDebugLabel(key)
+	if label == "" {
+		return value
+	}
+	return label + ":\n" + value
+}
+
+func inboundHTTPDebugLabel(key string) string {
+	switch key {
+	case FieldHTTPRequestHeaders:
+		return "request_headers"
+	case FieldHTTPRequestQuery:
+		return "request_query"
+	case FieldHTTPRequest:
+		return "request"
+	case FieldHTTPResponseHeaders:
+		return "response_headers"
+	case FieldHTTPResponse:
+		return "response"
+	default:
+		return ""
+	}
 }
 
 func (h consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -381,8 +506,10 @@ func writerSupportsColor(writer io.Writer) bool {
 
 // Log 写入一条带稳定 event name 的结构化记录。
 // attrs 只能包含调用边界允许的低基数字段。除 http.request.failed 的脱敏截断
-// 入参快照，以及 llm.request.completed / git.request.completed 的脱敏截断
-// 出站快照外，不得携带 payload、secret 或原始 URL。
+// 入参快照、llm.request.completed / git.request.completed 的脱敏截断出站快照、
+// remediation.*.payload 的 64 KiB 脱敏调试快照，
+// 以及 FIXTHE_HTTP_REQUEST_DEBUG 打开时挂在 http.request.completed 上的未脱敏
+// 入站请求/响应转储外，不得携带 payload、secret 或原始 URL。
 func Log(ctx context.Context, logger *slog.Logger, level slog.Level, event, message string, attrs ...slog.Attr) {
 	base := []slog.Attr{slog.String(FieldEvent, event)}
 	spanContext := trace.SpanContextFromContext(ctx)

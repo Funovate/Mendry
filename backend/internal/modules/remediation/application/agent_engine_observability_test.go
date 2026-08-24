@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -21,8 +22,8 @@ func TestAgentEngineDecodeFailureObservationIncludesConcreteReason(t *testing.T)
 		context.Background(), application.RunIdentity{RunID: "run-1"}, observer, 7,
 		domain.RunStateDiagnosing, "project-1", "bounded context", nil, nil,
 	)
-	if err == nil || !strings.Contains(err.Error(), `unknown field "type"`) {
-		t.Fatalf("Turn() error = %v, want unknown field type", err)
+	if err == nil || !errors.Is(err, application.ErrInvalidEnvelope) || !strings.Contains(err.Error(), `unknown field "type"`) {
+		t.Fatalf("Turn() error = %v, want invalid envelope unknown field type", err)
 	}
 	if observer.model.Outcome != "failure" || observer.model.FailureClass != "decode" || observer.model.Sequence != 7 {
 		t.Fatalf("model observation = %+v", observer.model)

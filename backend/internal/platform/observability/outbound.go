@@ -53,28 +53,36 @@ var pemPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE 
 // LLMRequest 是一次出站 LLM HTTP 调用的有界观测记录。
 // Host 和 Path 必须已经去掉 userinfo 与 query。Request/Response 只能是脱敏截断后的载荷。
 type LLMRequest struct {
-	Operation string
-	Host      string
-	Path      string
-	Model     string
-	Status    int
-	Duration  time.Duration
-	Request   []byte
-	Response  []byte
-	Err       error
+	Operation           string
+	Host                string
+	Path                string
+	Model               string
+	Status              int
+	Duration            time.Duration
+	Request             []byte
+	Response            []byte
+	RequestBytes        int64
+	ToolCount           int
+	ToolSchemaBytes     int64
+	CacheTokensReported bool
+	CacheHitTokens      int64
+	CacheMissTokens     int64
+	Err                 error
 }
 
 // GitRequest 是一次出站 git 命令的有界观测记录。
 // Host 和 Path 必须来自公开 remote URL，不得带 userinfo 或 query。
 // Request 只能是公开命令身份；Response 是捕获到的 stdout/stderr。
 type GitRequest struct {
-	Operation string
-	Host      string
-	Path      string
-	Duration  time.Duration
-	Request   []byte
-	Response  []byte
-	Err       error
+	Operation          string
+	Host               string
+	Path               string
+	Duration           time.Duration
+	Request            []byte
+	Response           []byte
+	CredentialSecretID string
+	Transport          string
+	Err                error
 }
 
 // HTTPIdentity 从原始 URL 提取可记录的 host 和 path。
@@ -176,6 +184,17 @@ func LogLLMRequest(ctx context.Context, logger *slog.Logger, rec LLMRequest) {
 	if class != "" {
 		attrs = append(attrs, slog.String(FieldErrorClass, class))
 	}
+	attrs = append(attrs,
+		slog.Int64(FieldRequestBytes, rec.RequestBytes),
+		slog.Int(FieldToolCount, rec.ToolCount),
+		slog.Int64(FieldToolSchemaBytes, rec.ToolSchemaBytes),
+	)
+	if rec.CacheTokensReported {
+		attrs = append(attrs,
+			slog.Int64(FieldModelCacheHitTokens, rec.CacheHitTokens),
+			slog.Int64(FieldModelCacheMissTokens, rec.CacheMissTokens),
+		)
+	}
 	if snapshot, truncated := SnapshotHTTPPayload(rec.Request); snapshot != "" {
 		attrs = append(attrs, slog.String(FieldHTTPRequest, snapshot))
 		if truncated {
@@ -215,6 +234,12 @@ func LogGitRequest(ctx context.Context, logger *slog.Logger, rec GitRequest) {
 	if class != "" {
 		attrs = append(attrs, slog.String(FieldErrorClass, class))
 	}
+	if rec.CredentialSecretID != "" {
+		attrs = append(attrs, slog.String(FieldCredentialSecretID, rec.CredentialSecretID))
+	}
+	if rec.Transport != "" {
+		attrs = append(attrs, slog.String(FieldTransport, rec.Transport))
+	}
 	if snapshot, truncated := SnapshotHTTPPayload(rec.Request); snapshot != "" {
 		attrs = append(attrs, slog.String(FieldHTTPRequest, snapshot))
 		if truncated {
@@ -234,6 +259,20 @@ func LogGitRequest(ctx context.Context, logger *slog.Logger, rec GitRequest) {
 // CommandContext 超时经常返回 signal: killed 而不是 context 错误，因此优先看 ctx.Err()。
 // 不得从 git 退出码发明 HTTP 状态。
 func ClassifyGit(ctx context.Context, err error) string {
+	if err == nil {
+		return ""
+	}
+	if class := classifyContextError(ctx.Err()); class != "" {
+		return class
+	}
+	if class := classifyContextError(err); class != "" {
+		return class
+	}
+	return OutboundCommand
+}
+
+// ClassifyCommand 保留 context 失败分类，并将其他命令失败归类为 command；SSH evidence 执行使用它避免 generic internal 隐藏进程边界。
+func ClassifyCommand(ctx context.Context, err error) string {
 	if err == nil {
 		return ""
 	}
@@ -340,18 +379,4 @@ func truncateUTF8(value string, limit int) (string, bool) {
 		cut--
 	}
 	return value[:cut], true
-}
-
-// ClassifyCommand 保留 context 失败分类，并将其他命令失败归类为 command；SSH evidence 执行使用它避免 generic internal 隐藏进程边界。
-func ClassifyCommand(ctx context.Context, err error) string {
-	if err == nil {
-		return ""
-	}
-	if class := classifyContextError(ctx.Err()); class != "" {
-		return class
-	}
-	if class := classifyContextError(err); class != "" {
-		return class
-	}
-	return OutboundCommand
 }

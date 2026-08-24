@@ -10,9 +10,9 @@ import (
 	"fixthe/backend/internal/modules/remediation/domain"
 )
 
-// Read tool identifiers advertised by the gateway in this slice. Only these
-// six read tools exist; any other identifier (including the reserved
-// mutation/execution tools) is rejected as tool_unavailable.
+// Read tool identifiers advertised by the gateway in this slice. Built-in
+// repository, evidence, and SSH inspect tools exist; any other identifier
+// (including reserved mutation/execution tools) is rejected as tool_unavailable.
 const (
 	ToolRepoListTree    = "repository.list_tree"
 	ToolRepoReadFile    = "repository.read_file"
@@ -20,6 +20,7 @@ const (
 	ToolRepoHistory     = "repository.history"
 	ToolEvidenceSearch  = "evidence.search"
 	ToolEvidenceContext = "evidence.context"
+	ToolSSHInspect      = "ssh.inspect"
 )
 
 // ToolRejectionCode is a stable machine code for a rejected tool request. The
@@ -123,6 +124,7 @@ func (g *ToolGateway) ExecuteToolObserved(
 type ToolGateway struct {
 	repoPort       domain.RepositoryReadPort
 	evidencePort   domain.EvidenceLogPort
+	inspectPort    domain.SSHInspectPort
 	dynamicRuntime domain.DynamicToolRuntimePort
 	policyResolver domain.ToolPolicyResolver
 
@@ -162,6 +164,7 @@ func (g *ToolGateway) AdvertisedTools(phase domain.RunState) []string {
 			ToolRepoHistory,
 			ToolEvidenceSearch,
 			ToolEvidenceContext,
+			ToolSSHInspect,
 		}
 	default:
 		return nil
@@ -173,15 +176,17 @@ func (g *ToolGateway) AdvertisedTools(phase domain.RunState) []string {
 // 在没有 source 的项目上广告一个必然失败的 evidence tool。
 func (g *ToolGateway) AdvertisedToolsFor(phase domain.RunState, scope domain.EvidenceScope) []string {
 	names := g.AdvertisedTools(phase)
-	if strings.TrimSpace(scope.SourceID) != "" {
-		return names
-	}
 	filtered := make([]string, 0, len(names))
 	for _, name := range names {
-		if strings.HasPrefix(name, "evidence.") {
+		switch {
+		case name == ToolSSHInspect:
+			// 旧静态 catalog 没有 source kind，不能把 SSH inspect 广告成可执行。
 			continue
+		case strings.HasPrefix(name, "evidence.") && strings.TrimSpace(scope.SourceID) == "":
+			continue
+		default:
+			filtered = append(filtered, name)
 		}
-		filtered = append(filtered, name)
 	}
 	return filtered
 }
@@ -255,6 +260,20 @@ func toolParameterSchema(tool string) map[string]interface{} {
 		return object(map[string]interface{}{
 			"evidenceId": stringProperty("Evidence identifier returned by evidence.search."),
 		}, "evidenceId")
+	case ToolSSHInspect:
+		return object(map[string]interface{}{
+			"command": stringProperty("Inspect command to parse and execute. List the hinted logPath directory and discover actual file names before reading; the harness never auto-tails logPath."),
+		}, "command")
+	case ToolSourceSearchTools:
+		return object(map[string]interface{}{
+			"query": map[string]interface{}{
+				"type": "string", "description": "Tool capability to find.",
+				"minLength": 1, "maxLength": maxToolSearchQuery,
+			},
+			"limit": map[string]interface{}{
+				"type": "integer", "minimum": 1, "maximum": maxToolSearchLimit,
+			},
+		}, "query")
 	default:
 		return object(nil)
 	}
@@ -267,6 +286,8 @@ var toolDescriptions = map[string]string{
 	ToolRepoHistory:        "Read bounded commit history for a path.",
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
+	ToolSSHInspect:         "Inspect the SSH host with an allowlisted command. List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath.",
+	ToolSourceSearchTools:  "Find and activate approved MCP tools for the current remediation phase.",
 	ToolSourceRefreshTools: "Refresh the approved MCP tool catalog for this source.",
 }
 
@@ -275,7 +296,7 @@ var toolDescriptions = map[string]string{
 func (g *ToolGateway) isRegistered(tool string) bool {
 	switch tool {
 	case ToolRepoListTree, ToolRepoReadFile, ToolRepoSearch, ToolRepoHistory,
-		ToolEvidenceSearch, ToolEvidenceContext:
+		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect:
 		return true
 	default:
 		return false
@@ -316,6 +337,14 @@ func (g *ToolGateway) ExecuteTool(
 	if strings.HasPrefix(tool, "evidence.") && strings.TrimSpace(scope.SourceID) == "" {
 		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "evidence source is unavailable"}
 	}
+	if tool == ToolSSHInspect {
+		if strings.TrimSpace(scope.SourceID) == "" {
+			return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "SSH inspect source is unavailable"}
+		}
+		if g.inspectPort == nil {
+			return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "SSH inspect port is unavailable"}
+		}
+	}
 	if err := validateToolParameters(tool, params); err != nil {
 		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
 	}
@@ -345,6 +374,8 @@ func (g *ToolGateway) ExecuteTool(
 		return g.execEvidenceSearch(ctx, scope, params)
 	case ToolEvidenceContext:
 		return g.execEvidenceContext(ctx, scope, params)
+	case ToolSSHInspect:
+		return g.execSSHInspect(ctx, scope, params)
 	default:
 		// Unreachable: isRegistered already gated the identifier.
 		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "unhandled tool"}
@@ -377,7 +408,7 @@ func validateToolParameters(tool string, params map[string]interface{}) error {
 	}
 	for key, value := range params {
 		switch key {
-		case "path", "query", "pathGlob", "level", "evidenceId":
+		case "path", "query", "pathGlob", "level", "evidenceId", "command":
 			if _, ok := value.(string); !ok {
 				return fmt.Errorf("%s must be a string", key)
 			}
@@ -510,6 +541,30 @@ func (g *ToolGateway) execEvidenceSearch(ctx context.Context, scope domain.Evide
 		BytesRetrieved: evidencePageBytes(page),
 		EvidenceIDs:    evidenceIDs(page),
 		Payload:        page,
+	}, nil
+}
+
+func (g *ToolGateway) execSSHInspect(ctx context.Context, scope domain.EvidenceScope, params map[string]interface{}) (ToolResult, error) {
+	command, ok := params["command"].(string)
+	if !ok || strings.TrimSpace(command) == "" {
+		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolSSHInspect, Message: "command is required"}
+	}
+	parsed, err := parseInspectCommand(command)
+	if err != nil {
+		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolSSHInspect, Message: err.Error()}
+	}
+	if g.inspectPort == nil {
+		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: ToolSSHInspect, Message: "SSH inspect port is unavailable"}
+	}
+	result, err := g.inspectPort.Inspect(ctx, scope, domain.SSHInspectRequest{Command: parsed.Command})
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("ssh inspect: %w", err)
+	}
+	return ToolResult{
+		Tool:           ToolSSHInspect,
+		Summary:        fmt.Sprintf("ssh inspect exit=%d truncated=%t bytes=%d", result.ExitCode, result.Truncated, result.BytesRetrieved),
+		BytesRetrieved: result.BytesRetrieved,
+		Payload:        result,
 	}, nil
 }
 

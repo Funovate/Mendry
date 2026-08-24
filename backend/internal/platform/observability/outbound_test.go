@@ -67,15 +67,21 @@ func TestLogLLMRequestWritesJSONRecord(t *testing.T) {
 	}
 
 	LogLLMRequest(context.Background(), logger, LLMRequest{
-		Operation: "chat.completions",
-		Host:      "api.openai.com",
-		Path:      "/v1/chat/completions",
-		Model:     "gpt-5.6",
-		Status:    http.StatusUnauthorized,
-		Duration:  12 * time.Millisecond,
-		Request:   []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`),
-		Response:  []byte(`{"error":{"message":"Incorrect API key provided: sk-test-openai-key","type":"invalid_request_error"},"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`),
-		Err:       errors.New("openai returned status 401"),
+		Operation:           "chat.completions",
+		Host:                "api.openai.com",
+		Path:                "/v1/chat/completions",
+		Model:               "gpt-5.6",
+		Status:              http.StatusUnauthorized,
+		Duration:            12 * time.Millisecond,
+		Request:             []byte(`{"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}]}`),
+		Response:            []byte(`{"error":{"message":"Incorrect API key provided: sk-test-openai-key","type":"invalid_request_error"},"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`),
+		RequestBytes:        321,
+		ToolCount:           2,
+		ToolSchemaBytes:     123,
+		CacheTokensReported: true,
+		CacheHitTokens:      8,
+		CacheMissTokens:     3,
+		Err:                 errors.New("openai returned status 401"),
 	})
 
 	var record map[string]any
@@ -92,6 +98,11 @@ func TestLogLLMRequestWritesJSONRecord(t *testing.T) {
 	assertField(t, record, FieldErrorClass, OutboundHTTP4xx)
 	assertField(t, record, FieldHTTPStatus, float64(http.StatusUnauthorized))
 	assertField(t, record, FieldDurationMS, float64(12))
+	assertField(t, record, FieldRequestBytes, float64(321))
+	assertField(t, record, FieldToolCount, float64(2))
+	assertField(t, record, FieldToolSchemaBytes, float64(123))
+	assertField(t, record, FieldModelCacheHitTokens, float64(8))
+	assertField(t, record, FieldModelCacheMissTokens, float64(3))
 	request, _ := record[FieldHTTPRequest].(string)
 	if !strings.Contains(request, `"content":"hi"`) || !strings.Contains(request, `"model":"gpt-5.6"`) {
 		t.Fatalf("request = %#v", request)

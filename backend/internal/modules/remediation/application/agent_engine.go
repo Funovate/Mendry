@@ -88,7 +88,8 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 	conversation *AgentConversation,
 ) (*AgentEnvelope, domain.ModelResult, error) {
 	observer = normalizeRunObserver(observer)
-	userMessage := e.buildPrompt(phase) + "\n\n## Context\n" + contextText
+	phasePrompt := e.buildPrompt(phase)
+	userMessage := phasePrompt + "\n\n## Context\n" + contextText
 	req := domain.ModelTurn{
 		ProjectID:    projectID,
 		SystemPrompt: agentSystemPrompt,
@@ -99,6 +100,7 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 	}
 	if conversation != nil {
 		req.Messages = conversation.History()
+		req.Continuation = conversation.NativeContinuation(phasePrompt)
 	}
 
 	started := time.Now()
@@ -107,16 +109,16 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 		turnErr := fmt.Errorf("model turn: %w", err)
 		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-			Outcome: "failure", FailureClass: "provider", ErrorMessage: turnErr.Error(), Request: req,
+			Outcome: "failure", FailureClass: "provider", ErrorMessage: turnErr.Error(), Request: req, Response: res,
 		})
-		return nil, domain.ModelResult{}, turnErr
+		return nil, res, turnErr
 	}
 	if conversation != nil {
-		conversation.RecordModelTurn(userMessage, res)
+		conversation.RecordModelTurn(req.Continuation, res)
 	}
 	if len(res.ToolCalls) > 0 {
 		if res.Content != "" {
-			protocolErr := fmt.Errorf("model returned tool calls and envelope content together")
+			protocolErr := wrapEnvelopeError("model returned tool calls and envelope content together", nil)
 			observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 				Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
 				Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
@@ -127,7 +129,7 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 		for _, call := range res.ToolCalls {
 			request := RequestTool{ToolName: call.Name, Parameters: call.Arguments, CallID: call.ID}
 			if err := validateRequestTool(&request); err != nil {
-				validationErr := fmt.Errorf("validate native tool call: %w", err)
+				validationErr := wrapEnvelopeError("validate native tool call", err)
 				observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 					Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
 					Outcome: "failure", FailureClass: "protocol", ErrorMessage: validationErr.Error(), Request: req, Response: res,
@@ -151,7 +153,7 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 
 	env, err := DecodeAgentEnvelope([]byte(res.Content))
 	if err != nil {
-		decodeErr := fmt.Errorf("decode agent envelope: %w", err)
+		decodeErr := wrapEnvelopeError("decode agent envelope", err)
 		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
 			Outcome: "failure", FailureClass: "decode", ErrorMessage: decodeErr.Error(), Request: req, Response: res,
@@ -168,17 +170,33 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 
 const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded, " +
 	"redacted observations provided. Request read-only tools when you need more " +
-	"evidence. Return exactly one JSON envelope per the agent protocol."
+	"evidence. Return exactly one JSON envelope per the agent protocol. " +
+	"kind=diagnosis requires a diagnosis object, never a string."
+
+// wrapEnvelopeError 把可纠正的信封/协议错误标成 ErrInvalidEnvelope，
+// 让 coordinator 回喂模型而不是把 run 直接打成 failed。
+func wrapEnvelopeError(op string, err error) error {
+	if err == nil {
+		return fmt.Errorf("%s: %w", op, ErrInvalidEnvelope)
+	}
+	return fmt.Errorf("%s: %w: %w", op, ErrInvalidEnvelope, err)
+}
 
 // buildPrompt constructs the phase-specific instruction.
 func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 	switch phase {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
 		return "Diagnose the incident from available evidence. Classify fixability, " +
-			"cite evidence, and either request a read tool or return a diagnosis."
+			"cite evidence, and either request a read tool or return a diagnosis object. " +
+			"If kind is diagnosis, diagnosis must be an object with fixability, confidence, " +
+			"causalReasoning, contradictions, missingEvidence, evidenceCitations, and " +
+			"recommendedNextAction; never a string. " +
+			"For an SSH source, use ssh.inspect: first ls the hinted logPath directory " +
+			"and discover actual file names before reading; never assume logPath is a file to tail."
 	case domain.RunStatePlanning:
 		return "The incident is code-fixable. Produce candidate repair plans with a " +
-			"recommended plan, rationale, risk classification, and a suggested unified diff."
+			"recommended plan, rationale, risk classification, and a suggested unified diff. " +
+			"Return kind=planCandidates with a planCandidates object, not a string."
 	default:
 		return "Process the current remediation phase."
 	}

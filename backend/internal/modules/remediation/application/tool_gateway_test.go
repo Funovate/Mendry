@@ -152,6 +152,7 @@ func TestToolGateway_AdvertisesOnlyReadTools(t *testing.T) {
 		application.ToolRepoHistory:     true,
 		application.ToolEvidenceSearch:  true,
 		application.ToolEvidenceContext: true,
+		application.ToolSSHInspect:      true,
 	}
 	phases := []domain.RunState{
 		domain.RunStatePreparingContext,
@@ -185,7 +186,12 @@ func TestToolGateway_AdvertisedDefinitionsAreBoundedSchemas(t *testing.T) {
 	}
 	defs = gw.AdvertisedToolDefinitionsFor(domain.RunStateDiagnosing, domain.EvidenceScope{SourceID: "source-1"})
 	if len(defs) != 6 {
-		t.Fatalf("definitions with source = %d, want 6", len(defs))
+		t.Fatalf("definitions with source = %d, want 6 repository+evidence tools", len(defs))
+	}
+	for _, definition := range defs {
+		if definition.Name == application.ToolSSHInspect {
+			t.Fatal("legacy static catalog advertised ssh.inspect")
+		}
 	}
 }
 
@@ -264,3 +270,77 @@ func (o *toolPayloadObserver) ToolCompleted(_ context.Context, rec application.T
 	o.observation = rec
 }
 func (o *toolPayloadObserver) RunCompleted(context.Context, application.RunCompletedObservation) {}
+
+func TestToolGateway_SSHInspectRejectsBeforeAdapter(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+
+	_, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+		application.ToolSSHInspect, map[string]interface{}{"command": "ls; rm -rf /"})
+	if code, _ := application.RejectionCode(err); code != application.RejectArguments {
+		t.Fatalf("rejection code = %v, want %s (err=%v)", code, application.RejectArguments, err)
+	}
+	if inspect.calls != 0 {
+		t.Fatalf("inspect adapter calls = %d, want 0", inspect.calls)
+	}
+}
+
+func TestToolGateway_SSHInspectUnavailableWithoutPort(t *testing.T) {
+	evidence := &fakeEvidencePort{}
+	gateway := application.NewToolGateway(&fakeRepoPort{}, evidence)
+	_, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+		application.ToolSSHInspect, map[string]interface{}{"command": "ls /var/log"})
+	if code, _ := application.RejectionCode(err); code != application.RejectUnavailable {
+		t.Fatalf("rejection code = %v, want %s (err=%v)", code, application.RejectUnavailable, err)
+	}
+	if evidence.calls != 0 {
+		t.Fatalf("evidence adapter calls = %d, want 0", evidence.calls)
+	}
+}
+
+func TestToolGateway_SSHInspectRoutesReconstructedCommand(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+	result, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+		application.ToolSSHInspect, map[string]interface{}{"command": "ls /var/log | grep app"})
+	if err != nil {
+		t.Fatalf("ExecuteTool() error = %v", err)
+	}
+	if inspect.calls != 1 || inspect.lastCommand != `'ls' '/var/log' | 'grep' 'app'` {
+		t.Fatalf("inspect command = %#v calls=%d", inspect.lastCommand, inspect.calls)
+	}
+	if result.Tool != application.ToolSSHInspect {
+		t.Fatalf("result tool = %s", result.Tool)
+	}
+}
+
+func TestToolGateway_SSHInspectAcceptsQuotedLiteralPatterns(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+	_, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+		application.ToolSSHInspect, map[string]interface{}{"command": "grep '[0-9]+' app.log"})
+	if err != nil {
+		t.Fatalf("quoted inspect pattern should be accepted: %v", err)
+	}
+	if inspect.lastCommand != `'grep' '[0-9]+' 'app.log'` {
+		t.Fatalf("inspect command = %#v", inspect.lastCommand)
+	}
+}
+
+func TestToolGateway_SSHInspectRejectsUnquotedGlobBeforeAdapter(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+	_, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+		application.ToolSSHInspect, map[string]interface{}{"command": "ls *.log"})
+	if code, _ := application.RejectionCode(err); code != application.RejectArguments {
+		t.Fatalf("rejection code = %v, want %s (err=%v)", code, application.RejectArguments, err)
+	}
+	if inspect.calls != 0 {
+		t.Fatalf("inspect adapter calls = %d, want 0", inspect.calls)
+	}
+}

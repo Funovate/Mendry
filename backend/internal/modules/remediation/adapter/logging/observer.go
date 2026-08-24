@@ -38,6 +38,10 @@ func (o *Observer) RunStarted(ctx context.Context, rec application.RunStartedObs
 
 // StateTransitioned 记录成功提交后的状态迁移。
 func (o *Observer) StateTransitioned(ctx context.Context, rec application.StateTransitionObservation) {
+	outcome := "success"
+	if rec.To == domain.RunStateBudgetExhausted {
+		outcome = "stopped"
+	}
 	attrs := append(runAttrs(rec.Run),
 		slog.String(observability.FieldFromState, string(rec.From)),
 		slog.String(observability.FieldToState, string(rec.To)),
@@ -48,8 +52,11 @@ func (o *Observer) StateTransitioned(ctx context.Context, rec application.StateT
 		slog.Int64(observability.FieldModelTokensOut, rec.Effect.ModelTokensOut),
 		slog.Int64(observability.FieldRepositoryBytes, rec.Effect.RepositoryBytes),
 		slog.Int64(observability.FieldEvidenceBytes, rec.Effect.EvidenceBytes),
-		slog.String(observability.FieldOutcome, "success"),
+		slog.String(observability.FieldOutcome, outcome),
 	)
+	if rec.BudgetExhaustedReason != "" {
+		attrs = append(attrs, slog.String(observability.FieldBudgetExhaustedReason, rec.BudgetExhaustedReason))
+	}
 	observability.Log(ctx, o.logger, slog.LevelInfo, observability.EventRemediationStateTransition, "remediation state transitioned", attrs...)
 }
 
@@ -79,8 +86,17 @@ func (o *Observer) ModelTurnCompleted(ctx context.Context, rec application.Model
 		slog.String(observability.FieldLLMModel, rec.Response.Model),
 		slog.Int64(observability.FieldModelTokensIn, rec.Response.UsageTokensIn),
 		slog.Int64(observability.FieldModelTokensOut, rec.Response.UsageTokensOut),
+		slog.Int64(observability.FieldRequestBytes, rec.Response.RequestBytes),
+		slog.Int(observability.FieldToolCount, rec.Response.ToolCount),
+		slog.Int64(observability.FieldToolSchemaBytes, rec.Response.ToolSchemaBytes),
 		slog.String(observability.FieldOutcome, rec.Outcome),
 	)
+	if rec.Response.CacheTokensReported {
+		attrs = append(attrs,
+			slog.Int64(observability.FieldModelCacheHitTokens, rec.Response.CacheHitTokens),
+			slog.Int64(observability.FieldModelCacheMissTokens, rec.Response.CacheMissTokens),
+		)
+	}
 	if rec.FailureClass != "" {
 		attrs = append(attrs, slog.String(observability.FieldErrorClass, rec.FailureClass))
 	}

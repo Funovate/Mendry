@@ -33,8 +33,12 @@ func TestObserverInfoProgressContainsNoPayload(t *testing.T) {
 	observer.ModelTurnCompleted(context.Background(), application.ModelTurnObservation{
 		Run: run, Phase: domain.RunStateDiagnosing, Sequence: 1, Duration: time.Millisecond,
 		Outcome: "success", EnvelopeKind: "diagnosis",
-		Request:  domain.ModelTurn{SystemPrompt: remediationSecretPayload()},
-		Response: domain.ModelResult{Content: remediationSecretPayload(), UsageTokensIn: 4, UsageTokensOut: 2},
+		Request: domain.ModelTurn{SystemPrompt: remediationSecretPayload()},
+		Response: domain.ModelResult{
+			Content: remediationSecretPayload(), UsageTokensIn: 4, UsageTokensOut: 2,
+			RequestBytes: 512, ToolCount: 3, ToolSchemaBytes: 128,
+			CacheTokensReported: true, CacheHitTokens: 4, CacheMissTokens: 0,
+		},
 	})
 	records := decodeJSONLines(t, output.Bytes())
 	if len(records) != 2 {
@@ -44,6 +48,10 @@ func TestObserverInfoProgressContainsNoPayload(t *testing.T) {
 		if _, ok := record[observability.FieldPayload]; ok {
 			t.Fatalf("INFO record contains payload: %#v", record)
 		}
+	}
+	modelRecord := records[1]
+	if modelRecord[observability.FieldRequestBytes] != float64(512) || modelRecord[observability.FieldToolCount] != float64(3) || modelRecord[observability.FieldToolSchemaBytes] != float64(128) || modelRecord[observability.FieldModelCacheHitTokens] != float64(4) || modelRecord[observability.FieldModelCacheMissTokens] != float64(0) {
+		t.Fatalf("model metrics = %#v", modelRecord)
 	}
 	assertNoMarkers(t, output.String())
 }
@@ -134,6 +142,20 @@ func TestObserverPolicyRejectionRemainsDistinct(t *testing.T) {
 		record[observability.FieldToolRejectionCode] != string(application.RejectUnavailable) ||
 		record[observability.FieldRetryable] != false {
 		t.Fatalf("policy rejection fields = %#v", record)
+	}
+}
+
+func TestObserverBudgetExhaustionIsStoppedWithReason(t *testing.T) {
+	var output bytes.Buffer
+	observer := newTestObserver(t, &output, "info")
+	observer.StateTransitioned(context.Background(), application.StateTransitionObservation{
+		Run:  application.RunIdentity{RunID: "run-1"},
+		From: domain.RunStateDiagnosing, To: domain.RunStateBudgetExhausted,
+		BudgetExhaustedReason: "elapsed",
+	})
+	record := decodeJSONLines(t, output.Bytes())[0]
+	if record[observability.FieldOutcome] != "stopped" || record[observability.FieldBudgetExhaustedReason] != "elapsed" {
+		t.Fatalf("budget exhaustion fields = %#v", record)
 	}
 }
 

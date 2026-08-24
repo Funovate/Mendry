@@ -26,10 +26,11 @@ type RunStartedObservation struct {
 
 // StateTransitionObservation 描述一次成功提交的状态迁移及本次预算 effect。
 type StateTransitionObservation struct {
-	Run    RunIdentity
-	From   domain.RunState
-	To     domain.RunState
-	Effect domain.Effect
+	Run                   RunIdentity
+	From                  domain.RunState
+	To                    domain.RunState
+	Effect                domain.Effect
+	BudgetExhaustedReason string
 }
 
 // ContextObservation 描述一次 repository/evidence 上下文操作及可选安全 payload。

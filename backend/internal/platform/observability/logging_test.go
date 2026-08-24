@@ -79,6 +79,96 @@ func TestLoggerWritesQueryDebugJSONFields(t *testing.T) {
 	assertField(t, record, FieldDBQueryText, "SELECT private_column FROM incidents WHERE token = 'secret-bind-value'")
 }
 
+func TestLoggerWritesHTTPCompletedDebugJSONRecord(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := NewLogger(LoggerOptions{
+		Writer:      &output,
+		Level:       "info",
+		Format:      "json",
+		Service:     "fixthe-test",
+		Environment: "test",
+		Build:       buildinfo.Current(),
+	})
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+
+	Log(context.Background(), logger, slog.LevelInfo, EventHTTPCompleted, "request completed",
+		slog.String(FieldComponent, "httpserver"),
+		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie"),
+		slog.String(FieldHTTPRequestQuery, "token=query-secret"),
+		slog.String(FieldHTTPRequest, `{"password":"hunter2"}`),
+		slog.Bool(FieldHTTPRequestTruncated, true),
+		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session"),
+		slog.String(FieldHTTPResponse, `{"ok":true}`),
+		slog.Bool(FieldHTTPResponseTruncated, false),
+	)
+
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v; output = %q", err, output.String())
+	}
+	assertField(t, record, FieldEvent, EventHTTPCompleted)
+	assertField(t, record, FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie")
+	assertField(t, record, FieldHTTPRequestQuery, "token=query-secret")
+	assertField(t, record, FieldHTTPRequest, `{"password":"hunter2"}`)
+	assertField(t, record, FieldHTTPRequestTruncated, true)
+	assertField(t, record, FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session")
+	assertField(t, record, FieldHTTPResponse, `{"ok":true}`)
+	assertField(t, record, FieldHTTPResponseTruncated, false)
+}
+
+func TestConsoleHandlerFormatsInboundHTTPDebugBlocks(t *testing.T) {
+	var output bytes.Buffer
+	handler := newConsoleHandler(&output, slog.LevelInfo, false)
+	record := slog.NewRecord(time.Date(2026, time.August, 18, 10, 43, 18, 0, time.UTC), slog.LevelInfo, "request completed", 0)
+	record.AddAttrs(
+		slog.String(FieldEvent, EventHTTPCompleted),
+		slog.String(FieldComponent, "httpserver"),
+		slog.String(FieldTraceID, "cbad87f9abcd1234"),
+		slog.String(FieldRequestID, "b8dc3be5abcd1234"),
+		slog.String("method", "POST"),
+		slog.String("route", "POST /login"),
+		slog.Int("status", 200),
+		slog.Int64(FieldDurationMS, 12),
+		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie"),
+		slog.String(FieldHTTPRequestQuery, "env=prod"),
+		slog.String(FieldHTTPRequest, `{"password":"hunter2"}`),
+		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session"),
+		slog.String(FieldHTTPResponse, `{"ok":true}`),
+	)
+	if err := handler.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	formatted := output.String()
+	if !strings.HasPrefix(formatted, "2026-08-18 10:43:18 INF [httpserver] request completed") {
+		t.Fatalf("output = %q", formatted)
+	}
+	for _, expected := range []string{
+		"trace=cbad87f9",
+		"req=b8dc3be5",
+		"method=POST",
+		`route="POST /login"`,
+		"status=200",
+		"took=12ms",
+		"request_headers:\nAuthorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie\n",
+		"request_query:\nenv=prod\n",
+		"request:\n{\"password\":\"hunter2\"}\n",
+		"response_headers:\nSet-Cookie: fixthe_session=new-session\n",
+		"response:\n{\"ok\":true}\n",
+	} {
+		if !strings.Contains(formatted, expected) {
+			t.Fatalf("output %q does not contain %q", formatted, expected)
+		}
+	}
+	for _, quoted := range []string{`request="`, `response="`, `request_headers="`, `response_headers="`, `request_query="`, `\nAuthorization`} {
+		if strings.Contains(formatted, quoted) {
+			t.Fatalf("output %q contains quoted debug fragment %q", formatted, quoted)
+		}
+	}
+}
+
 func TestLoggerWritesHTTPFailedJSONRecord(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := NewLogger(LoggerOptions{

@@ -83,8 +83,7 @@ and its following stack or SQL are not interleaved with another slog record.
 - Outbound LLM HTTP calls emit one `llm.request.completed` record with
   operation, host, path, optional model, optional status, duration, outcome,
   a redacted provider response body when one was read, and a
-  low-cardinality `error_class` on failure. See
-  [Outbound LLM Requests](#outbound-llm-requests).
+  low-cardinality `error_class` on failure. See [Outbound LLM Requests](#outbound-llm-requests).
 - Asynchronous or synchronous remediation failures emit one `remediation.failed`
   record with the trigger reason, lifecycle generation, error type/message, bounded
   cause chain, and `error_stack`/`error_stack_source`. The record must not include
@@ -96,6 +95,10 @@ and its following stack or SQL are not interleaved with another slog record.
 - SSH evidence completion records include the actual bounded remote command and
   bounded command failure diagnostic so an internal operator can reproduce the
   process boundary. They do not include stdout or plaintext private-key bytes.
+- Webhook normalization or persistence failures after a `202` response emit one
+  `webhook.ingest.failed` record with project/source scope, occurrence time, error
+  type/message, and stack. It must not include the webhook token, raw body, model
+  prompt, or provider payload.
 - Outbound Git `ls-remote` probes emit one `git.request.completed` record with
   operation, public host, public path, duration, outcome, a redacted public
   command identity, captured stdout/stderr when present, and a
@@ -128,7 +131,6 @@ There are five explicit exceptions:
 - `FIXTHE_HTTP_REQUEST_DEBUG=true` attaches the complete inbound request and
   response to the existing INFO `http.request.completed` record. See
   [Inbound HTTP Request Debug](#inbound-http-request-debug).
-
 - Private remediation logs may include bounded original failure diagnostics and
   the actual SSH remote command. This exception is limited to operator failure
   records and does not authorize model prompts, tool payloads, evidence bodies,
@@ -491,12 +493,22 @@ Optional fields:
 - `http.request` whenever the adapter sent a JSON body (`models.list` has
   none). Same redaction and 4KB cap as the response; set
   `http.request_truncated=true` only when truncated.
+- `request_bytes`, `tool_count`, and `tool_schema_bytes` on each
+  `chat.completions` attempt. `request_bytes` is the exact final JSON payload
+  length; `tool_schema_bytes` is the sum of each provider-visible parameter
+  schema's independently marshaled JSON length. These are numeric counts, not
+  permission to log an unbounded request body.
 - `http.response` whenever the adapter read a provider body, on success and
   on failure. JSON is field-redacted, then `sk-…` / `Bearer …` values are
   replaced, then the text is capped at 4KB on a UTF-8 boundary.
   `http.response_truncated=true` is set only when that cap applies.
   Usage counters such as `prompt_tokens` stay visible; they are not treated
   as secrets.
+- `model_cache_hit_tokens` and `model_cache_miss_tokens` only when the provider
+  reports cache usage. Compatible top-level hit/miss fields take precedence;
+  otherwise OpenAI `prompt_tokens_details.cached_tokens` supplies hits and
+  misses are `max(prompt_tokens-cached_tokens, 0)`. Absent fields remain
+  absent, while explicitly reported zero emits zero.
 - `error_class` on failure only. Stable values are `canceled`, `timeout`,
   `dns`, `tls`, `network`, `http_4xx`, `http_5xx`, `decode`, and `internal`.
 
@@ -545,6 +557,9 @@ Required fields:
 
 Optional fields:
 
+- `credential_secret_id` and `transport` on remediation clone/fetch identify
+  the stored reference selected by the trusted adapter. Project config probes
+  omit them. The plaintext credential and authenticated target remain forbidden.
 - `http.request` is the public command identity, for example
   `git ls-remote --symref --heads https://git.example.com/app.git`. It never
   contains the authenticated HTTPS URL, token, PEM, `GIT_SSH_COMMAND`, or
@@ -609,9 +624,9 @@ Progress events are metadata-only and visible at `INFO`:
 | Event | Required purpose |
 |---|---|
 | `remediation.run.started` | queued run identity and trigger metadata |
-| `remediation.state.transitioned` | committed `from_state` / `to_state` plus effect counters |
+| `remediation.state.transitioned` | committed `from_state` / `to_state` plus effect counters; budget exhaustion adds the exact reason |
 | `remediation.context.completed` | repository/evidence operation, duration, bytes, outcome |
-| `remediation.model_turn.completed` | phase, global run sequence, duration, envelope, usage, outcome; failed turns add `error_class` and bounded `error_message` |
+| `remediation.model_turn.completed` | phase, global run sequence, duration, envelope, usage, exact request/tool metrics, available cache usage, and outcome; failed turns add `error_class` and bounded `error_message` |
 | `remediation.tool.completed` | phase, global run sequence, tool, duration, bytes, rejection/outcome; failed calls add `error_class`, safe `error_code`, `retryable`, and bounded `error_message` |
 | `remediation.run.completed` | terminal state, duration, aggregate counters, outcome |
 
@@ -622,6 +637,14 @@ safe model-facing classification. The logging adapter projects these fields
 through `SnapshotDiagnostic`, capped at `DiagnosticMaxBytes` on a UTF-8
 boundary and marked with `error_message_truncated` when capped. These operator
 diagnostics never enter `AgentConversation` or a subsequent provider request.
+
+Every successful logical model turn projects `request_bytes`, `tool_count`,
+and `tool_schema_bytes` from the provider result. Cache fields are projected
+only when `CacheTokensReported` is true, preserving the difference between
+unreported and reported zero. A transition to `budget_exhausted` uses
+`outcome=stopped` and `budget_exhausted_reason` (`elapsed`, `model_calls`,
+`model_cost`, `tool_calls`, `evidence_bytes`, or `repository_bytes`); it must
+not be labeled as a successful remediation outcome.
 
 SSH evidence completion adds `ssh.command` with the actual remote command and
 uses `error_class=command` for an executed command failure. Source-loading
@@ -655,6 +678,9 @@ owned by `observability.Log` and appear only when the context has a valid span.
 | Payload over 64 KiB | UTF-8 prefix, `payload_truncated=true`, complete redacted byte count/hash |
 | Structured sensitive key or secret-shaped text | Replace value before hashing/logging |
 | Provider/tool/context failure | Completion metadata with low-cardinality class and bounded operator reason; no payload at INFO |
+| Provider omits cache usage | Omit both normalized cache fields; do not fabricate a miss |
+| Provider explicitly reports zero cached tokens | Emit hit/miss counters, including zero values |
+| Transition to `budget_exhausted` | `outcome=stopped` plus the deterministic exhausted dimension |
 | SSH command failure | Completion includes actual remote command, command class, exit/stderr diagnostic, and truncation marker when needed |
 | Tool adapter failure | INFO event distinguishes `error_class=adapter` from `error_class=policy`; model sees only the safe error object |
 | Envelope unknown field | Strict decode still fails; model-turn log includes the concrete validation error |
@@ -667,6 +693,8 @@ owned by `observability.Log` and appear only when the context has a valid span.
   sequence records, then enable `DEBUG` temporarily for redacted payload blocks.
 - Base: `INFO` shows where a successful run is spending time without logging
   repository content, production evidence, prompts, or responses.
+- Good: operators compare `request_bytes`, `tool_count`, schema bytes, and
+  reported cache hits across correlated turns without exposing the full body.
 - Bad: logging plaintext credentials, hashing the unredacted payload, presenting
   a truncated payload as complete, using separate model/tool sequence counters,
   or persisting trace payloads in the application database.
@@ -683,6 +711,11 @@ owned by `observability.Log` and appear only when the context has a valid span.
 - Failure projection tests assert SSH command/stderr, tool code/retryability,
   policy-versus-adapter class, and model decode reasons at the completion event;
   adapter diagnostics must not appear in a later model message.
+- OpenAI/outbound tests assert exact serialized request/schema byte counts on
+  every retry attempt and normalize nested OpenAI plus compatible top-level
+  cache shapes, including absent and explicitly reported zero cases.
+- Budget observer tests assert every exhaustion reason and require
+  `outcome=stopped` for the terminal transition.
 - Logger capture tests prove payload markers remain absent at `INFO` and `DEBUG`;
   failure records retain their bounded operator diagnostic, `INFO` has no
   payload field, and `DEBUG` payload fields never exceed 64 KiB.
@@ -711,5 +744,6 @@ observer.ModelTurnCompleted(ctx, application.ModelTurnObservation{
     Outcome: "failure", FailureClass: "decode",
     ErrorMessage: `decode agent envelope: envelope decode: json: unknown field "type"`,
 })
-// AgentConversation still receives only the existing safe tool error object.
+// AgentConversation still receives a bounded protocol observation with a
+// stable invalid_envelope code. Decoder internals stay operator-only.
 ```
