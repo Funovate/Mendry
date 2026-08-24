@@ -210,6 +210,7 @@ func RunAPI(ctx context.Context, options Options) error {
 	}
 	modelClient, err := remediationopenai.NewClient(remediationopenai.Options{
 		Configs: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher, Logger: logger,
+		Timeout: apiConfig.Remediation.ModelTurnTimeout,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

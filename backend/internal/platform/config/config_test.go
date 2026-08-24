@@ -84,6 +84,34 @@ func TestLoadAPICustomValues(t *testing.T) {
 	}
 }
 
+func TestLoadAPIRemediationModelTimeout(t *testing.T) {
+	configuration, err := LoadAPI(mapLookup(nil))
+	if err != nil {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if configuration.Remediation.ModelTurnTimeout != 5*time.Minute {
+		t.Fatalf("Remediation = %#v", configuration.Remediation)
+	}
+
+	configuration, err = LoadAPI(mapLookup(map[string]string{RemediationModelTimeoutKey: "7m"}))
+	if err != nil {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if configuration.Remediation.ModelTurnTimeout != 7*time.Minute {
+		t.Fatalf("Remediation = %#v", configuration.Remediation)
+	}
+
+	for _, value := range []string{"29s", "21m", "not-a-duration"} {
+		_, err = LoadAPI(mapLookup(map[string]string{RemediationModelTimeoutKey: value}))
+		if err == nil || !strings.Contains(err.Error(), RemediationModelTimeoutKey) {
+			t.Fatalf("LoadAPI(%q) error = %v", value, err)
+		}
+		if strings.Contains(err.Error(), value) {
+			t.Fatalf("error %q contains raw value", err)
+		}
+	}
+}
+
 func TestLoadCommonLogFormatDefaultsAndOverrides(t *testing.T) {
 	tests := []struct {
 		name   string

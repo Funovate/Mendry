@@ -26,7 +26,7 @@ const (
 	ModelID                  = "gpt-5.6"
 	providerName             = "openai"
 	defaultBaseURL           = "https://api.openai.com"
-	defaultTimeout           = 30 * time.Second
+	defaultTimeout           = 5 * time.Minute
 	maxResponseBytes         = 1 << 20
 	maxToolCount             = 128
 	maxToolNameBytes         = 128
@@ -39,6 +39,10 @@ const (
 	initialRetryBackoff      = 250 * time.Millisecond
 	maxRetryBackoff          = 2 * time.Second
 )
+
+// ErrModelTurnTimeout 表示整个逻辑模型轮次耗尽共享时限；它保持
+// context.DeadlineExceeded 兼容性，供上层与 run elapsed exhaustion 区分。
+var ErrModelTurnTimeout = fmt.Errorf("openai model turn timed out: %w", context.DeadlineExceeded)
 
 // ProviderConfig 是适配器读取的无凭据 LLM 配置。
 type ProviderConfig struct {
@@ -64,6 +68,7 @@ type Options struct {
 	Cipher       projectapplication.Cipher
 	HTTPClient   *http.Client
 	Logger       *slog.Logger
+	Timeout      time.Duration
 	BaseURL      string
 	Model        string
 	StaticAPIKey string
@@ -76,6 +81,7 @@ type Client struct {
 	cipher       projectapplication.Cipher
 	http         *http.Client
 	logger       *slog.Logger
+	timeout      time.Duration
 	baseURL      string
 	model        string
 	staticAPIKey string
@@ -88,7 +94,17 @@ func NewClient(options Options) (*Client, error) {
 	}
 	client := options.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
+		client = &http.Client{}
+	} else {
+		// 逻辑轮次 context 是总时限的唯一所有者；复制后清除 Client.Timeout，
+		// 避免每次 retry 都重新获得一份独立超时预算。
+		cloned := *client
+		cloned.Timeout = 0
+		client = &cloned
+	}
+	timeout := options.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
 	}
 	return &Client{
 		configs:      options.Configs,
@@ -96,6 +112,7 @@ func NewClient(options Options) (*Client, error) {
 		cipher:       options.Cipher,
 		http:         client,
 		logger:       options.Logger,
+		timeout:      timeout,
 		baseURL:      strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
 		model:        strings.TrimSpace(options.Model),
 		staticAPIKey: options.StaticAPIKey,
@@ -261,8 +278,17 @@ type chatUsage struct {
 
 // Complete 把 ModelTurn 映射为一次 Chat Completions 调用。
 func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.ModelResult, error) {
+	// 一次 Complete 只分配一份 deadline；配置加载、所有 HTTP attempts、
+	// response read 与 retry backoff 共同消耗它，父 context 的更早 deadline 自动优先。
+	turnCtx, cancel := context.WithTimeoutCause(ctx, c.timeout, ErrModelTurnTimeout)
+	defer cancel()
+	ctx = turnCtx
+
 	session, err := c.resolveSession(ctx, req.ProjectID)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
+			return domain.ModelResult{}, ErrModelTurnTimeout
+		}
 		return domain.ModelResult{}, err
 	}
 	defer session.close()
@@ -428,6 +454,9 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		elapsed := time.Since(started)
 		if err != nil {
 			wrapped := fmt.Errorf("call openai: %w", err)
+			if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
+				wrapped = fmt.Errorf("call openai: %w", ErrModelTurnTimeout)
+			}
 			c.logRequest(ctx, endpoint, session.model, payload, 0, elapsed, nil, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, err) {
 				return nil, 0, elapsed, wrapped
@@ -442,6 +471,9 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		_ = resp.Body.Close()
 		if readErr != nil {
 			wrapped := fmt.Errorf("read openai response: %w", readErr)
+			if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
+				wrapped = fmt.Errorf("read openai response: %w", ErrModelTurnTimeout)
+			}
 			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, readErr) {
 				return nil, resp.StatusCode, elapsed, wrapped
@@ -509,7 +541,11 @@ func waitForOpenAIRetry(ctx context.Context, attempt int, retryAfter string) err
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("wait before retrying openai request: %w", ctx.Err())
+		cause := context.Cause(ctx)
+		if cause == nil {
+			cause = ctx.Err()
+		}
+		return fmt.Errorf("wait before retrying openai request: %w", cause)
 	case <-timer.C:
 		return nil
 	}

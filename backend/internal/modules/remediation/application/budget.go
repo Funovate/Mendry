@@ -1,6 +1,8 @@
 package application
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -8,13 +10,15 @@ import (
 )
 
 const (
-	defaultMaxElapsed               = 5 * time.Minute
+	defaultMaxElapsed               = 20 * time.Minute
 	defaultMaxModelCalls      int64 = 16
 	defaultMaxModelCostCents  int64 = 500
 	defaultMaxToolCalls       int64 = 64
 	defaultMaxEvidenceBytes   int64 = 4 << 20
 	defaultMaxRepositoryBytes int64 = 16 << 20
 )
+
+var errRunWorkDeadline = errors.New("remediation run work deadline exceeded")
 
 type budgetExhaustionReason string
 
@@ -90,6 +94,16 @@ func (b *runBudget) admissionExhaustionReason() budgetExhaustionReason {
 		return budgetReasonElapsed
 	}
 	return b.resourceExhaustionReason()
+}
+
+// operationContext 把 run 剩余时间变成外部操作的硬上限；调用方保留原 ctx
+// 完成终态持久化，避免 deadline 到点后 run 停留在 active state。
+func (b *runBudget) operationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithDeadlineCause(ctx, b.startedAt.Add(b.limits.MaxElapsed), errRunWorkDeadline)
+}
+
+func runWorkDeadlineExceeded(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errRunWorkDeadline)
 }
 
 func (b *runBudget) resourceExhaustionReason() budgetExhaustionReason {

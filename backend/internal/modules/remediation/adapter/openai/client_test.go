@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	projectdomain "fixthe/backend/internal/modules/projects/domain"
 	"fixthe/backend/internal/modules/remediation/adapter/openai"
@@ -555,5 +556,88 @@ func TestCompleteRejectsDuplicateToolDefinitionsBeforeRequest(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
 		t.Fatalf("duplicate definition error = %v", err)
+	}
+}
+
+func TestCompleteUsesOneLogicalTurnDeadlineAndClearsHTTPClientTimeout(t *testing.T) {
+	injected := &http.Client{
+		Timeout: time.Millisecond,
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			select {
+			case <-time.After(30 * time.Millisecond):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(
+						`{"choices":[{"finish_reason":"stop","message":{"content":"{\"schemaVersion\":\"v1\",\"kind\":\"stop\"}"}}],"usage":{"total_tokens":1}}`,
+					)),
+					Request: request,
+				}, nil
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			}
+		}),
+	}
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: injected, Timeout: 200 * time.Millisecond, StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if _, err := client.Complete(context.Background(), domain.ModelTurn{
+		ProjectID: testProjectID, SystemPrompt: "sys", UserMessage: "user",
+	}); err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if injected.Timeout != time.Millisecond {
+		t.Fatalf("injected HTTP client timeout mutated to %s", injected.Timeout)
+	}
+}
+
+func TestCompleteRetryBackoffSharesLogicalTurnDeadline(t *testing.T) {
+	attempts := 0
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			attempts++
+			return nil, retryableTransportError{}
+		})},
+		Timeout: 20 * time.Millisecond, StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID})
+	if !errors.Is(err, openai.ErrModelTurnTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Complete() error = %v, want logical turn timeout", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("HTTP attempts = %d, want shared deadline to expire during first backoff", attempts)
+	}
+}
+
+func TestCompleteEarlierParentDeadlineWins(t *testing.T) {
+	attempts := 0
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})},
+		Timeout: 200 * time.Millisecond, StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	parent, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err = client.Complete(parent, domain.ModelTurn{ProjectID: testProjectID})
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, openai.ErrModelTurnTimeout) {
+		t.Fatalf("Complete() error = %v, want parent deadline", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("HTTP attempts = %d, want 1", attempts)
 	}
 }

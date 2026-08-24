@@ -78,6 +78,9 @@ Environment groups:
   trailing slash; migrate / seed / bootstrap-admin do not read it.
 - Auth: bounded `FIXTHE_AUTH_SESSION_TTL`; command-only
   `FIXTHE_BOOTSTRAP_ADMIN_PASSWORD` is never read by API startup.
+- Remediation: `FIXTHE_REMEDIATION_MODEL_TIMEOUT` bounds one logical model turn,
+  including all HTTP attempts and retry backoff (default 5m, range 30s..20m).
+  The independent automatic-run work budget defaults to 20m.
 - Project credentials: API-required `FIXTHE_ENCRYPTION_KEY` decodes from standard
   base64 to exactly 32 bytes; migrate and bootstrap-admin do not read it.
 - PostgreSQL: required secret-bearing URL plus explicit pool and health bounds,
@@ -120,7 +123,7 @@ packages do not depend on transport diagnostics.
 | Missing PostgreSQL URL | API and migrate fail before resource construction; raw value is never echoed |
 | Missing Redis URL | API fails with a safe error naming `FIXTHE_REDIS_URL` |
 | Missing/invalid `FIXTHE_PUBLIC_URL` | API fails before resource construction; raw value is never echoed |
-| Invalid HTTP/pool/timeout value | Fail before opening clients or listener |
+| Invalid HTTP/pool/remediation timeout value | Fail before opening clients or listener; name the key without the raw value |
 | Invalid body limit or CORS origin | Fail before opening clients or listener |
 | PostgreSQL or Redis startup health fails | Close partial resources and fail safely |
 | Dependency fails after startup | Readiness returns 503 naming only the stable dependency; liveness stays 200 |
@@ -137,8 +140,8 @@ packages do not depend on transport diagnostics.
 
 ### 6. Tests Required
 
-- Config tests cover required API Redis, PostgreSQL requirements, typed bounds, and
-  diagnostics that omit raw secret values.
+- Config tests cover required API Redis, PostgreSQL requirements, typed bounds
+  including remediation model timeout, and diagnostics that omit raw values.
 - Dotenv tests cover missing files, process-environment precedence, comments, quotes,
   empty values, and malformed lines that omit raw assignment values.
 - Lifecycle tests cover partial startup cleanup, readiness, cancellation, and
@@ -163,6 +166,16 @@ if err != nil {
     return fmt.Errorf("load API configuration: %w", err)
 }
 client, err := openRedis(ctx, logger, telemetry, "fixthe-api", cfg.Redis)
+```
+
+For remediation model calls, pass the validated duration at composition time;
+do not read environment values inside the adapter:
+
+```go
+client, err := remediationopenai.NewClient(remediationopenai.Options{
+    Configs: loaders, Secrets: loaders, Cipher: cipher,
+    Timeout: cfg.Remediation.ModelTurnTimeout,
+})
 ```
 
 ## Module Organization

@@ -400,11 +400,18 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStateDiagnosing); err != nil || exhausted {
 			return err
 		}
+		operationCtx, cancelOperation := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(
-			ctx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
+			operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
 			domain.RunStateDiagnosing, ref.ProjectID, conversation.ContextText(),
 			c.toolGateway.AdvertisedToolDefinitionsForCatalog(catalog, domain.RunStateDiagnosing), conversation,
 		)
+		runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
+		cancelOperation()
+		if runDeadlineExceeded {
+			_, transitionErr := c.recordElapsedOperation(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+			return transitionErr
+		}
 		if err != nil {
 			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, err)
 			if transitionErr != nil || exhausted {
@@ -566,11 +573,18 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 		if conversation != nil {
 			contextText = conversation.ContextText()
 		}
+		operationCtx, cancelOperation := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(
-			ctx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
+			operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
 			domain.RunStatePlanning, projectID, contextText,
 			c.toolGateway.AdvertisedToolDefinitionsForCatalog(catalog, domain.RunStatePlanning), conversation,
 		)
+		runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
+		cancelOperation()
+		if runDeadlineExceeded {
+			_, transitionErr := c.recordElapsedOperation(ctx, budget, runID, domain.RunStatePlanning, modelEffect(usage))
+			return transitionErr
+		}
 		if err != nil {
 			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStatePlanning, usage, conversation, err)
 			if transitionErr != nil || exhausted {
@@ -667,10 +681,13 @@ func (c *RemediationCoordinator) runTool(
 		ToolName: req.ToolName,
 		Phase:    phase,
 	}
+	operationCtx, cancelOperation := budget.operationContext(ctx)
 	res, err := c.toolGateway.ExecuteToolObservedWithCatalog(
-		ctx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
+		operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
 		phase, ref, scope, catalog, req.ToolName, req.Parameters,
 	)
+	runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
+	cancelOperation()
 	effect := domain.Effect{ToolCalls: 1}
 	if err != nil {
 		safe := classifyToolError(err)
@@ -687,6 +704,10 @@ func (c *RemediationCoordinator) runTool(
 	// Best-effort audit record; a storage error here does not change the model's
 	// decision path and is surfaced on the next transition instead.
 	_ = c.store.RecordToolInvocation(ctx, runID, inv)
+	if runDeadlineExceeded {
+		exhausted, budgetErr := c.recordElapsedOperation(ctx, budget, runID, phase, effect)
+		return exhausted, res, budgetErr
+	}
 	exhausted, budgetErr := c.recordSameStateBudget(ctx, budget, runID, phase, effect)
 	return exhausted, res, budgetErr
 }
@@ -770,6 +791,17 @@ func (c *RemediationCoordinator) recordSameStateBudget(
 		return false, nil
 	}
 	return c.transitionBudgeted(ctx, budget, runID, state, state, effect)
+}
+
+func (c *RemediationCoordinator) recordElapsedOperation(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	state domain.RunState,
+	effect domain.Effect,
+) (bool, error) {
+	_ = budget.consume(effect)
+	return true, c.transitionWithReason(ctx, runID, state, domain.RunStateBudgetExhausted, effect, budgetReasonElapsed)
 }
 
 func (c *RemediationCoordinator) admitOperation(ctx context.Context, budget *runBudget, runID string, state domain.RunState) (bool, error) {

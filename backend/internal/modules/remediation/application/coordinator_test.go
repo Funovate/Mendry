@@ -480,11 +480,14 @@ func TestCoordinator_ElapsedBudgetExhaustion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if run.State != domain.RunStateCompletedNonCode || store.state != domain.RunStateCompletedNonCode {
-		t.Fatalf("final state = %s/%s, want completed_non_code", run.State, store.state)
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
 	}
 	if model.calls != 1 {
 		t.Fatalf("model calls = %d, want 1", model.calls)
+	}
+	if store.budget.ModelCalls != 1 {
+		t.Fatalf("persisted model calls = %d, want 1", store.budget.ModelCalls)
 	}
 }
 
@@ -523,14 +526,45 @@ type delayedModel struct {
 	calls     int
 }
 
-func (m *delayedModel) Complete(context.Context, domain.ModelTurn) (domain.ModelResult, error) {
-	time.Sleep(m.delay)
-	if m.calls >= len(m.responses) {
-		return domain.ModelResult{}, fmt.Errorf("delayed model exhausted after %d calls", m.calls)
-	}
-	content := m.responses[m.calls]
+func (m *delayedModel) Complete(ctx context.Context, _ domain.ModelTurn) (domain.ModelResult, error) {
+	call := m.calls
 	m.calls++
+	timer := time.NewTimer(m.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return domain.ModelResult{}, ctx.Err()
+	case <-timer.C:
+	}
+	if call >= len(m.responses) {
+		return domain.ModelResult{}, fmt.Errorf("delayed model exhausted after %d calls", call)
+	}
+	content := m.responses[call]
 	return domain.ModelResult{Content: content, Provider: "fake", Model: "slow", UsageTokensOut: 1}, nil
+}
+
+func TestCoordinator_RunDeadlineCancelsInFlightToolAndPersistsTerminalState(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxElapsed = 50 * time.Millisecond
+	store := newFakeRunStore()
+	repo := &delayedRepoPort{delay: 80 * time.Millisecond}
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoListTree, ""),
+	}}
+	coord := newCoordinatorWithBudget(store, repo, &fakeEvidencePort{}, model, limits)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if len(store.invocations) != 1 || store.budget.ToolCalls != 1 {
+		t.Fatalf("tool accounting = invocations:%d budget:%#v", len(store.invocations), store.budget)
+	}
 }
 
 // TestCoordinator_ToolCallBudgetExhaustion verifies model-requested read tools

@@ -188,6 +188,12 @@ func (*application.RemediationCoordinator).resolveRefs(context.Context, domain.R
   adapter cap. `400`,
   authentication, configuration, and response-protocol errors do not retry.
   Each attempt emits its own bounded `llm.request.completed` observation.
+- `FIXTHE_REMEDIATION_MODEL_TIMEOUT` configures one complete logical model turn
+  (default 5m, deployment range 30s..20m). Configuration/secret lookup, every
+  HTTP attempt, response reads, and retry backoff share that context. Never put
+  the logical timeout on `http.Client.Timeout`: a per-attempt timeout would
+  multiply the allowed duration by retry count. An earlier caller deadline,
+  including the run work deadline or webhook normalization timeout, wins.
 - A static API key is test-only. Production bootstrap must use the encrypted
   store.
 - Missing project ID, missing named secret, non-200, oversized body, or invalid
@@ -304,12 +310,15 @@ strict-tool observations or protocol corrections, and native tool results stay
 in paired assistant/tool messages. Pending content is acknowledged only after
 a successful provider result, so a failed call can retry the same increment.
 
-Run elapsed time is admission control for the next model or tool operation.
-Do not cancel or discard an already-started model response merely because the
-run elapsed limit crossed while waiting. Accept a successful terminal response;
-if it requests another operation, transition to `budget_exhausted` with reason
-`elapsed` before starting that operation. Model calls, model cost, tool calls,
-evidence bytes, and repository bytes remain independent exhaustion reasons.
+The automatic run work budget defaults to 20m. Admission still rejects a new
+model or tool operation after exhaustion, and each admitted external operation
+receives a child context ending at the run deadline. When that child expires,
+account the attempted model/tool effect and transition to `budget_exhausted`
+with reason `elapsed`. Use the uncanceled lifecycle context for terminal state
+persistence, observations, and cleanup so the durable run cannot remain active.
+A logical 5m model timeout while run time remains is a provider failure, not run
+budget exhaustion. Model calls, model cost, tool calls, evidence bytes, and
+repository bytes remain independent exhaustion reasons.
 
 ### Tool-driven validation and error matrix
 
@@ -331,7 +340,8 @@ evidence bytes, and repository bytes remain independent exhaustion reasons.
 | Inspect stdout/stderr with PEM or `fixthe-ssh*` temp key path | Keep raw secrets/tokens; strip only PEM blocks and temp key paths |
 | Invalid diagnosis/plan envelope or mixed native tool+content | Record bounded `invalid_envelope` observation; stay in the phase loop and count the turn against the model budget |
 | Provider/infrastructure model failure | Remain a harness `failed` outcome; do not invent an envelope |
-| Provider succeeds after run elapsed crosses its limit | Process the response; stop with reason `elapsed` only before a requested next operation |
+| Logical model-turn deadline expires while run time remains | Fail as a provider timeout; all attempts together consumed at most the configured turn duration |
+| Run deadline expires during a model/tool operation | Cancel the operation, account it, and persist `budget_exhausted` with reason `elapsed` using the lifecycle context |
 
 ### Tool-driven tests required
 
@@ -348,7 +358,9 @@ evidence bytes, and repository bytes remain independent exhaustion reasons.
   acknowledge pending continuation content.
 - OpenAI: outbound requests contain every advertised tool definition and parse
   native tool calls; duplicate definitions/IDs, mixed content and tool calls,
-  oversized schemas, and credential ownership mismatches fail closed.
+  oversized schemas, and credential ownership mismatches fail closed. Slow
+  success, retry backoff, and parent-deadline tests prove one shared logical
+  deadline rather than a fresh timeout per HTTP attempt.
 - MCP: initialization, paginated discovery, optional annotations, namespaced
   schemas, policy filtering, source/server ownership, call success/error,
   unsupported content, truncation, refresh isolation, and run cleanup.
@@ -399,8 +411,9 @@ evidence bytes, and repository bytes remain independent exhaustion reasons.
   paths, or treating a nil logger as a constructor error. Inspect operator logs
   may include the reconstructed command; they must not dump unbounded stdout.
 - Bad: replaying bootstrap/tool observations in both native history and the
-  next user message, or treating a slow successful response as elapsed-budget
-  failure after it has already completed.
+  next user message, setting `http.Client.Timeout` to the logical turn limit so
+  retries multiply it, or using an expired operation context to persist the
+  terminal run state.
 
 ### 6. Tests Required
 
@@ -417,7 +430,8 @@ evidence bytes, and repository bytes remain independent exhaustion reasons.
   ID/kind and omit private-key bytes and `-i` argv.
 - OpenAI: `httptest.Server` asserts model `gpt-5.6` and bearer auth; maps usage
   and content; missing secret / non-200 / invalid JSON wrap without leaking the
-  key.
+  key; injected short durations prove slow success, shared retry deadlines,
+  and earlier parent-deadline precedence.
 - Wiring: `RepoRef.ProjectID` is the project UUID, `RemoteURL` is
   credential-free, `EvidenceScope` carries environment/source IDs.
 - Unit tests inject binaries or local repos. They must not skip when a real

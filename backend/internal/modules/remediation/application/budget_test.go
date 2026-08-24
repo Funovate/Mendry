@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -15,6 +16,29 @@ func TestRunBudgetDoesNotExhaustOnModelTokens(t *testing.T) {
 	}
 	if budget.used.ModelTokens != 1_000_000 {
 		t.Fatalf("model tokens = %d, want 1000000", budget.used.ModelTokens)
+	}
+}
+
+func TestDefaultRunElapsedBudgetIsTwentyMinutes(t *testing.T) {
+	if got := DefaultBudgetLimits().MaxElapsed; got != 20*time.Minute {
+		t.Fatalf("MaxElapsed = %s, want 20m", got)
+	}
+}
+
+func TestRunBudgetOperationContextUsesRemainingDeadline(t *testing.T) {
+	limits := DefaultBudgetLimits()
+	limits.MaxElapsed = 50 * time.Millisecond
+	budget := newRunBudget(limits)
+	operationCtx, cancel := budget.operationContext(context.Background())
+	defer cancel()
+
+	select {
+	case <-operationCtx.Done():
+		if !runWorkDeadlineExceeded(operationCtx) {
+			t.Fatalf("context cause = %v, want run work deadline", context.Cause(operationCtx))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("operation context did not enforce run deadline")
 	}
 }
 

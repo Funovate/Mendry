@@ -28,6 +28,7 @@ const (
 	HTTPRequestDebugKey         = "FIXTHE_HTTP_REQUEST_DEBUG"
 	PublicURLKey                = "FIXTHE_PUBLIC_URL"
 	AuthSessionTTLKey           = "FIXTHE_AUTH_SESSION_TTL"
+	RemediationModelTimeoutKey  = "FIXTHE_REMEDIATION_MODEL_TIMEOUT"
 	EncryptionKey               = "FIXTHE_ENCRYPTION_KEY"
 	BootstrapAdminPasswordKey   = "FIXTHE_BOOTSTRAP_ADMIN_PASSWORD"
 	PostgresURLKey              = "FIXTHE_POSTGRES_URL"
@@ -87,14 +88,20 @@ type HTTP struct {
 
 // API 聚合 API 进程启动所需的全部已验证配置。
 type API struct {
-	Common     Common
-	HTTP       HTTP
-	Auth       Auth
-	Encryption Encryption
+	Common      Common
+	HTTP        HTTP
+	Auth        Auth
+	Remediation Remediation
+	Encryption  Encryption
 	// PublicURL 是派生公开 webhook 入站地址的部署级基址。
 	PublicURL  string
 	PostgreSQL PostgreSQL
 	Redis      Redis
+}
+
+// Remediation 包含自动修复模型调用的部署级资源边界。
+type Remediation struct {
+	ModelTurnTimeout time.Duration
 }
 
 // Auth 包含 API 服务端 Session 的绝对生命周期。
@@ -192,6 +199,10 @@ func LoadAPI(lookup Lookup) (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	remediationModelTimeout, err := durationValue(lookup, RemediationModelTimeoutKey, 5*time.Minute, 30*time.Second, 20*time.Minute)
+	if err != nil {
+		return API{}, err
+	}
 
 	encryptionKey, err := encryptionKeyValue(lookup)
 	if err != nil {
@@ -202,7 +213,7 @@ func LoadAPI(lookup Lookup) (API, error) {
 		return API{}, err
 	}
 
-	return API{Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL}, Encryption: Encryption{Key: encryptionKey}, PublicURL: publicURL, PostgreSQL: postgresConfig, Redis: redisConfig}, nil
+	return API{Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL}, Remediation: Remediation{ModelTurnTimeout: remediationModelTimeout}, Encryption: Encryption{Key: encryptionKey}, PublicURL: publicURL, PostgreSQL: postgresConfig, Redis: redisConfig}, nil
 }
 
 func publicURLValue(lookup Lookup) (string, error) {
