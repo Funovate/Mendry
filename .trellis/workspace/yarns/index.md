@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
-- **Last Active**: 2026-08-21
+- **Total Sessions**: 11
+- **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~341 | Active |
+| `journal-1.md` | ~374 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-08-24 | Reduce remediation prompt cost and expose cache metrics | `56ae60d` | `main` |
 | 10 | 2026-08-21 | Archive remediation error observability | `918480a` | `main` |
 | 9 | 2026-08-21 | Event stream date timestamps | `fcd7bfd` | `main` |
 | 8 | 2026-08-21 | Archive remediation harness observability | - | `main` |

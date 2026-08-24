@@ -339,3 +339,36 @@ Committed remediation harness error diagnostics and bounded SSH/tool/model failu
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Reduce remediation prompt cost and expose cache metrics
+
+**Date**: 2026-08-24
+**Task**: Reduce remediation prompt cost and expose cache metrics
+**Branch**: `main`
+
+### Summary
+
+Implemented deferred phase-aware MCP tool activation, incremental provider-native conversation, exact request/tool/cache observability, operation-admission budget semantics, and a full code-fixable harness proof; all Go tests, race, vet, build, and generation consistency checks passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `56ae60d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
