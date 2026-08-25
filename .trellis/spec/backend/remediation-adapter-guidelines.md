@@ -350,6 +350,14 @@ and invalid native calls never enter accepted history or acknowledge pending
 continuation. A provider failure therefore retains the same pending input for
 the existing retry path.
 
+Diagnosis envelopes use a numeric confidence contract: `diagnosis.confidence`
+must be a JSON number in the inclusive range `0.0..1.0`; semantic labels such as
+`"low"`, `"medium"`, and `"high"` are invalid. When the decoder returns a
+structured `json.UnmarshalTypeError` for that field, the application maps it to
+the bounded `invalid_confidence` protocol correction with path
+`diagnosis.confidence` and expected type `number`. The correction must not copy
+provider decoder internals into the next model turn.
+
 The automatic run work budget defaults to 20m. Admission still rejects a new
 model or tool operation after exhaustion, and each admitted external operation
 receives a child context ending at the run deadline. When that child expires,
@@ -379,6 +387,7 @@ repository bytes remain independent exhaustion reasons.
 | Unquoted inspect glob (`ls *.log`) or adjacent unquoted `\|\|` | Reject as `invalid_arguments` before SSH |
 | Inspect stdout/stderr with PEM or `fixthe-ssh*` temp key path | Keep raw secrets/tokens; strip only PEM blocks and temp key paths |
 | Invalid diagnosis/plan envelope or mixed native tool+content | Record bounded `invalid_envelope` observation; stay in the phase loop and count the turn against the model budget |
+| Diagnosis `confidence` is not a JSON number | Record bounded `invalid_confidence` with path `diagnosis.confidence` and expected type `number`; include numeric `0..1` guidance without decoder internals; stay in the phase loop |
 | Known `evidenceRef` citation field | Strictly reject the citation, retain the operator diagnostic, and send only bounded `evidenceCitations[].evidenceRef` → `evidenceId` guidance; never accept it as an alias |
 | First or second consecutive invalid envelope in a phase | Account the model effect and append one allowlisted protocol correction for the next turn |
 | Third consecutive invalid envelope in a phase | Account the model effect, append no further correction, and transition to `blocked_manual_review` unless an independent run budget exhausted first |
@@ -397,6 +406,9 @@ repository bytes remain independent exhaustion reasons.
   successful and failed tool observations affect the following turn; an invalid
   diagnosis envelope is retried as a protocol observation; planning receives the
   compacted diagnosis conversation; retry and hard-budget bounds remain inspectable.
+- Diagnosis protocol: prompt and system instructions require numeric
+  `confidence`; a string label produces a safe `invalid_confidence` correction,
+  and a following valid numeric diagnosis completes the bounded retry path.
 - Coordinator end-to-end: search activates one phase-approved MCP route, the
   dynamic call reaches the original runtime name exactly once, its result feeds
   re-diagnosis, planning removes diagnosis-only schemas, and the code-fixable
@@ -539,6 +551,20 @@ result, err := provider.Complete(ctx, turn)
 effect := modelEffect(result)
 ```
 
+For diagnosis confidence, keep the wire type numeric and correct type errors
+with an allowlisted protocol observation:
+
+```json
+// Wrong
+{"confidence":"low"}
+
+// Correct
+{"confidence":0.2}
+```
+
+The application should tell the model which field and type to repair, but must
+not forward the raw `json.UnmarshalTypeError` or provider response.
+
 ## Common Mistakes
 
 - Do not treat `FIXTHE_ENCRYPTION_KEY` as the OpenAI key. It only unwraps
@@ -566,6 +592,10 @@ effect := modelEffect(result)
   must be able to choose a bounded tool after the run enters `diagnosing`.
 - Do not assume an interface containing a nil optional pointer is absent-free;
   check optional MCP annotations before object validation.
+- Do not let the model emit semantic confidence labels when the diagnosis
+  contract is numeric. Use a bounded `invalid_confidence` correction for a type
+  mismatch instead of copying decoder text or silently mapping an untrusted
+  label to a score.
 - Do not JSON-marshal typed `[]byte` payloads directly into model context; this
   produces reversible base64 instead of redacted text.
 - Do not scan decoded inspect argv for `*?[` after quotes are stripped. That

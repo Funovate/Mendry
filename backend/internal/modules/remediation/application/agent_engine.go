@@ -203,6 +203,8 @@ func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
 	return fmt.Errorf("envelope kind %q is not valid in %s phase", kind, phase)
 }
 
+const diagnosisConfidenceInstruction = "confidence must be a JSON number between 0 and 1 (for example 0.2), never a label string such as low, medium, or high"
+
 const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded " +
 	"operational evidence and credential-isolated metadata provided. Evidence may " +
 	"contain complete original log/provider fields; do not treat absent fields as " +
@@ -212,6 +214,7 @@ const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bound
 	"first, then explicit timestamp offsets, then source/system time-zone context " +
 	"visible in the evidence; otherwise mark time unresolved and low-certainty. " +
 	"Preserve original time strings and cite the normalized comparison and uncertainty. " +
+	diagnosisConfidenceInstruction + ". " +
 	"Return exactly one JSON envelope per the agent protocol. " +
 	"kind=diagnosis requires a diagnosis object, never a string."
 
@@ -232,7 +235,8 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"cite persisted evidence with its classification, and either request a read " +
 			"tool or return a diagnosis object. " +
 			"If kind is diagnosis, diagnosis must be an object with fixability, confidence, " +
-			"alertQuality, sourceCoverage, timeAssessment, correlation, causalClosure, " +
+			diagnosisConfidenceInstruction + ". Include alertQuality, sourceCoverage, " +
+			"timeAssessment, correlation, causalClosure, " +
 			"causalReasoning, contradictions, materialContradictions, missingEvidence, " +
 			"evidenceCitations, recommendedNextAction, and any non-actionable hypotheses; " +
 			"the diagnosis value itself must never be a string. Each evidenceCitations entry " +
