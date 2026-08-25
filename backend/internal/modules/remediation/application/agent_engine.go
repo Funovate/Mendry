@@ -28,7 +28,7 @@ func NewAgentEngine(
 	return &AgentEngine{
 		llmPort:     llmPort,
 		toolGateway: toolGateway,
-		maxTokens:   4096,
+		maxTokens:   8192,
 	}
 }
 
@@ -113,9 +113,6 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 		})
 		return nil, res, turnErr
 	}
-	if conversation != nil {
-		conversation.RecordModelTurn(req.Continuation, res)
-	}
 	if len(res.ToolCalls) > 0 {
 		if res.Content != "" {
 			protocolErr := wrapEnvelopeError("model returned tool calls and envelope content together", nil)
@@ -138,11 +135,22 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 			}
 			requests = append(requests, request)
 		}
+		if err := validateEnvelopeForPhase(phase, "requestTool"); err != nil {
+			protocolErr := wrapEnvelopeError("validate agent envelope phase", err)
+			observer.ModelTurnCompleted(ctx, ModelTurnObservation{
+				Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
+				Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
+			})
+			return nil, res, protocolErr
+		}
 		env := &AgentEnvelope{
 			SchemaVersion:      EnvelopeVersion,
 			Kind:               "requestTool",
 			RequestTool:        &requests[0],
 			nativeToolRequests: requests,
+		}
+		if conversation != nil {
+			conversation.RecordModelTurn(req.Continuation, res)
 		}
 		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
@@ -160,6 +168,17 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 		})
 		return nil, res, decodeErr
 	}
+	if err := validateEnvelopeForPhase(phase, env.Kind); err != nil {
+		protocolErr := wrapEnvelopeError("validate agent envelope phase", err)
+		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
+			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
+			Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
+		})
+		return nil, res, protocolErr
+	}
+	if conversation != nil {
+		conversation.RecordModelTurn(req.Continuation, res)
+	}
 	observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 		Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
 		Outcome: "success", EnvelopeKind: env.Kind, Request: req, Response: res,
@@ -168,9 +187,32 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 	return env, res, nil
 }
 
-const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded, " +
-	"redacted observations provided. Request read-only tools when you need more " +
-	"evidence. Return exactly one JSON envelope per the agent protocol. " +
+func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
+	valid := false
+	switch phase {
+	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
+		valid = kind == "requestTool" || kind == "diagnosis" || kind == "stop"
+	case domain.RunStatePlanning:
+		valid = kind == "planCandidates"
+	default:
+		valid = true
+	}
+	if valid {
+		return nil
+	}
+	return fmt.Errorf("envelope kind %q is not valid in %s phase", kind, phase)
+}
+
+const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded " +
+	"operational evidence and credential-isolated metadata provided. Evidence may " +
+	"contain complete original log/provider fields; do not treat absent fields as " +
+	"proof, and never invent evidence or authority-bearing URLs, credentials, or " +
+	"control material. Request only read-only tools when more evidence is needed. " +
+	"Apply this global time policy for every provider: compare paired epoch values " +
+	"first, then explicit timestamp offsets, then source/system time-zone context " +
+	"visible in the evidence; otherwise mark time unresolved and low-certainty. " +
+	"Preserve original time strings and cite the normalized comparison and uncertainty. " +
+	"Return exactly one JSON envelope per the agent protocol. " +
 	"kind=diagnosis requires a diagnosis object, never a string."
 
 // wrapEnvelopeError 把可纠正的信封/协议错误标成 ErrInvalidEnvelope，
@@ -187,10 +229,22 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 	switch phase {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
 		return "Diagnose the incident from available evidence. Classify fixability, " +
-			"cite evidence, and either request a read tool or return a diagnosis object. " +
+			"cite persisted evidence with its classification, and either request a read " +
+			"tool or return a diagnosis object. " +
 			"If kind is diagnosis, diagnosis must be an object with fixability, confidence, " +
-			"causalReasoning, contradictions, missingEvidence, evidenceCitations, and " +
-			"recommendedNextAction; never a string. " +
+			"alertQuality, sourceCoverage, timeAssessment, correlation, causalClosure, " +
+			"causalReasoning, contradictions, materialContradictions, missingEvidence, " +
+			"evidenceCitations, recommendedNextAction, and any non-actionable hypotheses; " +
+			"the diagnosis value itself must never be a string. Each evidenceCitations entry " +
+			"must be either a persisted evidence ID string or an object with evidenceId and optional classification. " +
+			"timeAssessment must preserve originalValues, normalized " +
+			"instants/ranges, basis, certainty, and contradictory status. correlation " +
+			"must state temporal, operational, host identity, and direct bridge status. " +
+			"causalClosure must explicitly say whether the original alert symptom is " +
+			"explained and why. A test-like title is only testSuspected unless an " +
+			"auditable structured test policy matches; continue investigating real fault " +
+			"evidence. Missing direct fault evidence or unresolved time/host/source " +
+			"coverage is insufficient_evidence, not a code-fixable plan. " +
 			"For an SSH source, use ssh.inspect: first ls the hinted logPath directory " +
 			"and discover actual file names before reading; never assume logPath is a file to tail."
 	case domain.RunStatePlanning:

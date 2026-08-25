@@ -112,23 +112,70 @@ func (c *AgentConversation) History() []domain.ModelMessage {
 	if c == nil || len(c.messages) == 0 {
 		return nil
 	}
-	start := 0
-	if len(c.messages) > maxConversationItems {
-		start = len(c.messages) - maxConversationItems
-		// 每个 provider-native turn 都由 user 消息开始。按条数裁剪可能落在
-		// assistant/tool 组中间；向后对齐到下一轮，避免发送孤立的 tool 消息。
-		for start < len(c.messages) && c.messages[start].Role != "user" {
-			start++
+	groups := make([][]domain.ModelMessage, 0, len(c.messages)/2+1)
+	for _, message := range c.messages {
+		if message.Role == "user" {
+			groups = append(groups, nil)
 		}
-	}
-	out := make([]domain.ModelMessage, 0, len(c.messages)-start)
-	for _, message := range c.messages[start:] {
+		if len(groups) == 0 {
+			continue
+		}
 		copyMessage := message
 		copyMessage.Content = boundedText(message.Content, maxMessageBytes)
 		copyMessage.ToolCalls = append([]domain.ToolCall(nil), message.ToolCalls...)
-		out = append(out, copyMessage)
+		last := len(groups) - 1
+		groups[last] = append(groups[last], copyMessage)
 	}
-	return out
+
+	// provider-native history 只能按完整 user/assistant/tool group 裁剪，
+	// 否则 OpenAI-compatible provider 会拒绝孤立的 tool result。
+	var selected []domain.ModelMessage
+	for index := len(groups) - 1; index >= 0; index-- {
+		group := groups[index]
+		if !completeConversationGroup(group) {
+			continue
+		}
+		candidate := make([]domain.ModelMessage, 0, len(group)+len(selected))
+		candidate = append(candidate, group...)
+		candidate = append(candidate, selected...)
+		if len(candidate) > maxConversationItems || encodedConversationBytes(candidate) > maxConversationBytes {
+			break
+		}
+		selected = candidate
+	}
+	return selected
+}
+
+func completeConversationGroup(group []domain.ModelMessage) bool {
+	if len(group) == 0 || group[0].Role != "user" {
+		return false
+	}
+	pending := make(map[string]struct{})
+	for _, message := range group {
+		switch message.Role {
+		case "assistant":
+			for _, call := range message.ToolCalls {
+				if call.ID == "" {
+					return false
+				}
+				pending[call.ID] = struct{}{}
+			}
+		case "tool":
+			if _, exists := pending[message.ToolCallID]; !exists {
+				return false
+			}
+			delete(pending, message.ToolCallID)
+		}
+	}
+	return len(pending) == 0
+}
+
+func encodedConversationBytes(messages []domain.ModelMessage) int {
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		return maxConversationBytes + 1
+	}
+	return len(encoded)
 }
 
 // RecordModelTurn 将本次 user 输入和 provider 返回的 assistant 内容加入历史。
@@ -172,32 +219,34 @@ func (c *AgentConversation) RecordModelTurn(userMessage string, result domain.Mo
 
 // AppendProtocolError 将可纠正的信封/协议错误变成下一轮可见的观察。
 // 模型只看到稳定 code 和修正指引；原始 JSON 与 Go 类型路径不得进入下一轮。
-func (c *AgentConversation) AppendProtocolError(phase domain.RunState) {
+func (c *AgentConversation) AppendProtocolError(phase domain.RunState, corrections ...ProtocolCorrection) {
 	if c == nil {
 		return
+	}
+	correction := genericProtocolCorrection(phase)
+	if len(corrections) > 0 {
+		correction = normalizeProtocolCorrection(phase, corrections[0])
 	}
 	observation := map[string]interface{}{
 		"status": "error",
 		"error": map[string]interface{}{
-			"code":      "invalid_envelope",
+			"code":      correction.Code,
 			"retryable": true,
-			"message":   protocolCorrectionMessage(phase),
+			"message":   correction.Message,
 		},
+	}
+	errorValue := observation["error"].(map[string]interface{})
+	if correction.Path != "" {
+		errorValue["path"] = correction.Path
+	}
+	if correction.ExpectedField != "" {
+		errorValue["expectedField"] = correction.ExpectedField
 	}
 	encoded, encodeErr := json.Marshal(observation)
 	if encodeErr != nil {
 		encoded = []byte(`{"status":"error","error":{"code":"observation_encode_failed","retryable":false,"message":"protocol observation could not be encoded"}}`)
 	}
 	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
-}
-
-func protocolCorrectionMessage(phase domain.RunState) string {
-	switch phase {
-	case domain.RunStatePlanning:
-		return "previous response was not a valid planCandidates envelope; return schemaVersion=v1, kind=planCandidates, and a planCandidates object"
-	default:
-		return "previous response was not a valid agent envelope; if kind is diagnosis, diagnosis must be an object with fixability, not a string"
-	}
 }
 
 // AppendToolResult 将工具成功、拒绝或 adapter 失败变成下一轮可见的观察。
@@ -402,6 +451,20 @@ func normalizeConversationValue(value any) any {
 			"stdout":    sanitizeInspectOutput(current.Stdout),
 			"stderr":    sanitizeInspectOutput(current.Stderr),
 			"truncated": current.Truncated,
+		}
+	case domain.DockerLogResult:
+		// Docker stdout/stderr 保留完整 operational evidence 的字段形状，
+		// 仅在模型边界隔离明显 credential/token 文本。
+		return map[string]interface{}{
+			"container": map[string]interface{}{
+				"name": current.Container.Name, "id": current.Container.ID,
+				"image": current.Container.Image, "state": current.Container.State,
+				"status": current.Container.Status,
+			},
+			"stdout":         redactConversationText(current.Stdout),
+			"stderr":         redactConversationText(current.Stderr),
+			"truncated":      current.Truncated,
+			"bytesRetrieved": current.BytesRetrieved,
 		}
 	default:
 		return redactConversationValue(value)

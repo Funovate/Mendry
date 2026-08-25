@@ -189,8 +189,27 @@ func TestParseSSHSourceConfigAcceptsProjectFolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSSHSourceConfig() error = %v", err)
 	}
-	if cfg.Host != "logs.example.invalid" || cfg.LogPath != "/var/log/app.log" || cfg.CredentialSecretID != secretID {
+	if cfg.Host != "logs.example.invalid" || cfg.LogPath != "/var/log/app.log" || cfg.CredentialSecretID != secretID || cfg.ProjectFolder != "/srv/app" || cfg.Deployment.Kind != projectdomain.SSHDeploymentHost {
 		t.Fatalf("config = %#v", cfg)
+	}
+}
+
+func TestParseSSHSourceConfigAcceptsDockerDeployment(t *testing.T) {
+	cfg, err := sshlog.ParseSSHSourceConfig(testProjectID, testSourceID, nil, []byte(`{
+		"schemaVersion": 2,
+		"host": "logs.example.invalid",
+		"port": 22,
+		"user": "app",
+		"projectFolder": "/srv/app",
+		"logPath": "/var/log/app.log",
+		"mode": "snapshot",
+		"deployment": {"kind": "docker", "containerName": "checkout-api"}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseSSHSourceConfig() error = %v", err)
+	}
+	if cfg.Deployment.Kind != projectdomain.SSHDeploymentDocker || cfg.Deployment.ContainerName != "checkout-api" {
+		t.Fatalf("Docker deployment = %#v", cfg.Deployment)
 	}
 }
 
@@ -259,5 +278,130 @@ func TestReaderPreservesRemoteFailureDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(record[observability.FieldErrorMessage].(string), "Permission denied (publickey)") {
 		t.Fatalf("error message = %#v", record[observability.FieldErrorMessage])
+	}
+}
+
+func writeArgvSSH(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ssh script uses a POSIX shell")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-ssh")
+	// 只回显最后一个参数，即远端命令；本地 -i 临时密钥路径不属于 inspect 输出。
+	script := "#!/bin/sh\neval \"last=\\${$#}\"\nprintf 'ARGV:%s\\n' \"$last\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestReaderInspectExecutesReconstructedCommandInProjectFolder(t *testing.T) {
+	reader, err := sshlog.NewReader(sshlog.Options{
+		Sources: staticSource{cfg: sshlog.SourceConfig{
+			ProjectID: testProjectID, SourceID: testSourceID, Host: "logs.example.invalid",
+			Port: 22, User: "app", ProjectFolder: "/srv/app", LogPath: "/var/log/app.log",
+			Mode: "tail", CredentialSecretID: testSecretID,
+		}},
+		Secrets: staticSecrets{}, Cipher: staticCipher{}, SSHCommand: writeArgvSSH(t),
+	})
+	if err != nil {
+		t.Fatalf("NewReader() error = %v", err)
+	}
+	result, err := reader.Inspect(context.Background(), domain.EvidenceScope{
+		ProjectID: testProjectID, SourceID: testSourceID,
+	}, domain.SSHInspectRequest{Command: `'ls' '/var/log' | 'grep' 'app'`})
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	wantCommand := "cd -- '/srv/app' && 'ls' '/var/log' | 'grep' 'app'"
+	if result.Command != wantCommand {
+		t.Fatalf("result.Command = %q, want %q", result.Command, wantCommand)
+	}
+	if !strings.Contains(result.Stdout, wantCommand) {
+		t.Fatalf("executed argv missing reconstructed command: %q", result.Stdout)
+	}
+	if strings.Contains(result.Stdout, "PRIVATE KEY") || strings.Contains(result.Stdout, "fixthe-sshlog-") {
+		t.Fatalf("inspect output leaked key material: %q", result.Stdout)
+	}
+}
+
+func TestReaderInspectTruncatesCombinedOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ssh script uses a POSIX shell")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-ssh")
+	script := "#!/bin/sh\ndd if=/dev/zero bs=1024 count=80 2>/dev/null | tr '\\0' 'A'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sshlog.NewReader(sshlog.Options{
+		Sources: staticSource{cfg: sshlog.SourceConfig{
+			ProjectID: testProjectID, SourceID: testSourceID, Host: "logs.example.invalid",
+			Port: 22, User: "app", ProjectFolder: "/srv/app", LogPath: "/var/log/app.log",
+			Mode: "tail", CredentialSecretID: testSecretID,
+		}},
+		Secrets: staticSecrets{}, Cipher: staticCipher{}, SSHCommand: path,
+	})
+	if err != nil {
+		t.Fatalf("NewReader() error = %v", err)
+	}
+	result, err := reader.Inspect(context.Background(), domain.EvidenceScope{
+		ProjectID: testProjectID, SourceID: testSourceID,
+	}, domain.SSHInspectRequest{Command: `'cat' 'app.log'`})
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if !result.Truncated || result.BytesRetrieved != 64<<10 {
+		t.Fatalf("truncation = %#v", result)
+	}
+	if len(result.Stdout) != 64<<10 {
+		t.Fatalf("captured stdout = %d, want 65536", len(result.Stdout))
+	}
+}
+
+func TestReaderInspectReturnsBoundedFailureWithoutKeyPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ssh script uses a POSIX shell")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-ssh")
+	script := "#!/bin/sh\necho 'Permission denied (publickey) /tmp/fixthe-sshlog-secret/id' >&2\nexit 13\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	logger, err := observability.NewLogger(observability.LoggerOptions{
+		Writer: &output, Level: "debug", Format: "json", Service: "test", Environment: "test",
+	})
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+	reader, err := sshlog.NewReader(sshlog.Options{
+		Sources: staticSource{cfg: sshlog.SourceConfig{
+			ProjectID: testProjectID, SourceID: testSourceID, Host: "logs.example.invalid",
+			Port: 22, User: "app", ProjectFolder: "/srv/app", LogPath: "/var/log/app.log",
+			Mode: "tail", CredentialSecretID: testSecretID,
+		}},
+		Secrets: staticSecrets{}, Cipher: staticCipher{}, SSHCommand: path, Logger: logger,
+	})
+	if err != nil {
+		t.Fatalf("NewReader() error = %v", err)
+	}
+	result, err := reader.Inspect(context.Background(), domain.EvidenceScope{
+		ProjectID: testProjectID, SourceID: testSourceID,
+	}, domain.SSHInspectRequest{Command: `'ls' '/var/log'`})
+	if err != nil {
+		t.Fatalf("Inspect() error = %v", err)
+	}
+	if result.ExitCode != 13 || !strings.Contains(result.Stderr, "Permission denied (publickey)") {
+		t.Fatalf("inspect failure result = %#v", result)
+	}
+	if strings.Contains(output.String(), "PRIVATE KEY") || strings.Contains(output.String(), "-i ") {
+		t.Fatalf("operator log leaked key path: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "cd -- '/srv/app' && 'ls' '/var/log'") {
+		t.Fatalf("operator log missing reconstructed command: %s", output.String())
 	}
 }

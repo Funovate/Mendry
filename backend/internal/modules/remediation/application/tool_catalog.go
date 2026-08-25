@@ -225,8 +225,13 @@ func (g *ToolGateway) baseDefinitions(
 	switch {
 	case source.Kind == "ssh" && source.Enabled && source.Supported &&
 		(source.Allows("pull_collection") || source.Allows("context_collection")) && phase != domain.RunStatePlanning:
-		// SSH 只广告 inspect；evidence.search/context 会误导模型去走自动 tail。
-		names = append(names, ToolSSHInspect)
+		// Docker deployment 只广告 typed logs，避免模型借 generic inspect
+		// 自己拼接 Docker 命令；host deployment 才保留受限 inspect。
+		if source.SSHDeploymentKind == "docker" {
+			names = append(names, ToolDockerLogs)
+		} else {
+			names = append(names, ToolSSHInspect)
+		}
 	case phase != domain.RunStatePlanning && ((source.Kind == "legacy" && scope.SourceID != "") || (source.Enabled && source.Supported &&
 		source.Kind == "cloud" &&
 		(source.Allows("pull_collection") || source.Allows("context_collection")))):

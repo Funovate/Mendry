@@ -78,12 +78,17 @@ func (o *Observer) ContextCompleted(ctx context.Context, rec application.Context
 
 // ModelTurnCompleted 记录模型轮次 metadata 及逻辑 request/response。
 func (o *Observer) ModelTurnCompleted(ctx context.Context, rec application.ModelTurnObservation) {
+	modelCalls := rec.Response.ModelCalls
+	if modelCalls <= 0 {
+		modelCalls = 1
+	}
 	attrs := append(runAttrs(rec.Run),
 		slog.String(observability.FieldPhase, string(rec.Phase)),
 		slog.Int64(observability.FieldSequence, rec.Sequence),
 		slog.Int64(observability.FieldDurationMS, rec.Duration.Milliseconds()),
 		slog.String("envelope_kind", rec.EnvelopeKind),
 		slog.String(observability.FieldLLMModel, rec.Response.Model),
+		slog.Int(observability.FieldModelCalls, modelCalls),
 		slog.Int64(observability.FieldModelTokensIn, rec.Response.UsageTokensIn),
 		slog.Int64(observability.FieldModelTokensOut, rec.Response.UsageTokensOut),
 		slog.Int64(observability.FieldRequestBytes, rec.Response.RequestBytes),
@@ -91,6 +96,9 @@ func (o *Observer) ModelTurnCompleted(ctx context.Context, rec application.Model
 		slog.Int64(observability.FieldToolSchemaBytes, rec.Response.ToolSchemaBytes),
 		slog.String(observability.FieldOutcome, rec.Outcome),
 	)
+	if rec.Response.FinishReason != "" {
+		attrs = append(attrs, slog.String(observability.FieldModelFinishReason, rec.Response.FinishReason))
+	}
 	if rec.Response.CacheTokensReported {
 		attrs = append(attrs,
 			slog.Int64(observability.FieldModelCacheHitTokens, rec.Response.CacheHitTokens),

@@ -97,6 +97,12 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 			},
 		}, nil
 	}
+	if tool == ToolDockerLogs {
+		if err := validateToolParameters(tool, params); err != nil {
+			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
+		}
+		return g.execDockerLogs(ctx, scope, catalog.source, params)
+	}
 	if route, ok := catalog.routes[tool]; ok {
 		if err := validateDynamicArguments(route.definition.Parameters, params); err != nil {
 			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}

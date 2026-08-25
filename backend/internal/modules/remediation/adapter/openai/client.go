@@ -38,6 +38,8 @@ const (
 	maxRetryAttempts         = 3
 	initialRetryBackoff      = 250 * time.Millisecond
 	maxRetryBackoff          = 2 * time.Second
+	maxOutputRetries         = 1
+	outputRetryMaxTokens     = 16384
 )
 
 // ErrModelTurnTimeout 表示整个逻辑模型轮次耗尽共享时限；它保持
@@ -276,7 +278,7 @@ type chatUsage struct {
 	} `json:"prompt_tokens_details"`
 }
 
-// Complete 把 ModelTurn 映射为一次 Chat Completions 调用。
+// Complete 把 ModelTurn 映射为一次有界的 Chat Completions 逻辑轮次。
 func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.ModelResult, error) {
 	// 一次 Complete 只分配一份 deadline；配置加载、所有 HTTP attempts、
 	// response read 与 retry backoff 共同消耗它，父 context 的更早 deadline 自动优先。
@@ -301,13 +303,47 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 	if err != nil {
 		return domain.ModelResult{}, fmt.Errorf("encode openai tools: %w", err)
 	}
-	result := domain.ModelResult{
+	baseResult := domain.ModelResult{
 		Provider: providerName, Model: session.model,
 		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
 	messages, err := buildChatMessages(req, toolNames)
 	if err != nil {
-		return result, fmt.Errorf("encode openai messages: %w", err)
+		return baseResult, fmt.Errorf("encode openai messages: %w", err)
+	}
+
+	var aggregate domain.ModelResult
+	for outputAttempt := 0; outputAttempt <= maxOutputRetries; outputAttempt++ {
+		attemptResult, attemptErr := c.completeWithTokens(
+			ctx, session, req, maxTokens, tools, toolNames, toolSchemaBytes, messages,
+		)
+		aggregate = mergeModelResults(aggregate, attemptResult)
+		if attemptErr == nil {
+			return aggregate, nil
+		}
+		if !errors.Is(attemptErr, domain.ErrModelOutputExhausted) || outputAttempt == maxOutputRetries {
+			return aggregate, attemptErr
+		}
+		// 输出预算重试仍属于同一个 Complete；复用 turnCtx，避免第二次尝试
+		// 重新获得完整的 provider timeout。
+		maxTokens = max(maxTokens, outputRetryMaxTokens)
+	}
+	return aggregate, fmt.Errorf("openai output retry attempts exhausted")
+}
+
+func (c *Client) completeWithTokens(
+	ctx context.Context,
+	session llmSession,
+	req domain.ModelTurn,
+	maxTokens int,
+	tools []chatTool,
+	toolNames providerToolNames,
+	toolSchemaBytes int64,
+	messages []chatMessage,
+) (domain.ModelResult, error) {
+	result := domain.ModelResult{
+		Provider: providerName, Model: session.model,
+		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
 	payload, err := json.Marshal(chatRequest{
 		Model:          session.model,
@@ -320,6 +356,7 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 	if err != nil {
 		return result, fmt.Errorf("encode openai request: %w", err)
 	}
+	result.ModelCalls = 1
 	result.RequestBytes = int64(len(payload))
 	body, status, elapsed, err := c.doChatCompletion(ctx, session, payload, result)
 	if err != nil {
@@ -340,6 +377,7 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 		logResult(wrapped)
 		return result, wrapped
 	}
+	result.FinishReason = decoded.Choices[0].FinishReason
 	toolCalls := make([]domain.ToolCall, 0, len(decoded.Choices[0].Message.ToolCalls))
 	seenCallIDs := make(map[string]struct{}, len(decoded.Choices[0].Message.ToolCalls))
 	if len(decoded.Choices[0].Message.ToolCalls) > maxToolCount {
@@ -393,28 +431,27 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 	}
 	if strings.TrimSpace(content) == "" && len(toolCalls) == 0 {
 		wrapped := fmt.Errorf("openai response contained no content or tool calls")
+		if result.FinishReason == "length" {
+			wrapped = fmt.Errorf("openai response exhausted output token budget: %w", domain.ErrModelOutputExhausted)
+		}
 		logResult(wrapped)
 		return result, wrapped
 	}
 	logResult(nil)
-	usageIn := decoded.Usage.PromptTokens
-	usageOut := decoded.Usage.CompletionTokens
-	usageTotal := decoded.Usage.TotalTokens
-	if usageTotal == 0 {
-		usageTotal = usageIn + usageOut
-	}
 	result.Content = content
 	result.ToolCalls = toolCalls
-	result.UsageTokensIn = usageIn
-	result.UsageTokensOut = usageOut
-	result.UsageTokens = usageTotal
-	result.FinishReason = decoded.Choices[0].FinishReason
 	return result, nil
 }
 
 func applyUsageMetrics(result *domain.ModelResult, usage chatUsage) {
 	if result == nil {
 		return
+	}
+	result.UsageTokensIn = usage.PromptTokens
+	result.UsageTokensOut = usage.CompletionTokens
+	result.UsageTokens = usage.TotalTokens
+	if result.UsageTokens == 0 {
+		result.UsageTokens = result.UsageTokensIn + result.UsageTokensOut
 	}
 	if usage.PromptCacheHitTokens != nil || usage.PromptCacheMissTokens != nil {
 		result.CacheTokensReported = true
@@ -427,6 +464,34 @@ func applyUsageMetrics(result *domain.ModelResult, usage chatUsage) {
 		result.CacheHitTokens = nonNegativeInt64(usage.PromptTokensDetails.CachedTokens)
 		result.CacheMissTokens = max(usage.PromptTokens-result.CacheHitTokens, 0)
 	}
+}
+
+func mergeModelResults(previous, current domain.ModelResult) domain.ModelResult {
+	merged := current
+	merged.ModelCalls += previous.ModelCalls
+	merged.UsageTokensIn += previous.UsageTokensIn
+	merged.UsageTokensOut += previous.UsageTokensOut
+	merged.UsageTokens += previous.UsageTokens
+	merged.UsageCostCents += previous.UsageCostCents
+	merged.CacheTokensReported = previous.CacheTokensReported || current.CacheTokensReported
+	merged.CacheHitTokens += previous.CacheHitTokens
+	merged.CacheMissTokens += previous.CacheMissTokens
+	if merged.Provider == "" {
+		merged.Provider = previous.Provider
+	}
+	if merged.Model == "" {
+		merged.Model = previous.Model
+	}
+	if merged.RequestBytes == 0 {
+		merged.RequestBytes = previous.RequestBytes
+	}
+	if merged.ToolCount == 0 {
+		merged.ToolCount = previous.ToolCount
+	}
+	if merged.ToolSchemaBytes == 0 {
+		merged.ToolSchemaBytes = previous.ToolSchemaBytes
+	}
+	return merged
 }
 
 func nonNegativeInt64(value *int64) int64 {

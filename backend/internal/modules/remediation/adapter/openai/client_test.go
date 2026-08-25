@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -640,4 +641,148 @@ func TestCompleteEarlierParentDeadlineWins(t *testing.T) {
 	if attempts != 1 {
 		t.Fatalf("HTTP attempts = %d, want 1", attempts)
 	}
+}
+
+func TestCompleteRetriesOutputExhaustionOnceAndAggregatesUsage(t *testing.T) {
+	var payloads []map[string]interface{}
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			var payload map[string]interface{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			payloads = append(payloads, payload)
+			body := `{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"prompt_tokens":10,"completion_tokens":8192,"total_tokens":8202,"prompt_cache_hit_tokens":3,"prompt_cache_miss_tokens":7}}`
+			if len(payloads) == 2 {
+				body = `{"choices":[{"finish_reason":"stop","message":{"content":"{\"schemaVersion\":\"v1\",\"kind\":\"stop\"}"}}],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18,"prompt_tokens_details":{"cached_tokens":4}}}`
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: make(http.Header),
+				Body: io.NopCloser(strings.NewReader(body)), Request: request,
+			}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.Complete(context.Background(), domain.ModelTurn{
+		ProjectID: testProjectID, SystemPrompt: "sys", UserMessage: "user", MaxTokens: 8192,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if len(payloads) != 2 || payloads[0]["max_tokens"] != float64(8192) || payloads[1]["max_tokens"] != float64(16384) {
+		t.Fatalf("output retry payloads = %#v", payloads)
+	}
+	first := mapsWithoutKey(payloads[0], "max_tokens")
+	second := mapsWithoutKey(payloads[1], "max_tokens")
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("retry changed request fields: first=%#v second=%#v", first, second)
+	}
+	if result.ModelCalls != 2 || result.UsageTokensIn != 21 || result.UsageTokensOut != 8199 || result.UsageTokens != 8220 {
+		t.Fatalf("aggregated usage = %#v", result)
+	}
+	if !result.CacheTokensReported || result.CacheHitTokens != 7 || result.CacheMissTokens != 14 {
+		t.Fatalf("aggregated cache usage = %#v", result)
+	}
+	if result.FinishReason != "stop" || result.Content == "" {
+		t.Fatalf("final response = %#v", result)
+	}
+}
+
+func TestCompleteReturnsAggregatedOutputExhaustionAfterOneRetry(t *testing.T) {
+	attempts := 0
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: make(http.Header), Request: request,
+				Body: io.NopCloser(strings.NewReader(
+					`{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`,
+				)),
+			}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID, MaxTokens: 8192})
+	if !errors.Is(err, domain.ErrModelOutputExhausted) {
+		t.Fatalf("Complete() error = %v, want output exhaustion", err)
+	}
+	if attempts != 2 || result.ModelCalls != 2 || result.UsageTokensIn != 4 || result.UsageTokensOut != 6 || result.UsageTokens != 10 || result.FinishReason != "length" {
+		t.Fatalf("terminal exhaustion result = %#v attempts=%d", result, attempts)
+	}
+}
+
+func TestCompleteDoesNotRetryGenericEmptyResponse(t *testing.T) {
+	attempts := 0
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			return &http.Response{
+				StatusCode: http.StatusOK, Header: make(http.Header), Request: request,
+				Body: io.NopCloser(strings.NewReader(
+					`{"choices":[{"finish_reason":"stop","message":{"content":""}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+				)),
+			}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID, MaxTokens: 8192})
+	if err == nil || errors.Is(err, domain.ErrModelOutputExhausted) || !strings.Contains(err.Error(), "no content or tool calls") {
+		t.Fatalf("Complete() error = %v, want generic empty response", err)
+	}
+	if attempts != 1 || result.ModelCalls != 1 || result.UsageTokens != 3 || result.FinishReason != "stop" {
+		t.Fatalf("generic empty result = %#v attempts=%d", result, attempts)
+	}
+}
+
+func TestCompleteOutputRetrySharesLogicalTurnDeadline(t *testing.T) {
+	attempts := 0
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK, Header: make(http.Header), Request: request,
+					Body: io.NopCloser(strings.NewReader(
+						`{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"total_tokens":1}}`,
+					)),
+				}, nil
+			}
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})},
+		Timeout: 20 * time.Millisecond, StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID, MaxTokens: 8192})
+	if !errors.Is(err, openai.ErrModelTurnTimeout) {
+		t.Fatalf("Complete() error = %v, want shared logical timeout", err)
+	}
+	if attempts != 2 || result.ModelCalls != 2 || result.UsageTokens != 1 {
+		t.Fatalf("shared deadline result = %#v attempts=%d", result, attempts)
+	}
+}
+
+func mapsWithoutKey(source map[string]interface{}, key string) map[string]interface{} {
+	result := make(map[string]interface{}, len(source)-1)
+	for name, value := range source {
+		if name != key {
+			result[name] = value
+		}
+	}
+	return result
 }

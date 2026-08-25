@@ -13,6 +13,10 @@ and event-name constants. Packages do not create default/global loggers.
 human-readable console handler, while `test`, `staging`, and `production`
 default to the stable JSON handler. Console output enables ANSI colors only
 when the injected writer is a terminal, so redirects remain color-free.
+Optional `FIXTHE_LOG_FILE` adds an append-only local file sink without removing
+stdout. Bootstrap creates its parent directory, enforces `0600` file
+permissions, uses the selected console/JSON format for both destinations, and
+closes the file when the process returns. Rotation remains deployment-owned.
 
 ## Log Levels
 
@@ -744,6 +748,7 @@ observer.ModelTurnCompleted(ctx, application.ModelTurnObservation{
     Outcome: "failure", FailureClass: "decode",
     ErrorMessage: `decode agent envelope: envelope decode: json: unknown field "type"`,
 })
-// AgentConversation still receives a bounded protocol observation with a
-// stable invalid_envelope code. Decoder internals stay operator-only.
+// AgentConversation still receives a bounded protocol observation with an
+// allowlisted stable code such as invalid_envelope or a recognized
+// field-specific code. Decoder internals stay operator-only.
 ```

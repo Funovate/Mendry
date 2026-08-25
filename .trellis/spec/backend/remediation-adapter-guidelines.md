@@ -42,6 +42,25 @@ func (SSHInspectPort).Inspect(context.Context, EvidenceScope, SSHInspectRequest)
 func (LLMProviderPort).Complete(context.Context, ModelTurn) (ModelResult, error)
 ```
 
+Reasoning-output accounting remains provider-neutral:
+
+```go
+var ErrModelOutputExhausted error
+
+type ModelResult struct {
+    ModelCalls                          int
+    UsageTokensIn, UsageTokensOut       int64
+    UsageTokens, UsageCostCents         int64
+    CacheTokensReported                 bool
+    CacheHitTokens, CacheMissTokens     int64
+    FinishReason                        string
+    // Existing content, tool, provider, model, and request-shape fields remain.
+}
+```
+
+`ModelCalls == 0` is the compatibility form for one provider call. Consumers
+that charge budgets or emit logical-turn logs must normalize zero to one.
+
 Landed value types:
 
 ```go
@@ -194,6 +213,22 @@ func (*application.RemediationCoordinator).resolveRefs(context.Context, domain.R
   the logical timeout on `http.Client.Timeout`: a per-attempt timeout would
   multiply the allowed duration by retry count. An earlier caller deadline,
   including the run work deadline or webhook normalization timeout, wins.
+- Remediation turns start with `max_tokens=8192`. A decoded response with
+  `finish_reason=length`, blank content, and no valid native tool calls returns
+  `ErrModelOutputExhausted` and retries exactly once with `max_tokens=16384`.
+  Both output attempts remain inside the same `Complete` call and logical-turn
+  context. Authentication, HTTP/status, transport, malformed JSON, ordinary
+  blank responses, and envelope validation do not use this retry.
+- Decode usage, cache counters, and `finish_reason` before checking for blank
+  content/tool calls. Aggregate both output attempts' model-call, token, cost,
+  and cache counters; the final attempt owns content, tool calls, finish reason,
+  and request-shape metadata. If the second attempt also exhausts output,
+  return its typed error together with the aggregate `ModelResult`.
+- Provider-native history is bounded to 256 KiB of encoded provider-neutral
+  messages as well as the item limit. Retain newest complete user-led groups;
+  never emit an assistant native tool call without all of its tool results or
+  an orphaned tool result. Semantic compaction belongs to the tool-driven
+  context workflow, not the provider adapter.
 - A static API key is test-only. Production bootstrap must use the encrypted
   store.
 - Missing project ID, missing named secret, non-200, oversized body, or invalid
@@ -309,6 +344,11 @@ phase instruction and bootstrap, later continuations carry only newly pending
 strict-tool observations or protocol corrections, and native tool results stay
 in paired assistant/tool messages. Pending content is acknowledged only after
 a successful provider result, so a failed call can retry the same increment.
+The assistant response itself is committed only after strict envelope and
+current-phase validation succeeds; rejected content, mixed tool/content output,
+and invalid native calls never enter accepted history or acknowledge pending
+continuation. A provider failure therefore retains the same pending input for
+the existing retry path.
 
 The automatic run work budget defaults to 20m. Admission still rejects a new
 model or tool operation after exhaustion, and each admitted external operation
@@ -339,7 +379,15 @@ repository bytes remain independent exhaustion reasons.
 | Unquoted inspect glob (`ls *.log`) or adjacent unquoted `\|\|` | Reject as `invalid_arguments` before SSH |
 | Inspect stdout/stderr with PEM or `fixthe-ssh*` temp key path | Keep raw secrets/tokens; strip only PEM blocks and temp key paths |
 | Invalid diagnosis/plan envelope or mixed native tool+content | Record bounded `invalid_envelope` observation; stay in the phase loop and count the turn against the model budget |
+| Known `evidenceRef` citation field | Strictly reject the citation, retain the operator diagnostic, and send only bounded `evidenceCitations[].evidenceRef` → `evidenceId` guidance; never accept it as an alias |
+| First or second consecutive invalid envelope in a phase | Account the model effect and append one allowlisted protocol correction for the next turn |
+| Third consecutive invalid envelope in a phase | Account the model effect, append no further correction, and transition to `blocked_manual_review` unless an independent run budget exhausted first |
+| Phase-valid envelope | Reset that phase's consecutive protocol-failure count; planning owns a separate counter from diagnosing |
 | Provider/infrastructure model failure | Remain a harness `failed` outcome; do not invent an envelope |
+| `finish_reason=length` with blank content and no native tool call | Retry once at 16384 inside the same logical-turn deadline; return `ErrModelOutputExhausted` with aggregate usage if it happens again |
+| Blank provider response with any other finish reason | Fail closed as a protocol error; do not use the output-budget retry |
+| Output retry succeeds | Persist two model calls and aggregate both attempts' token/cost/cache usage; record only the final assistant content/tool calls in history |
+| Native history exceeds 256 KiB or its item limit | Evict oldest complete user-led groups; never retain a partial assistant/tool group |
 | Logical model-turn deadline expires while run time remains | Fail as a provider timeout; all attempts together consumed at most the configured turn duration |
 | Run deadline expires during a model/tool operation | Cancel the operation, account it, and persist `budget_exhausted` with reason `elapsed` using the lifecycle context |
 
@@ -354,8 +402,10 @@ repository bytes remain independent exhaustion reasons.
   re-diagnosis, planning removes diagnosis-only schemas, and the code-fixable
   path persists plans/diff before `diagnosis_ready_for_review`.
 - Conversation: bootstrap, strict-tool observations, native tool results, and
-  protocol corrections are delivered exactly once; provider failure does not
-  acknowledge pending continuation content.
+  protocol corrections are delivered exactly once; rejected assistant output is
+  absent from accepted history; provider failure does not acknowledge pending
+  continuation content; three consecutive invalid envelopes stop at manual
+  review and preserve the independent run-budget precedence.
 - OpenAI: outbound requests contain every advertised tool definition and parse
   native tool calls; duplicate definitions/IDs, mixed content and tool calls,
   oversized schemas, and credential ownership mismatches fail closed. Slow
@@ -403,6 +453,8 @@ repository bytes remain independent exhaustion reasons.
 - Base: a project with an SSH source and an `openai` bearer secret can run the diagnosis loop without exposing credentials to application or HTTP.
 - Base: an MCP source sends built-ins plus `source.search_tools` on its first
   turn, then sends only explicitly activated, phase-allowed dynamic schemas.
+- Base: a reasoning model exhausts 8192 output tokens without final content,
+  then succeeds at 16384; the run charges two calls and all returned usage.
 - Bad: stuffing `run.IncidentID` into `RepoRef.ProjectID`, leaving
   `https://user:token@host` in `origin`, hashing evidence IDs by tail index,
   rejecting `projectFolder`, adding `openai_api_key`, or decrypting through a
@@ -414,6 +466,9 @@ repository bytes remain independent exhaustion reasons.
   next user message, setting `http.Client.Timeout` to the logical turn limit so
   retries multiply it, or using an expired operation context to persist the
   terminal run state.
+- Bad: treating a 200/`finish_reason=length` blank response as zero-token
+  generic failure, retrying it under a fresh timeout, or truncating native
+  history in the middle of an assistant/tool exchange.
 
 ### 6. Tests Required
 
@@ -432,6 +487,14 @@ repository bytes remain independent exhaustion reasons.
   and content; missing secret / non-200 / invalid JSON wrap without leaking the
   key; injected short durations prove slow success, shared retry deadlines,
   and earlier parent-deadline precedence.
+- OpenAI reasoning output: assert 8192 then 16384 serialized `max_tokens`, one
+  retry only for typed output exhaustion, unchanged request fields otherwise,
+  aggregate usage/cache/model-call counters on success and second exhaustion,
+  and no retry for an ordinary blank response.
+- Conversation/accounting/logging: assert encoded native history remains at or
+  below 256 KiB with complete groups, legacy zero `ModelCalls` charges one,
+  retries charge two, and logical-turn logs contain `model_calls` plus the final
+  `finish_reason` without response bodies or reasoning text.
 - Wiring: `RepoRef.ProjectID` is the project UUID, `RemoteURL` is
   credential-free, `EvidenceScope` carries environment/source IDs.
 - Unit tests inject binaries or local repos. They must not skip when a real
@@ -461,6 +524,19 @@ plaintext, err := cipher.Decrypt(projectID, secretID, kind, ciphertext, nonce)
 defer clearBytes(plaintext)
 // Logger injection remains metadata-only; plaintext never enters an observation.
 reader, err := sshlog.NewReader(sshlog.Options{Sources: sources, Secrets: secrets, Cipher: cipher, Logger: logger})
+```
+
+For reasoning-output retry, keep the retry at the provider boundary:
+
+```go
+// Wrong: a fresh Complete call grants a fresh logical-turn timeout and loses
+// the first attempt's usage.
+_, _, _ = engine.Turn(ctx, phase, projectID, prompt)
+
+// Correct: one Complete call owns both bounded output attempts and returns
+// aggregate accounting to the coordinator.
+result, err := provider.Complete(ctx, turn)
+effect := modelEffect(result)
 ```
 
 ## Common Mistakes

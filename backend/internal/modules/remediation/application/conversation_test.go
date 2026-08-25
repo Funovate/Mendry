@@ -66,6 +66,79 @@ func TestAppendProtocolErrorOmitsDecoderInternals(t *testing.T) {
 	}
 }
 
+func TestAppendProtocolErrorUsesSpecificEvidenceCitationGuidance(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	correction := ProtocolCorrectionFor(domain.RunStateDiagnosing, &domain.EvidenceCitationFieldError{Field: "evidenceRef"})
+	conversation.AppendProtocolError(domain.RunStateDiagnosing, correction)
+
+	text := conversation.ContextText()
+	for _, want := range []string{
+		"invalid_evidence_citation",
+		"diagnosis.evidenceCitations[].evidenceRef",
+		"expectedField",
+		"evidenceId",
+		"optional classification",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("protocol observation missing %q: %s", want, text)
+		}
+	}
+	for _, leaked := range []string{"DiagnosisOutput", "cannot unmarshal", "secretValue", "do-not-replay"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("protocol observation leaked %q: %s", leaked, text)
+		}
+	}
+}
+
+func TestAppendProtocolErrorNormalizesUntrustedCorrectionFields(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	conversation.AppendProtocolError(domain.RunStateDiagnosing, ProtocolCorrection{
+		Code:          "invalid_evidence_citation",
+		Path:          "model-controlled-path",
+		ExpectedField: strings.Repeat("x", maxObservationBytes),
+		Message:       "raw provider response",
+	})
+
+	text := conversation.ContextText()
+	if strings.Contains(text, "model-controlled-path") || strings.Contains(text, "raw provider response") {
+		t.Fatalf("untrusted correction fields entered context: %s", text)
+	}
+	if !strings.Contains(text, "diagnosis.evidenceCitations[].evidenceRef") || !strings.Contains(text, "evidenceId") {
+		t.Fatalf("normalized correction lost canonical guidance: %s", text)
+	}
+}
+
+func TestProtocolCorrectionFallbackDoesNotCopyUnknownDecoderText(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	correction := ProtocolCorrectionFor(domain.RunStateDiagnosing, fmt.Errorf(`json: unknown field "modelSecret"`))
+	conversation.AppendProtocolError(domain.RunStateDiagnosing, correction)
+
+	text := conversation.ContextText()
+	if strings.Contains(text, "modelSecret") || strings.Contains(text, "unknown field") {
+		t.Fatalf("generic correction copied decoder text: %s", text)
+	}
+	if !strings.Contains(text, "invalid_envelope") || !strings.Contains(text, "evidenceId") {
+		t.Fatalf("generic correction lost safe fallback: %s", text)
+	}
+}
+
+func TestProtocolCorrectionUsesPhaseFallbackOutsideDiagnosis(t *testing.T) {
+	correction := ProtocolCorrectionFor(domain.RunStatePlanning, &domain.EvidenceCitationFieldError{Field: "evidenceRef"})
+	if correction.Code != "invalid_envelope" || !strings.Contains(correction.Message, "planCandidates") {
+		t.Fatalf("planning correction = %#v, want planCandidates fallback", correction)
+	}
+	if strings.Contains(correction.Message, "evidenceId") || correction.Path != "" {
+		t.Fatalf("planning correction exposed diagnosis-specific guidance: %#v", correction)
+	}
+
+	conversation := NewAgentConversation("bootstrap")
+	conversation.AppendProtocolError(domain.RunStatePlanning, ProtocolCorrection{Code: "invalid_evidence_citation"})
+	text := conversation.ContextText()
+	if !strings.Contains(text, "planCandidates") || strings.Contains(text, "evidenceId") {
+		t.Fatalf("planning normalization exposed diagnosis-specific guidance: %s", text)
+	}
+}
+
 func TestRedactConversationValueNormalizesStructPayload(t *testing.T) {
 	value := domain.SearchResult{Matches: []domain.SearchMatch{{
 		Path: "handler.go", LineNumber: 12, Line: "token: secret-value",
@@ -215,5 +288,28 @@ func TestNativeContinuationDeliversProtocolCorrectionOnce(t *testing.T) {
 	conversation.RecordModelTurn(second, domain.ModelResult{Content: `{"schemaVersion":"v1","kind":"stop"}`})
 	if third := conversation.NativeContinuation("diagnose"); strings.Contains(third, "protocol_observation") {
 		t.Fatalf("protocol correction repeated: %q", third)
+	}
+}
+
+func TestHistoryEnforcesAggregateBytesByEvictingOldestCompleteTurns(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	for index := 0; index < 4; index++ {
+		conversation.RecordModelTurn(
+			fmt.Sprintf("user-%d:%s", index, strings.Repeat("u", maxMessageBytes)),
+			domain.ModelResult{Content: fmt.Sprintf("assistant-%d:%s", index, strings.Repeat("a", maxMessageBytes))},
+		)
+	}
+
+	history := conversation.History()
+	if got := encodedConversationBytes(history); got > maxConversationBytes {
+		t.Fatalf("history bytes = %d, want at most %d", got, maxConversationBytes)
+	}
+	if len(history) == 0 || !strings.HasPrefix(history[len(history)-1].Content, "assistant-3:") {
+		t.Fatalf("history did not retain latest complete turn: %#v", history)
+	}
+	for _, message := range history {
+		if strings.HasPrefix(message.Content, "user-0:") || strings.HasPrefix(message.Content, "assistant-0:") {
+			t.Fatalf("history retained oldest turn beyond byte bound: %#v", history)
+		}
 	}
 }

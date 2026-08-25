@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	projectapplication "fixthe/backend/internal/modules/projects/application"
@@ -23,11 +24,12 @@ import (
 )
 
 const (
-	defaultSSHCommand = "ssh"
-	defaultTimeout    = 15 * time.Second
-	defaultMaxLines   = 500
-	defaultMaxBytes   = 1 << 20
-	defaultWindow     = 20
+	defaultSSHCommand   = "ssh"
+	defaultTimeout      = 15 * time.Second
+	defaultMaxLines     = 500
+	defaultMaxBytes     = 1 << 20
+	defaultWindow       = 20
+	defaultInspectBytes = 64 << 10
 )
 
 // SourceConfig 是适配器读取 SSH 日志所需的无凭据配置。
@@ -37,8 +39,10 @@ type SourceConfig struct {
 	Host               string
 	Port               int
 	User               string
+	ProjectFolder      string
 	LogPath            string
 	Mode               string
+	Deployment         projectdomain.SSHDeployment
 	CredentialSecretID string
 	CredentialKind     projectdomain.SecretKind
 	plaintext          []byte
@@ -97,7 +101,10 @@ func NewReader(options Options) (*Reader, error) {
 	}, nil
 }
 
-var _ domain.EvidenceLogPort = (*Reader)(nil)
+var (
+	_ domain.EvidenceLogPort = (*Reader)(nil)
+	_ domain.SSHInspectPort  = (*Reader)(nil)
+)
 
 // Search 读取有界日志尾部并按关键字过滤。
 func (r *Reader) Search(ctx context.Context, scope domain.EvidenceScope, query domain.LogQuery) (domain.EvidencePage, error) {
@@ -207,10 +214,148 @@ func (r *Reader) open(ctx context.Context, scope domain.EvidenceScope) (SourceCo
 	return cfg, func() { clearBytes(plaintext) }, nil
 }
 
-func (r *Reader) exec(ctx context.Context, cfg SourceConfig, remoteCommand string) (string, error) {
+// Inspect 执行 gateway 已经解析并重写过的 inspect 命令。模型原始字符串不得
+// 到达这里；适配器只负责凭据注入、cwd、超时和 64KiB 输出上限。
+func (r *Reader) Inspect(ctx context.Context, scope domain.EvidenceScope, req domain.SSHInspectRequest) (domain.SSHInspectResult, error) {
+	started := time.Now()
+	if strings.TrimSpace(req.Command) == "" {
+		return domain.SSHInspectResult{}, fmt.Errorf("inspect command is required")
+	}
+	cfg, closer, err := r.open(ctx, scope)
+	if err != nil {
+		r.logRequest(ctx, "inspect", cfg, "", started, 0, err)
+		return domain.SSHInspectResult{}, err
+	}
+	defer closer()
+
+	remoteCommand := inspectRemoteCommand(cfg.ProjectFolder, req.Command)
+	result, runErr := r.execInspect(ctx, cfg, remoteCommand)
+	r.logRequest(ctx, "inspect", cfg, remoteCommand, started, int(result.BytesRetrieved), inspectLogError(runErr, result))
+	if runErr != nil {
+		return domain.SSHInspectResult{}, runErr
+	}
+	return result, nil
+}
+
+func inspectRemoteCommand(projectFolder, command string) string {
+	folder := strings.TrimSpace(projectFolder)
+	if folder == "" {
+		folder = "."
+	}
+	return "cd -- " + shellQuote(folder) + " && " + command
+}
+
+func inspectLogError(runErr error, result domain.SSHInspectResult) error {
+	if runErr != nil {
+		return runErr
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("ssh inspect completed with exit %d", result.ExitCode)
+	}
+	return nil
+}
+
+type inspectCapture struct {
+	mu        sync.Mutex
+	limit     int
+	truncated bool
+	stdout    bytes.Buffer
+	stderr    bytes.Buffer
+	abort     func()
+}
+
+func (c *inspectCapture) used() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usedLocked()
+}
+
+func (c *inspectCapture) write(dest *bytes.Buffer, p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.truncated {
+		return len(p), nil
+	}
+	remaining := c.limit - c.usedLocked()
+	if remaining <= 0 {
+		c.truncated = true
+		if c.abort != nil {
+			c.abort()
+		}
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		dest.Write(p[:remaining])
+		c.truncated = true
+		if c.abort != nil {
+			c.abort()
+		}
+		return len(p), nil
+	}
+	return dest.Write(p)
+}
+
+func (c *inspectCapture) usedLocked() int {
+	return c.stdout.Len() + c.stderr.Len()
+}
+
+type inspectStreamWriter struct {
+	capture *inspectCapture
+	dest    *bytes.Buffer
+}
+
+func (w inspectStreamWriter) Write(p []byte) (int, error) {
+	return w.capture.write(w.dest, p)
+}
+
+func (r *Reader) execInspect(ctx context.Context, cfg SourceConfig, remoteCommand string) (domain.SSHInspectResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	args, cleanup, err := r.sshArgs(cfg, remoteCommand)
+	if err != nil {
+		return domain.SSHInspectResult{}, err
+	}
+	defer cleanup()
+
+	command := exec.CommandContext(ctx, r.command, args...)
+	capture := &inspectCapture{limit: defaultInspectBytes, abort: func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+	}}
+	command.Stdout = inspectStreamWriter{capture: capture, dest: &capture.stdout}
+	command.Stderr = inspectStreamWriter{capture: capture, dest: &capture.stderr}
+	runErr := command.Run()
+	result := domain.SSHInspectResult{
+		Command:        remoteCommand,
+		Stdout:         capture.stdout.String(),
+		Stderr:         capture.stderr.String(),
+		Truncated:      capture.truncated,
+		BytesRetrieved: int64(capture.used()),
+	}
+	if command.ProcessState != nil {
+		result.ExitCode = command.ProcessState.ExitCode()
+	}
+	if runErr == nil {
+		return result, nil
+	}
+	if ctx.Err() != nil && !capture.truncated {
+		return domain.SSHInspectResult{}, fmt.Errorf("ssh inspect: %w", ctx.Err())
+	}
+	if capture.truncated {
+		// 截断后主动杀掉进程，仍返回已经捕获的前缀给模型。
+		result.ExitCode = 0
+		return result, nil
+	}
+	if command.ProcessState != nil {
+		return result, nil
+	}
+	return domain.SSHInspectResult{}, fmt.Errorf("ssh inspect: %w", runErr)
+}
+
+func (r *Reader) sshArgs(cfg SourceConfig, remoteCommand string) ([]string, func(), error) {
 	args := []string{"-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	cleanup := func() {}
 	if cfg.Port > 0 {
@@ -220,19 +365,30 @@ func (r *Reader) exec(ctx context.Context, cfg SourceConfig, remoteCommand strin
 	case projectdomain.SecretSSHPrivateKey:
 		keyPath, closer, err := writeTempKey(cfg.plaintext)
 		if err != nil {
-			return "", fmt.Errorf("prepare ssh key: %w", err)
+			return nil, nil, fmt.Errorf("prepare ssh key: %w", err)
 		}
 		cleanup = closer
 		args = append(args, "-i", keyPath)
 	case projectdomain.SecretSSHPassword:
-		return "", fmt.Errorf("ssh password authentication is not supported for log reads")
+		return nil, nil, fmt.Errorf("ssh password authentication is not supported for log reads")
 	}
-	defer cleanup()
 	target := cfg.Host
 	if cfg.User != "" {
 		target = cfg.User + "@" + cfg.Host
 	}
 	args = append(args, target, remoteCommand)
+	return args, cleanup, nil
+}
+
+func (r *Reader) exec(ctx context.Context, cfg SourceConfig, remoteCommand string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	args, cleanup, err := r.sshArgs(cfg, remoteCommand)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	command := exec.CommandContext(ctx, r.command, args...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -254,9 +410,14 @@ func (r *Reader) exec(ctx context.Context, cfg SourceConfig, remoteCommand strin
 }
 
 func (r *Reader) logRequest(ctx context.Context, operation string, cfg SourceConfig, command string, started time.Time, bytes int, err error) {
+	loggedErr := err
+	if operation == "inspect" && err != nil && strings.Contains(err.Error(), "ssh inspect completed with exit") {
+		// inspect 非零退出对模型是有界结果；INFO 完成记录只保留稳定分类，避免把 stdout dump 进日志。
+		loggedErr = fmt.Errorf("ssh inspect remote command failed")
+	}
 	observability.LogSSHEvidenceRequest(ctx, r.logger, observability.SSHEvidenceRequest{
 		Operation: operation, Command: command, Host: cfg.Host, Port: cfg.Port, Duration: time.Since(started), Bytes: bytes,
-		CredentialSecretID: cfg.CredentialSecretID, CredentialKind: string(cfg.CredentialKind), Err: err,
+		CredentialSecretID: cfg.CredentialSecretID, CredentialKind: string(cfg.CredentialKind), Err: loggedErr,
 	})
 }
 
@@ -394,24 +555,9 @@ func clearBytes(value []byte) {
 
 // ParseSSHSourceConfig 把已校验的 source JSON 映射为适配器配置。
 func ParseSSHSourceConfig(projectID, sourceID string, credentialSecretID *string, raw json.RawMessage) (SourceConfig, error) {
-	// projectFolder 属于已校验的 SSH source schema，本适配器只读 logPath，
-	// 但必须接受该字段，否则 DisallowUnknownFields 会拒绝真实项目配置。
-	var value struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		Host          string `json:"host"`
-		Port          int    `json:"port"`
-		User          string `json:"user"`
-		ProjectFolder string `json:"projectFolder"`
-		LogPath       string `json:"logPath"`
-		Mode          string `json:"mode"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
+	value, err := projectdomain.ParseSSHSourceConfig(raw)
+	if err != nil {
 		return SourceConfig{}, fmt.Errorf("decode ssh source config: %w", err)
-	}
-	if value.Port == 0 {
-		value.Port = 22
 	}
 	secretID := ""
 	if credentialSecretID != nil {
@@ -426,8 +572,10 @@ func ParseSSHSourceConfig(projectID, sourceID string, credentialSecretID *string
 		Host:               value.Host,
 		Port:               value.Port,
 		User:               value.User,
+		ProjectFolder:      value.ProjectFolder,
 		LogPath:            value.LogPath,
 		Mode:               value.Mode,
+		Deployment:         value.Deployment,
 		CredentialSecretID: secretID,
 	}, nil
 }

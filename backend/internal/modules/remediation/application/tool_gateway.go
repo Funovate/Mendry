@@ -21,6 +21,7 @@ const (
 	ToolEvidenceSearch  = "evidence.search"
 	ToolEvidenceContext = "evidence.context"
 	ToolSSHInspect      = "ssh.inspect"
+	ToolDockerLogs      = "docker.logs"
 )
 
 // ToolRejectionCode is a stable machine code for a rejected tool request. The
@@ -125,6 +126,7 @@ type ToolGateway struct {
 	repoPort       domain.RepositoryReadPort
 	evidencePort   domain.EvidenceLogPort
 	inspectPort    domain.SSHInspectPort
+	dockerPort     domain.DockerEvidencePort
 	dynamicRuntime domain.DynamicToolRuntimePort
 	policyResolver domain.ToolPolicyResolver
 
@@ -147,6 +149,12 @@ func NewToolGateway(
 		maxSearch:      100,
 		maxLogLines:    500,
 	}
+}
+
+// SetDockerEvidencePort enables the typed Docker logs capability for a saved
+// Docker deployment without changing the legacy gateway constructor.
+func (g *ToolGateway) SetDockerEvidencePort(port domain.DockerEvidencePort) {
+	g.dockerPort = port
 }
 
 // AdvertisedTools returns the read tool identifiers available in the given
@@ -264,6 +272,12 @@ func toolParameterSchema(tool string) map[string]interface{} {
 		return object(map[string]interface{}{
 			"command": stringProperty("Inspect command to parse and execute. List the hinted logPath directory and discover actual file names before reading; the harness never auto-tails logPath."),
 		}, "command")
+	case ToolDockerLogs:
+		return object(map[string]interface{}{
+			"since": stringProperty("RFC3339 start of the bounded incident window."),
+			"until": stringProperty("RFC3339 end of the bounded incident window."),
+			"tail":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": maxDockerLogLines},
+		}, "since", "until", "tail")
 	case ToolSourceSearchTools:
 		return object(map[string]interface{}{
 			"query": map[string]interface{}{
@@ -287,6 +301,7 @@ var toolDescriptions = map[string]string{
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
 	ToolSSHInspect:         "Inspect the SSH host with an allowlisted command. List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath.",
+	ToolDockerLogs:         "Read bounded stdout and stderr from the configured Docker container. The container identity comes from saved project configuration.",
 	ToolSourceSearchTools:  "Find and activate approved MCP tools for the current remediation phase.",
 	ToolSourceRefreshTools: "Refresh the approved MCP tool catalog for this source.",
 }
@@ -296,7 +311,7 @@ var toolDescriptions = map[string]string{
 func (g *ToolGateway) isRegistered(tool string) bool {
 	switch tool {
 	case ToolRepoListTree, ToolRepoReadFile, ToolRepoSearch, ToolRepoHistory,
-		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect:
+		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect, ToolDockerLogs:
 		return true
 	default:
 		return false
@@ -408,11 +423,11 @@ func validateToolParameters(tool string, params map[string]interface{}) error {
 	}
 	for key, value := range params {
 		switch key {
-		case "path", "query", "pathGlob", "level", "evidenceId", "command":
+		case "path", "query", "pathGlob", "level", "evidenceId", "command", "since", "until":
 			if _, ok := value.(string); !ok {
 				return fmt.Errorf("%s must be a string", key)
 			}
-		case "maxBytes":
+		case "maxBytes", "tail":
 			n, ok := numericArg(value)
 			if !ok || n < 1 {
 				return fmt.Errorf("maxBytes must be a positive integer")

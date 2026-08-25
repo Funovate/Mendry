@@ -16,6 +16,8 @@ var _ port.Coordinator = (*RemediationCoordinator)(nil)
 // defaultMaxCollectLoops bounds the collect-more-context loop.
 const defaultMaxCollectLoops = 3
 
+const maxConsecutiveProtocolFailures = 3
+
 // RemediationCoordinator is the only component allowed to advance run state. It
 // drives the walking-skeleton subset of the state machine:
 //
@@ -41,6 +43,8 @@ type RemediationCoordinator struct {
 	budgetLimits    domain.BudgetLimits
 	maxCollectLoops int
 	observer        RunObserver
+	evidenceGate    *EvidenceGate
+	bootstrapLoader domain.BootstrapEvidenceLoader
 }
 
 // IncidentIdentity 是 remediation 需要的事故身份，不含凭据或客户端。
@@ -182,6 +186,40 @@ func NewRemediationCoordinatorWithDynamicRuntime(
 	return coord
 }
 
+// NewRemediationCoordinatorWithEvidenceResolver adds the trusted persistence
+// lookup used by the planning evidence gate without changing frozen ports.
+func NewRemediationCoordinatorWithEvidenceResolver(
+	store domain.RunStore,
+	repoPort domain.RepositoryReadPort,
+	evidencePort domain.EvidenceLogPort,
+	llmPort domain.LLMProviderPort,
+	resolver EvidenceResolver,
+) *RemediationCoordinator {
+	coord := newRemediationCoordinator(store, repoPort, evidencePort, llmPort, nil, nil, nil, DefaultBudgetLimits())
+	coord.evidenceGate = NewEvidenceGate(resolver)
+	return coord
+}
+
+// SetEvidenceResolver is intended for composition-root wiring of the trusted
+// project/run evidence reader. It does not expose evidence or credentials.
+func (c *RemediationCoordinator) SetEvidenceResolver(resolver EvidenceResolver) {
+	c.evidenceGate = NewEvidenceGate(resolver)
+}
+
+// SetBootstrapEvidenceLoader wires the trusted incident-scoped evidence
+// reader. Existing constructors remain compatible and simply start without a
+// pre-run evidence snapshot until the composition root supplies one.
+func (c *RemediationCoordinator) SetBootstrapEvidenceLoader(loader domain.BootstrapEvidenceLoader) {
+	c.bootstrapLoader = loader
+}
+
+// SetDockerEvidencePort wires the credential-free Docker log port at the
+// composition root; ordinary application callers cannot provide a container ID
+// or a remote command.
+func (c *RemediationCoordinator) SetDockerEvidencePort(port domain.DockerEvidencePort) {
+	c.toolGateway.SetDockerEvidencePort(port)
+}
+
 func newRemediationCoordinator(
 	store domain.RunStore,
 	repoPort domain.RepositoryReadPort,
@@ -204,6 +242,7 @@ func newRemediationCoordinator(
 		budgetLimits:    normalizeBudgetLimits(limits),
 		maxCollectLoops: defaultMaxCollectLoops,
 		observer:        noopRunObserver{},
+		evidenceGate:    NewEvidenceGate(nil),
 	}
 }
 
@@ -363,6 +402,17 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 		return err
 	}
 
+	bootstrap := domain.BootstrapEvidence{}
+	if c.bootstrapLoader != nil {
+		loaded, err := c.bootstrapLoader.LoadBootstrapEvidence(ctx, observationRun(ctx).IncidentID)
+		if err != nil {
+			return c.fail(ctx, runID, domain.RunStatePreparingContext,
+				fmt.Errorf("load triggering evidence: %w", err))
+		}
+		bootstrap = prepareBootstrapEvidence(loaded)
+		scope.TimeRange = bootstrap.TimeRange
+	}
+
 	source := legacySourceCapability(scope)
 	if c.sourceCaps != nil {
 		resolved, err := c.sourceCaps.ResolveSourceCapability(ctx, scope.ProjectID, scope.SourceID)
@@ -380,8 +430,8 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 		defer func() { _ = c.dynamicRuntime.CloseRun(context.Background(), runID) }()
 	}
 
-	initialContext, contextEffect, err := c.contextAssem.AssembleInitialContextObserved(
-		ctx, observationRun(ctx), c.observer, ref, scope, source,
+	initialContext, contextEffect, err := c.contextAssem.AssembleInitialContextWithEvidenceObserved(
+		ctx, observationRun(ctx), c.observer, ref, scope, source, bootstrap,
 	)
 	if err != nil {
 		return c.fail(ctx, runID, domain.RunStatePreparingContext, err)
@@ -396,6 +446,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 	}
 
 	collectLoops := 0
+	protocolFailures := 0
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStateDiagnosing); err != nil || exhausted {
 			return err
@@ -413,7 +464,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			return transitionErr
 		}
 		if err != nil {
-			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, err)
+			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, &protocolFailures, err)
 			if transitionErr != nil || exhausted {
 				return transitionErr
 			}
@@ -422,6 +473,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 
 		switch env.Kind {
 		case "requestTool":
+			protocolFailures = 0
 			// The model asks for a read tool mid-diagnosis. Execute via the
 			// gateway (policy enforced there) and record the invocation. A
 			// rejection is fed back as agent context, not a run failure; the
@@ -440,10 +492,22 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			continue
 
 		case "diagnosis":
-			if err := c.appendDecision(ctx, runID, env.Diagnosis); err != nil {
+			protocolFailures = 0
+			diagnosis := env.Diagnosis
+			if diagnosis.Fixability == domain.FixabilityCodeFixable {
+				if c.evidenceGate == nil {
+					c.evidenceGate = NewEvidenceGate(nil)
+				}
+				gated, _, gateErr := c.evidenceGate.Apply(ctx, runID, diagnosis)
+				if gateErr != nil {
+					return c.fail(ctx, runID, domain.RunStateDiagnosing, fmt.Errorf("evaluate evidence gate: %w", gateErr))
+				}
+				diagnosis = gated
+			}
+			if err := c.appendDecision(ctx, runID, diagnosis); err != nil {
 				return err
 			}
-			done, err := c.routeDiagnosis(ctx, budget, runID, ref, scope, catalog, env.Diagnosis, usage, &collectLoops, conversation)
+			done, err := c.routeDiagnosis(ctx, budget, runID, ref, scope, catalog, diagnosis, usage, &collectLoops, conversation)
 			if err != nil {
 				return err
 			}
@@ -454,6 +518,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			continue
 
 		case "stop":
+			protocolFailures = 0
 			// The model deliberately gives up; a human must take over.
 			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, modelEffect(usage))
 			if err != nil || exhausted {
@@ -462,7 +527,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			return c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, "")
 		default:
 			exhausted, err := c.handleTurnError(
-				ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation,
+				ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, &protocolFailures,
 				wrapEnvelopeError("unexpected envelope kind in diagnosing", fmt.Errorf("kind %q", env.Kind)),
 			)
 			if err != nil || exhausted {
@@ -565,6 +630,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 		return err
 	}
 
+	protocolFailures := 0
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStatePlanning); err != nil || exhausted {
 			return err
@@ -586,7 +652,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 			return transitionErr
 		}
 		if err != nil {
-			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStatePlanning, usage, conversation, err)
+			exhausted, transitionErr := c.handleTurnError(ctx, budget, runID, domain.RunStatePlanning, usage, conversation, &protocolFailures, err)
 			if transitionErr != nil || exhausted {
 				return transitionErr
 			}
@@ -594,7 +660,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 		}
 		if env.Kind != "planCandidates" || env.PlanCandidates == nil {
 			exhausted, transitionErr := c.handleTurnError(
-				ctx, budget, runID, domain.RunStatePlanning, usage, conversation,
+				ctx, budget, runID, domain.RunStatePlanning, usage, conversation, &protocolFailures,
 				wrapEnvelopeError("expected planCandidates in planning", fmt.Errorf("kind %q", env.Kind)),
 			)
 			if transitionErr != nil || exhausted {
@@ -602,6 +668,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 			}
 			continue
 		}
+		protocolFailures = 0
 
 		// 先写入计划和建议 diff，再进入 diagnosis_ready_for_review，保证 GET 能读到完整 review chain。
 		if err := c.recordPlans(ctx, runID, env.PlanCandidates); err != nil {
@@ -720,13 +787,24 @@ func (c *RemediationCoordinator) appendDecision(ctx context.Context, runID strin
 		CausalReasoning:       diag.CausalReasoning,
 		Contradictions:        diag.Contradictions,
 		MissingEvidence:       diag.MissingEvidence,
-		EvidenceCitations:     diag.EvidenceCitations,
+		EvidenceCitations:     evidenceCitationIDs(diag.EvidenceCitations),
 		RecommendedNextAction: diag.RecommendedNextAction,
+		EvidenceAssessment:    diag.EvidenceAssessment,
 	}
 	if err := c.store.AppendDecision(ctx, runID, d); err != nil {
 		return fmt.Errorf("append decision: %w", err)
 	}
 	return nil
+}
+
+func evidenceCitationIDs(values []domain.EvidenceCitation) []string {
+	ids := make([]string, 0, len(values))
+	for _, value := range values {
+		if value.EvidenceID != "" {
+			ids = append(ids, value.EvidenceID)
+		}
+	}
+	return ids
 }
 
 // handleTurnError 区分可纠正的信封错误和不可恢复的提供商/基础设施错误。
@@ -738,6 +816,7 @@ func (c *RemediationCoordinator) handleTurnError(
 	phase domain.RunState,
 	usage domain.ModelResult,
 	conversation *AgentConversation,
+	protocolFailures *int,
 	cause error,
 ) (bool, error) {
 	exhausted, err := c.recordSameStateBudget(ctx, budget, runID, phase, modelEffect(usage))
@@ -745,8 +824,17 @@ func (c *RemediationCoordinator) handleTurnError(
 		return exhausted, err
 	}
 	if errors.Is(cause, ErrInvalidEnvelope) {
+		if protocolFailures != nil {
+			*protocolFailures = *protocolFailures + 1
+		}
+		if protocolFailures != nil && *protocolFailures >= maxConsecutiveProtocolFailures {
+			if err := c.transition(ctx, runID, phase, domain.RunStateBlockedManualReview, domain.Effect{}); err != nil {
+				return true, err
+			}
+			return true, c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, "")
+		}
 		if conversation != nil {
-			conversation.AppendProtocolError(phase)
+			conversation.AppendProtocolError(phase, ProtocolCorrectionFor(phase, cause))
 		}
 		return false, nil
 	}
@@ -832,13 +920,17 @@ func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID
 func modelEffect(usage domain.ModelResult) domain.Effect {
 	tokensIn := usage.UsageTokensIn
 	tokensOut := usage.UsageTokensOut
+	modelCalls := usage.ModelCalls
+	if modelCalls <= 0 {
+		modelCalls = 1
+	}
 	if tokensIn == 0 && tokensOut == 0 && usage.UsageTokens != 0 {
 		// 旧 fake/adapter 只返回总 token；在它们迁移前按 output 记账，
 		// 保持既有预算行为，同时让新 adapter 能分别记录 input/output。
 		tokensOut = usage.UsageTokens
 	}
 	return domain.Effect{
-		ModelCalls:     1,
+		ModelCalls:     modelCalls,
 		ModelTokensIn:  tokensIn,
 		ModelTokensOut: tokensOut,
 		ModelCostCents: usage.UsageCostCents,

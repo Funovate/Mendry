@@ -190,6 +190,20 @@ func TestObserverDiagnosticMarksTruncation(t *testing.T) {
 	}
 }
 
+func TestObserverModelTurnIncludesProviderCallsAndFinishReason(t *testing.T) {
+	var output bytes.Buffer
+	observer := newTestObserver(t, &output, "info")
+	observer.ModelTurnCompleted(context.Background(), application.ModelTurnObservation{
+		Run: application.RunIdentity{RunID: "run-1"}, Phase: domain.RunStateDiagnosing,
+		Sequence: 4, Outcome: "failure", FailureClass: "provider",
+		Response: domain.ModelResult{ModelCalls: 2, FinishReason: "length", UsageTokensIn: 10, UsageTokensOut: 4},
+	})
+	record := decodeJSONLines(t, output.Bytes())[0]
+	if record[observability.FieldModelCalls] != float64(2) || record[observability.FieldModelFinishReason] != "length" {
+		t.Fatalf("model retry fields = %#v", record)
+	}
+}
+
 func remediationSecretPayload() string {
 	return strings.Join([]string{
 		remediationSecretMarkers[0],

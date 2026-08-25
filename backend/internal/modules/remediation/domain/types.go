@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -102,6 +103,7 @@ type Decision struct {
 	MissingEvidence       []string
 	EvidenceCitations     []string
 	RecommendedNextAction string
+	EvidenceAssessment    *EvidenceGateDecision
 	RecordedAt            time.Time
 }
 
@@ -257,6 +259,9 @@ type EvidenceLine struct {
 	Redacted   bool
 }
 
+// ErrModelOutputExhausted 表示 provider 在生成最终内容或 tool call 前耗尽输出预算。
+var ErrModelOutputExhausted = errors.New("model output token budget exhausted")
+
 // ModelTurn 是一次模型调用请求。
 type ModelTurn struct {
 	// ProjectID 供 provider 适配器解析同项目的约定凭据；不得携带秘密。
@@ -303,6 +308,7 @@ type ModelResult struct {
 	Provider            string
 	Model               string
 	ToolCalls           []ToolCall
+	ModelCalls          int
 	UsageTokensIn       int64
 	UsageTokensOut      int64
 	UsageTokens         int64
