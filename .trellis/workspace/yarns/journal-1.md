@@ -405,3 +405,36 @@ Added a five-minute shared logical model-turn timeout, raised the remediation ru
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Archive remediation protocol correction
+
+**Date**: 2026-08-25
+**Task**: Archive remediation protocol correction
+**Branch**: `main`
+
+### Summary
+
+Committed the confirmed remediation batch, including strict evidenceRef rejection, safe evidenceId protocol correction, post-validation provider history commits, phase-specific correction fallbacks, bounded three-failure recovery, regression tests, and remediation specs; archived task 08-25-remediation-protocol-correction. make check passed; generate-check remained blocked by sum.golang.org network access, while local sqlc generation was idempotent.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de41e83` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
