@@ -438,3 +438,36 @@ Committed the confirmed remediation batch, including strict evidenceRef rejectio
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Archive docker.logs pattern filtering
+
+**Date**: 2026-08-27
+**Task**: Archive docker.logs pattern filtering
+**Branch**: `main`
+
+### Summary
+
+Committed docker.logs pattern filtering and coverage awareness (f8c6194): optional bounded pattern whitelist [a-zA-Z0-9 ._\-|()*?], context_before/after 0-100, tail max 2000 applied after filter, coverage summary fields, planning wire contract shared between prompt and protocol corrections with strict planCandidates validation (rationale/evidenceRefs/affectedFiles/intendedBehavior/rollbackStrategy required), git repository reads switched to configured production branch. go build ./..., go test -count=1 ./..., go vet all green; GitNexus impact LOW. Only task-scoped files committed; the repo's historical uncommitted baseline (auth/migrate/CLS/webhook fingerprint etc., ~170 files) intentionally left untouched. Also discovered earlier that 08-26-tencent-cls-detail-response-parser was archived without its code committed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f8c6194` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
