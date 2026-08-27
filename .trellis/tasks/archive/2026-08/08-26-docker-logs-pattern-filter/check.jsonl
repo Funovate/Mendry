@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test and review gates for the check sub-agent"}
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Adapter contract compliance verification"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Summary/log format compatibility verification"}
