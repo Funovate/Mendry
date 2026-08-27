@@ -193,7 +193,7 @@ func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
 		valid = kind == "requestTool" || kind == "diagnosis" || kind == "stop"
 	case domain.RunStatePlanning:
-		valid = kind == "planCandidates"
+		valid = kind == "requestTool" || kind == "planCandidates"
 	default:
 		valid = true
 	}
@@ -204,6 +204,10 @@ func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
 }
 
 const diagnosisConfidenceInstruction = "confidence must be a JSON number between 0 and 1 (for example 0.2), never a label string such as low, medium, or high"
+
+const diagnosisWireContractInstruction = `Diagnosis wire contract: return {"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"fixability":"insufficient_evidence","confidence":0.2,"causalReasoning":"...","contradictions":[],"missingEvidence":[],"evidenceCitations":[],"recommendedNextAction":"...","alertQuality":"enriched","sourceCoverage":[],"timeAssessment":{"originalValues":[],"normalizedStart":"","normalizedEnd":"","basis":"unresolved","certainty":"unresolved","contradictory":false},"correlation":{"temporal":false,"operational":false,"hostIdentity":false,"directBridge":false},"causalClosure":{"explainsOriginalSymptom":false,"explanation":"..."},"materialContradictions":[],"testSuspected":false,"testPolicyMatched":false,"hypotheses":[]}}. fixability is a JSON string, never an object, and must be one of code_fixable, external_dependency, configuration, data, infrastructure, insufficient_evidence, unsafe_to_automate. confidence is a number from 0 to 1. contradictions, missingEvidence, materialContradictions, and hypotheses are arrays. evidenceCitations is an array whose entries are either a persisted evidence ID string or {"evidenceId":"...","classification":"direct_fault"} with optional classification; classification, when present, must be one of direct_fault, correlated_supporting, contextual, unrelated, contradictory. alertQuality is sparse, anchor_only, or enriched. sourceCoverage is a JSON array, never an object, of {"sourceId":"...","kind":"...","primary":true,"status":"inspected_success","reason":"...","directBridge":false}; status must be one of configured, inspected_success, inspected_empty, unavailable, not_applicable, not_inspected. timeAssessment.basis must be exactly one of paired_epoch, explicit_offset, contextual_zone, unresolved; never put explanation text in basis. Keep timeAssessment.certainty a short label such as high, low, or unresolved. timeAssessment, correlation, and causalClosure otherwise use the object shapes shown. Each hypothesis is {"id":"...","summary":"...","evidenceRefs":[],"nonActionable":true}.`
+
+const planningWireContractInstruction = `Planning wire contract: you may first call any advertised read-only repository tools when you need code, dependency, or impact context. After tool observations are sufficient, return exactly {"schemaVersion":"v1","kind":"planCandidates","planCandidates":{"candidates":[{"planId":"plan-1","evidenceRefs":["evidence-id"],"affectedFiles":["path/to/file.go"],"intendedBehavior":"...","risk":"ordinary","rollbackStrategy":"..."}],"recommendedId":"plan-1","rationale":"...","suggestedDiff":"diff --git a/path/to/file.go b/path/to/file.go\\n..."}}. candidates must be a non-empty array. Every candidate requires non-empty planId, evidenceRefs and affectedFiles arrays, intendedBehavior, risk, and rollbackStrategy. risk must be exactly one of ordinary, high_risk, denied_control_plane. recommendedId is required and must equal one candidate planId. rationale and suggestedDiff are required strings, and suggestedDiff must be a non-empty unified diff. Return one envelope only; do not return diagnosis or stop in planning.`
 
 const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded " +
 	"operational evidence and credential-isolated metadata provided. Evidence may " +
@@ -233,14 +237,10 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
 		return "Diagnose the incident from available evidence. Classify fixability, " +
 			"cite persisted evidence with its classification, and either request a read " +
-			"tool or return a diagnosis object. " +
-			"If kind is diagnosis, diagnosis must be an object with fixability, confidence, " +
-			diagnosisConfidenceInstruction + ". Include alertQuality, sourceCoverage, " +
-			"timeAssessment, correlation, causalClosure, " +
+			"tool or return a diagnosis object. " + diagnosisWireContractInstruction + " " +
+			"Include alertQuality, sourceCoverage, timeAssessment, correlation, causalClosure, " +
 			"causalReasoning, contradictions, materialContradictions, missingEvidence, " +
-			"evidenceCitations, recommendedNextAction, and any non-actionable hypotheses; " +
-			"the diagnosis value itself must never be a string. Each evidenceCitations entry " +
-			"must be either a persisted evidence ID string or an object with evidenceId and optional classification. " +
+			"evidenceCitations, recommendedNextAction, and any non-actionable hypotheses. " +
 			"timeAssessment must preserve originalValues, normalized " +
 			"instants/ranges, basis, certainty, and contradictory status. correlation " +
 			"must state temporal, operational, host identity, and direct bridge status. " +
@@ -250,11 +250,23 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"evidence. Missing direct fault evidence or unresolved time/host/source " +
 			"coverage is insufficient_evidence, not a code-fixable plan. " +
 			"For an SSH source, use ssh.inspect: first ls the hinted logPath directory " +
-			"and discover actual file names before reading; never assume logPath is a file to tail."
+			"and discover actual file names before reading; never assume logPath is a file to tail. " +
+			"When trusted Tencent CLS detail contains an error, stack, source path, or line number, " +
+			"treat it as an anchor and collect runtime corroboration before choosing a fix: for a " +
+			"Docker source request only docker.logs in the first collection turn and wait for its " +
+			"observation before requesting repository tools. AnalysisOriginal.time in the detail is the " +
+			"UTC log-event time; use it directly as the since/until anchor with a narrow window around " +
+			"that time. docker.logs returns only the tail of the requested window, so inspect " +
+			"window_lines, returned_lines, filtered, and truncated before deciding that no failure is " +
+			"present; when window_lines is much larger than returned_lines, narrow the window or add a " +
+			"pattern. For a panic or stack anchor, request pattern with context_after to capture the " +
+			"following goroutine frames. Then map any provider path to a repository-relative path and " +
+			"request repository.read_file plus repository.search for the stable fault, message, or " +
+			"function. Do not repeatedly retry " +
+			"a non-retryable detail failure; use available fallback tools and report the failure as " +
+			"missing evidence."
 	case domain.RunStatePlanning:
-		return "The incident is code-fixable. Produce candidate repair plans with a " +
-			"recommended plan, rationale, risk classification, and a suggested unified diff. " +
-			"Return kind=planCandidates with a planCandidates object, not a string."
+		return "The incident is code-fixable. Inspect the advertised repository tools whenever more code, dependency, or impact context is needed, then produce candidate repair plans with a recommended plan, rationale, risk classification, and a suggested unified diff. " + planningWireContractInstruction
 	default:
 		return "Process the current remediation phase."
 	}

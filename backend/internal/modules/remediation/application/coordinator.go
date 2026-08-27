@@ -220,6 +220,12 @@ func (c *RemediationCoordinator) SetDockerEvidencePort(port domain.DockerEvidenc
 	c.toolGateway.SetDockerEvidencePort(port)
 }
 
+// SetTencentCLSDetailPort 将受信任、incident-bound 的 Tencent CLS detail reader 接到
+// mandatory pre-diagnosis evidence gate。
+func (c *RemediationCoordinator) SetTencentCLSDetailPort(port domain.TencentCLSDetailPort) {
+	c.toolGateway.SetTencentCLSDetailPort(port)
+}
+
 func newRemediationCoordinator(
 	store domain.RunStore,
 	repoPort domain.RepositoryReadPort,
@@ -422,7 +428,9 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 		}
 		source = resolved
 	}
-	catalog, err := c.toolGateway.BuildCatalog(ctx, runID, domain.RunStateDiagnosing, scope, source)
+	catalog, err := c.toolGateway.BuildCatalogWithBootstrap(
+		ctx, runID, observationRun(ctx).IncidentID, domain.RunStateDiagnosing, scope, source, bootstrap,
+	)
 	if err != nil {
 		return c.fail(ctx, runID, domain.RunStatePreparingContext, err)
 	}
@@ -492,6 +500,14 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			continue
 
 		case "diagnosis":
+			if catalog.tencentDetailGateClosed() {
+				exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+				if err != nil || exhausted {
+					return err
+				}
+				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				continue
+			}
 			protocolFailures = 0
 			diagnosis := env.Diagnosis
 			if diagnosis.Fixability == domain.FixabilityCodeFixable {
@@ -518,6 +534,14 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			continue
 
 		case "stop":
+			if catalog.tencentDetailGateClosed() {
+				exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+				if err != nil || exhausted {
+					return err
+				}
+				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				continue
+			}
 			protocolFailures = 0
 			// The model deliberately gives up; a human must take over.
 			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, modelEffect(usage))
@@ -583,7 +607,7 @@ func (c *RemediationCoordinator) routeDiagnosis(
 		return done, err
 
 	case domain.FixabilityCodeFixable:
-		return true, c.plan(ctx, budget, runID, ref.ProjectID, scope, catalog, usage, conversation)
+		return true, c.plan(ctx, budget, runID, ref, scope, catalog, usage, conversation)
 
 	default:
 		return true, c.fail(ctx, runID, domain.RunStateDiagnosing,
@@ -624,7 +648,7 @@ func (c *RemediationCoordinator) collectMoreContext(
 
 // plan drives diagnosing → planning → diagnosis_ready_for_review. The suggested
 // diff is advisory only; nothing is written or published.
-func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, runID, projectID string, scope domain.EvidenceScope, catalog *ToolCatalog, diagUsage domain.ModelResult, conversation *AgentConversation) error {
+func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, runID string, ref domain.RepoRef, scope domain.EvidenceScope, catalog *ToolCatalog, diagUsage domain.ModelResult, conversation *AgentConversation) error {
 	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStatePlanning, modelEffect(diagUsage))
 	if err != nil || exhausted {
 		return err
@@ -642,7 +666,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 		operationCtx, cancelOperation := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(
 			operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
-			domain.RunStatePlanning, projectID, contextText,
+			domain.RunStatePlanning, ref.ProjectID, contextText,
 			c.toolGateway.AdvertisedToolDefinitionsForCatalog(catalog, domain.RunStatePlanning), conversation,
 		)
 		runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
@@ -658,17 +682,36 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 			}
 			continue
 		}
-		if env.Kind != "planCandidates" || env.PlanCandidates == nil {
+		switch env.Kind {
+		case "requestTool":
+			protocolFailures = 0
+			// planning 允许继续读取 catalog 授权的仓库上下文；所有调用仍经过
+			// gateway、预算和 invocation 审计，结果写回同一 conversation 后再规划。
+			exhausted, err = c.recordSameStateBudget(ctx, budget, runID, domain.RunStatePlanning, modelEffect(usage))
+			if err != nil || exhausted {
+				return err
+			}
+			requests := env.RequestedTools()
+			for index := range requests {
+				exhausted, _, err = c.runTool(ctx, budget, runID, domain.RunStatePlanning, ref, scope, catalog, &requests[index], conversation)
+				if err != nil || exhausted {
+					return err
+				}
+			}
+			continue
+
+		case "planCandidates":
+			protocolFailures = 0
+		default:
 			exhausted, transitionErr := c.handleTurnError(
 				ctx, budget, runID, domain.RunStatePlanning, usage, conversation, &protocolFailures,
-				wrapEnvelopeError("expected planCandidates in planning", fmt.Errorf("kind %q", env.Kind)),
+				wrapEnvelopeError("unexpected envelope kind in planning", fmt.Errorf("kind %q", env.Kind)),
 			)
 			if transitionErr != nil || exhausted {
 				return transitionErr
 			}
 			continue
 		}
-		protocolFailures = 0
 
 		// 先写入计划和建议 diff，再进入 diagnosis_ready_for_review，保证 GET 能读到完整 review chain。
 		if err := c.recordPlans(ctx, runID, env.PlanCandidates); err != nil {

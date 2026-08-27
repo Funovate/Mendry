@@ -33,11 +33,14 @@ const (
 	reasonOversized   = "oversized"
 )
 
-// RepositoryConfig 是适配器读取仓库所需的无凭据配置。
+// RepositoryConfig 是适配器读取项目仓库所需的无凭据配置。ProductionBranch
+// 是每次读取前 fetch 后使用的当前生产分支；deployed commit 只保留在
+// remediation run 的历史身份中，不作为本适配器的读取 ref。
 type RepositoryConfig struct {
 	RemoteURL          string
 	Transport          string
 	CredentialSecretID string
+	ProductionBranch   string
 }
 
 // ConfigLoader 按项目 UUID 加载仓库配置，不含用户主体。
@@ -61,7 +64,7 @@ type Options struct {
 	Logger         *slog.Logger
 }
 
-// Reader 在不可变 commit 上读取仓库，不向调用方暴露凭据或裸 git 客户端。
+// Reader 在每次 fetch 后读取配置的 production branch 最新代码，不向调用方暴露凭据或裸 git 客户端。
 type Reader struct {
 	configs  ConfigLoader
 	secrets  SecretLoader
@@ -112,7 +115,7 @@ func (r *Reader) CredentialFreeRemoteURL(ctx context.Context, projectID string) 
 	return sanitizeRemoteURL(cfg.RemoteURL)
 }
 
-// ListTree 列出指定 commit 下的有界树条目。
+// ListTree 列出配置的 production branch 最新代码下的有界树条目。
 func (r *Reader) ListTree(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.TreeOptions) (domain.TreeListing, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.TreeListing{}, err
@@ -166,7 +169,7 @@ func (r *Reader) ListTree(ctx context.Context, ref domain.RepoRef, repoPath stri
 	return domain.TreeListing{Entries: entries, Truncated: truncated}, nil
 }
 
-// ReadFile 读取指定 commit 的文件；二进制拒绝，超限截断。
+// ReadFile 读取配置的 production branch 最新代码；二进制拒绝，超限截断。
 func (r *Reader) ReadFile(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.ReadOptions) (domain.FileContent, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.FileContent{}, err
@@ -209,7 +212,7 @@ func (r *Reader) ReadFile(ctx context.Context, ref domain.RepoRef, repoPath stri
 	return domain.FileContent{Path: repoPath, Content: content}, nil
 }
 
-// Search 在指定 commit 上做有界文本搜索。
+// Search 在配置的 production branch 最新代码上做有界文本搜索。
 func (r *Reader) Search(ctx context.Context, ref domain.RepoRef, query domain.SearchQuery) (domain.SearchResult, error) {
 	if strings.TrimSpace(query.Pattern) == "" {
 		return domain.SearchResult{}, fmt.Errorf("search pattern is required")
@@ -251,7 +254,7 @@ func (r *Reader) Search(ctx context.Context, ref domain.RepoRef, query domain.Se
 	return domain.SearchResult{Matches: matches, Truncated: truncated}, nil
 }
 
-// History 读取指定 commit 之前的有界提交历史。
+// History 读取配置的 production branch 当前 tip 之前的有界提交历史。
 func (r *Reader) History(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.HistoryOptions) (domain.History, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.History{}, err
@@ -293,16 +296,18 @@ func (r *Reader) History(ctx context.Context, ref domain.RepoRef, repoPath strin
 type gitSession struct {
 	reader  *Reader
 	repoDir string
+	// commit 保存配置分支的 fully-qualified ref，沿用字段名以保持 Git 命令调用集中。
 	commit  string
 	env     []string
 	cleanup func()
 }
 
 func (r *Reader) open(ctx context.Context, ref domain.RepoRef) (*gitSession, error) {
-	if strings.TrimSpace(ref.Commit) == "" {
-		return nil, fmt.Errorf("deployed commit is required")
-	}
 	cfg, err := r.loadConfig(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	branchRef, err := productionBranchRef(cfg.ProductionBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +345,7 @@ func (r *Reader) open(ctx context.Context, ref domain.RepoRef) (*gitSession, err
 		sessionCleanup()
 		return nil, err
 	}
-	return &gitSession{reader: r, repoDir: repoDir, commit: ref.Commit, env: env, cleanup: sessionCleanup}, nil
+	return &gitSession{reader: r, repoDir: repoDir, commit: branchRef, env: env, cleanup: sessionCleanup}, nil
 }
 
 func (s *gitSession) close() {
@@ -412,6 +417,32 @@ func (r *Reader) loadConfig(ctx context.Context, ref domain.RepoRef) (Repository
 		return RepositoryConfig{}, fmt.Errorf("unsupported repository transport")
 	}
 	return cfg, nil
+}
+
+func productionBranchRef(value string) (string, error) {
+	branch := strings.TrimSpace(value)
+	if branch == "" || branch == "@" || strings.HasPrefix(branch, "-") ||
+		strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") ||
+		strings.Contains(branch, "//") || strings.Contains(branch, "..") ||
+		strings.Contains(branch, "@{") || strings.HasSuffix(branch, ".") {
+		return "", fmt.Errorf("production branch is invalid")
+	}
+	if strings.ContainsAny(branch, " ~^:?*[\\") {
+		return "", fmt.Errorf("production branch is invalid")
+	}
+	for index := 0; index < len(branch); index++ {
+		if branch[index] < 0x20 || branch[index] == 0x7f {
+			return "", fmt.Errorf("production branch is invalid")
+		}
+	}
+	for _, component := range strings.Split(branch, "/") {
+		if component == "" || component == "." || component == ".." ||
+			strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".") ||
+			strings.HasSuffix(component, ".lock") {
+			return "", fmt.Errorf("production branch is invalid")
+		}
+	}
+	return "refs/heads/" + branch, nil
 }
 
 func (r *Reader) decryptCredential(ctx context.Context, projectID string, cfg RepositoryConfig) ([]byte, func(), error) {
@@ -499,7 +530,7 @@ func (r *Reader) fetch(ctx context.Context, dir string, cfg RepositoryConfig, au
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	started := time.Now()
-	command := exec.CommandContext(ctx, r.command, "fetch", authenticatedURL, "+refs/heads/*:refs/heads/*")
+	command := exec.CommandContext(ctx, r.command, "fetch", "--prune", authenticatedURL, "+refs/heads/*:refs/heads/*")
 	command.Dir = dir
 	command.Env = env
 	var stderr bytes.Buffer

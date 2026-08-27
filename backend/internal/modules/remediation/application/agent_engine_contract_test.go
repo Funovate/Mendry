@@ -24,6 +24,16 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 		"paired epoch values first", "explicit timestamp offsets", "source/system time-zone context",
 		"timeAssessment", "sourceCoverage", "correlation", "causalClosure", "testSuspected",
 		"evidence ID string", "evidenceId", "optional classification",
+		`{"schemaVersion":"v1","kind":"diagnosis"`,
+		"fixability is a JSON string, never an object",
+		"sourceCoverage is a JSON array, never an object",
+		"timeAssessment.basis must be exactly one of paired_epoch, explicit_offset, contextual_zone, unresolved",
+		"never put explanation text in basis",
+		"status must be one of configured, inspected_success, inspected_empty, unavailable, not_applicable, not_inspected",
+		"docker.logs", "only docker.logs in the first collection turn", "wait for its observation",
+		"AnalysisOriginal.time", "UTC log-event time", "since/until anchor", "window_lines", "returned_lines", "filtered", "truncated", "narrow the window", "pattern", "context_after", "goroutine frames",
+		"repository-relative path", "repository.read_file", "repository.search",
+		"non-retryable detail failure", "available fallback tools",
 	} {
 		if !strings.Contains(model.request.SystemPrompt+model.request.UserMessage, want) {
 			t.Fatalf("prompt missing %q: system=%q user=%q", want, model.request.SystemPrompt, model.request.UserMessage)
@@ -32,7 +42,7 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 	if strings.Contains(model.request.SystemPrompt, "redacted observations provided") {
 		t.Fatalf("prompt still claims operational evidence is redacted: %q", model.request.SystemPrompt)
 	}
-	if strings.Contains(model.request.SystemPrompt+model.request.UserMessage, "evidenceRef") {
+	if strings.Contains(model.request.SystemPrompt+model.request.UserMessage, `"evidenceRef":`) {
 		t.Fatalf("prompt advertised an unsupported citation alias: %q", model.request.UserMessage)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 
 const (
 	maxDockerRuntimeBytes         = 1 << 20
-	maxDockerRuntimeLines         = 500
+	maxDockerRuntimeLines         = 2000
+	dockerCommandTimeout          = 2 * time.Minute
 	maxDockerRuntimeWindowPadding = 15 * time.Minute
 	maxDockerRuntimeWindow        = 30 * time.Minute
 )
@@ -48,17 +50,85 @@ func (r *Reader) ReadDockerLogs(ctx context.Context, scope domain.EvidenceScope,
 	if err != nil {
 		return domain.DockerLogResult{}, err
 	}
-	remoteCommand := "docker logs --since " + shellQuote(query.Since.UTC().Format(time.RFC3339Nano)) +
-		" --until " + shellQuote(query.Until.UTC().Format(time.RFC3339Nano)) +
-		" --tail " + fmt.Sprintf("%d", query.Tail) + " " + shellQuote(container.ID)
+	remoteCommand := dockerLogsCommand(container.ID, query)
 	stdout, stderr, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, int(query.MaxBytes))
 	if err != nil {
 		return domain.DockerLogResult{}, err
 	}
+	windowLines, err := r.countDockerLogLines(ctx, cfg, container.ID, query, "")
+	if err != nil {
+		return domain.DockerLogResult{}, err
+	}
+	filteredLines := int64(0)
+	if query.Pattern != "" {
+		filteredLines, err = r.countDockerLogLines(ctx, cfg, container.ID, query, query.Pattern)
+		if err != nil {
+			return domain.DockerLogResult{}, err
+		}
+	}
 	return domain.DockerLogResult{
 		Container: container, Stdout: stdout, Stderr: stderr,
 		Truncated: truncated, BytesRetrieved: int64(len(stdout) + len(stderr)),
+		WindowLines: windowLines, FilteredLines: filteredLines,
 	}, nil
+}
+
+// CountDockerLogLines 返回 incident window 中的总行数，或 query.Pattern 非空时
+// 返回匹配行数。计数通过固定的 docker logs/grep/wc -l pipeline 完成，不能读取任意命令。
+func (r *Reader) CountDockerLogLines(ctx context.Context, scope domain.EvidenceScope, query domain.DockerLogQuery) (int64, error) {
+	if err := validateDockerLogQuery(scope, query); err != nil {
+		return 0, err
+	}
+	cfg, closer, err := r.openDocker(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
+	defer closer()
+	container, err := r.resolveDockerContainer(ctx, cfg)
+	if err != nil {
+		return 0, err
+	}
+	return r.countDockerLogLines(ctx, cfg, container.ID, query, query.Pattern)
+}
+
+func dockerLogsCommand(containerID string, query domain.DockerLogQuery) string {
+	base := "docker logs --since " + shellQuote(query.Since.UTC().Format(time.RFC3339Nano)) +
+		" --until " + shellQuote(query.Until.UTC().Format(time.RFC3339Nano))
+	if query.Pattern == "" {
+		// 无 filter 时保持旧命令的字节级兼容。
+		return base + " --tail " + fmt.Sprintf("%d", query.Tail) + " " + shellQuote(containerID)
+	}
+	grepCommand := "grep -E"
+	if query.ContextAfter > 0 {
+		grepCommand += " -A " + strconv.Itoa(query.ContextAfter)
+	}
+	if query.ContextBefore > 0 {
+		grepCommand += " -B " + strconv.Itoa(query.ContextBefore)
+	}
+	return base + " " + shellQuote(containerID) + " 2>&1 | " + grepCommand +
+		" -- " + shellQuote(query.Pattern) + " | tail -" + strconv.Itoa(query.Tail)
+}
+
+func (r *Reader) countDockerLogLines(ctx context.Context, cfg SourceConfig, containerID string, query domain.DockerLogQuery, pattern string) (int64, error) {
+	remoteCommand := "docker logs --since " + shellQuote(query.Since.UTC().Format(time.RFC3339Nano)) +
+		" --until " + shellQuote(query.Until.UTC().Format(time.RFC3339Nano)) +
+		" " + shellQuote(containerID) + " 2>&1"
+	if pattern != "" {
+		remoteCommand += " | grep -E -- " + shellQuote(pattern)
+	}
+	remoteCommand += " | wc -l"
+	stdout, _, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, maxDockerRuntimeBytes)
+	if err != nil {
+		return 0, err
+	}
+	if truncated {
+		return 0, fmt.Errorf("Docker log line count exceeded limit")
+	}
+	count, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("Docker log line count is invalid")
+	}
+	return count, nil
 }
 
 func (r *Reader) openDocker(ctx context.Context, scope domain.EvidenceScope) (SourceConfig, func(), error) {
@@ -138,7 +208,7 @@ func (r *Reader) runDockerCommand(ctx context.Context, cfg SourceConfig, remoteC
 		return "", "", false, fmt.Errorf("prepare Docker SSH command: %w", err)
 	}
 	defer cleanup()
-	stdout, stderr, truncated, err := runBoundedSSHCommand(ctx, r.command, args, r.timeout, limit)
+	stdout, stderr, truncated, err := runBoundedSSHCommand(ctx, r.command, args, dockerCommandTimeout, limit)
 	if err != nil {
 		return "", "", false, fmt.Errorf("Docker read failed: %w", err)
 	}

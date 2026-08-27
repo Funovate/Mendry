@@ -26,6 +26,7 @@ const (
 	maxDynamicDescription    = 4096
 	maxDynamicResultBytes    = 64 << 10
 	maxDynamicTools          = 128
+	maxTencentDetailAttempts = 2
 	dynamicDiscoveryLimit    = 5 * time.Second
 	defaultToolSearchLimit   = 5
 	maxToolSearchLimit       = 10
@@ -33,22 +34,28 @@ const (
 	maxToolSearchDescription = 256
 )
 
-// ToolCatalog is a per-run, phase-specific snapshot. The route map is kept
-// private so a model cannot construct an arbitrary original MCP tool name.
+// ToolCatalog 保存每个 run、phase 的 tool snapshot；route map 保持私有，避免 model
+// 构造任意 original MCP tool name。
 type ToolCatalog struct {
-	phase              domain.RunState
-	source             domain.SourceCapabilitySnapshot
-	policy             domain.ToolPolicySnapshot
-	scope              domain.DynamicToolScope
-	runtime            domain.DynamicToolRuntimePort
-	base               []domain.ToolDefinition
-	routes             map[string]dynamicToolRoute
-	activated          map[string]struct{}
-	definitions        []domain.ToolDefinition
-	discoveryVersion   string
-	discoveryHash      string
-	discoveryTruncated bool
-	status             catalogStatus
+	phase                  domain.RunState
+	source                 domain.SourceCapabilitySnapshot
+	policy                 domain.ToolPolicySnapshot
+	scope                  domain.DynamicToolScope
+	incidentID             string
+	tencentDetailRequired  bool
+	tencentDetailReady     bool
+	tencentDetailAttempts  int
+	tencentDetailRetryable bool
+	tencentDetailFailure   string
+	runtime                domain.DynamicToolRuntimePort
+	base                   []domain.ToolDefinition
+	routes                 map[string]dynamicToolRoute
+	activated              map[string]struct{}
+	definitions            []domain.ToolDefinition
+	discoveryVersion       string
+	discoveryHash          string
+	discoveryTruncated     bool
+	status                 catalogStatus
 }
 
 type dynamicToolRoute struct {
@@ -74,8 +81,8 @@ func legacySourceCapability(scope domain.EvidenceScope) domain.SourceCapabilityS
 	}
 }
 
-// NewToolGatewayWithDynamicRuntime adds the trusted MCP runtime and policy
-// resolver without changing the legacy constructor used by existing fakes.
+// NewToolGatewayWithDynamicRuntime 注入受信任的 MCP runtime 与 policy resolver，
+// 同时保持 legacy constructor 对既有 fake 的兼容。
 func NewToolGatewayWithDynamicRuntime(
 	repoPort domain.RepositoryReadPort,
 	evidencePort domain.EvidenceLogPort,
@@ -90,10 +97,8 @@ func NewToolGatewayWithDynamicRuntime(
 	return gateway
 }
 
-// BuildCatalog loads the durable policy snapshot and performs one bounded,
-// best-effort MCP discovery probe. Connector discovery errors are retained as
-// safe capability state and do not return an error; policy storage errors are
-// control-plane failures and remain terminal to the run.
+// BuildCatalog 读取 durable policy snapshot，并执行一次有界、best-effort 的 MCP
+// discovery probe；discovery 失败只保留安全 capability 状态，不阻断首次诊断。
 func (g *ToolGateway) BuildCatalog(
 	ctx context.Context,
 	runID string,
@@ -213,6 +218,77 @@ func (g *ToolGateway) BuildCatalog(
 	return catalog, nil
 }
 
+// BuildCatalogWithBootstrap 在首次 Tencent CLS detail 读取前只暴露无参数 detail tool；读取失败后保留安全 observation，并按失败可重试性开放有界的后备读取能力。
+func (g *ToolGateway) BuildCatalogWithBootstrap(
+	ctx context.Context,
+	runID string,
+	incidentID string,
+	phase domain.RunState,
+	scope domain.EvidenceScope,
+	source domain.SourceCapabilitySnapshot,
+	bootstrap domain.BootstrapEvidence,
+) (*ToolCatalog, error) {
+	catalog, err := g.BuildCatalog(ctx, runID, phase, scope, source)
+	if err != nil {
+		return nil, err
+	}
+	catalog.incidentID = incidentID
+	catalog.tencentDetailRequired = requiresTencentCLSDetail(bootstrap)
+	catalog.tencentDetailReady = hasTrustedTencentCLSDetail(bootstrap)
+	catalog.rebuild()
+	return catalog, nil
+}
+
+func requiresTencentCLSDetail(bootstrap domain.BootstrapEvidence) bool {
+	for _, record := range bootstrap.Records {
+		if record.Provider == "tencent_cls" && record.EvidenceKind == domain.EvidenceKindNormalizedAlert {
+			return !hasTrustedTencentCLSDetail(bootstrap)
+		}
+	}
+	return false
+}
+
+func hasTrustedTencentCLSDetail(bootstrap domain.BootstrapEvidence) bool {
+	for _, record := range bootstrap.Records {
+		if trustedTencentDetailEvidence(record) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *ToolCatalog) tencentDetailGateClosed() bool {
+	return c != nil && c.tencentDetailRequired && !c.tencentDetailReady && c.tencentDetailAttempts == 0
+}
+
+func (c *ToolCatalog) tencentDetailRetryAvailable() bool {
+	return c != nil && c.tencentDetailRequired && !c.tencentDetailReady &&
+		c.tencentDetailRetryable && c.tencentDetailAttempts < maxTencentDetailAttempts
+}
+
+func (c *ToolCatalog) markTencentDetailReady() {
+	if c == nil {
+		return
+	}
+	c.tencentDetailReady = true
+	c.tencentDetailRetryable = false
+	c.tencentDetailFailure = ""
+	c.rebuild()
+}
+
+// markTencentDetailFailure 记录 provider observation 并打开其他有界读取工具。
+// 可重试的传输失败最多保留一次 detail retry；invalid 或已耗尽的 detail
+// 响应不能把 diagnosing 永久锁在同一个失败工具上。
+func (c *ToolCatalog) markTencentDetailFailure(code string, retryable bool) {
+	if c == nil {
+		return
+	}
+	c.tencentDetailAttempts++
+	c.tencentDetailFailure = code
+	c.tencentDetailRetryable = retryable && c.tencentDetailAttempts < maxTencentDetailAttempts
+	c.rebuild()
+}
+
 func (g *ToolGateway) baseDefinitions(
 	phase domain.RunState,
 	scope domain.EvidenceScope,
@@ -299,6 +375,12 @@ func (c *ToolCatalog) StatusText() string {
 	if c == nil {
 		return "tool catalog: unavailable"
 	}
+	if c.tencentDetailRequired {
+		if c.tencentDetailFailure != "" {
+			return fmt.Sprintf("tool catalog: tencent_cls_detail_required=true ready=%t detail_attempts=%d detail_failure=%s detail_retry_available=%t fallback_tools=true tools=%d version=%s", c.tencentDetailReady, c.tencentDetailAttempts, c.tencentDetailFailure, c.tencentDetailRetryAvailable(), len(c.definitions), c.Version())
+		}
+		return fmt.Sprintf("tool catalog: tencent_cls_detail_required=true ready=%t tools=%d version=%s", c.tencentDetailReady, len(c.definitions), c.Version())
+	}
 	if c.status.Code != "" {
 		return fmt.Sprintf("tool catalog: status=%s retryable=%t message=%s version=%s", c.status.Code, c.status.Retryable, c.status.Message, c.Version())
 	}
@@ -328,7 +410,13 @@ func (c *ToolCatalog) definitionsForPhase(phase domain.RunState) []domain.ToolDe
 	if phase != domain.RunStateDiagnosing && phase != domain.RunStateCollectingMoreContext && phase != domain.RunStatePlanning {
 		return nil
 	}
-	definitions := make([]domain.ToolDefinition, 0, len(c.base)+len(c.activated))
+	if c.tencentDetailGateClosed() {
+		if phase != domain.RunStateDiagnosing && phase != domain.RunStateCollectingMoreContext {
+			return nil
+		}
+		return []domain.ToolDefinition{toolDefinition(ToolTencentCLSDetail)}
+	}
+	definitions := make([]domain.ToolDefinition, 0, len(c.base)+len(c.activated)+1)
 	for _, definition := range c.base {
 		if phase == domain.RunStatePlanning && (definition.Name == ToolEvidenceSearch || definition.Name == ToolEvidenceContext || definition.Name == ToolSSHInspect) {
 			continue
@@ -349,6 +437,9 @@ func (c *ToolCatalog) definitionsForPhase(phase domain.RunState) []domain.ToolDe
 			}
 		}
 		definitions = append(definitions, route.definition)
+	}
+	if c.tencentDetailRetryAvailable() && (phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext) {
+		definitions = append(definitions, toolDefinition(ToolTencentCLSDetail))
 	}
 	// Discovery order is not authoritative. Sort by model-visible identity so
 	// provider requests and hashes remain deterministic across paginated calls.

@@ -16,10 +16,13 @@ type DockerContainerIdentity struct {
 
 // DockerLogQuery 是 gateway 校验后的 bounded Docker logs 查询。
 type DockerLogQuery struct {
-	Since    time.Time
-	Until    time.Time
-	Tail     int
-	MaxBytes int64
+	Since         time.Time
+	Until         time.Time
+	Tail          int
+	MaxBytes      int64
+	Pattern       string
+	ContextBefore int
+	ContextAfter  int
 }
 
 // DockerLogResult 是有界 stdout/stderr 运行时证据；它不包含 credential 或远端命令。
@@ -29,6 +32,8 @@ type DockerLogResult struct {
 	Stderr         string                  `json:"stderr"`
 	Truncated      bool                    `json:"truncated"`
 	BytesRetrieved int64                   `json:"bytesRetrieved"`
+	WindowLines    int64                   `json:"windowLines"`
+	FilteredLines  int64                   `json:"filteredLines"`
 }
 
 // DockerEvidencePort 只解析已保存 SSH source 的 exact container name，

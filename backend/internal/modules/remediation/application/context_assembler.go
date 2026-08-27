@@ -111,7 +111,7 @@ func (c *ContextAssembler) AssembleInitialContextWithEvidenceObserved(
 	})
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "remediation bootstrap: commit=%s\n", ref.Commit)
+	fmt.Fprintf(&b, "remediation bootstrap: historical_commit=%s; repository_reads=current_production_branch\n", ref.Commit)
 	fmt.Fprintf(&b, "repository: project=%s status=%s reads=tool_driven\n", ref.ProjectID, repositoryStatus)
 	fmt.Fprintf(&b, "evidence: environment=%s source=%s kind=%s status=%s reads=tool_driven\n", scope.EnvironmentID, scope.SourceID, source.Kind, evidenceStatus)
 	bootstrapEvidenceBytes := renderBootstrapEvidence(&b, bootstrap)

@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// RepoRef 是不可变的仓库引用，包含 commit hash，不包含凭据。
+// RepoRef 是 remediation 的项目仓库身份与历史基线元数据；Git adapter
+// 使用项目配置的 production branch 最新代码，不用 Commit 选择读取对象。
 type RepoRef struct {
 	ProjectID string
 	RemoteURL string

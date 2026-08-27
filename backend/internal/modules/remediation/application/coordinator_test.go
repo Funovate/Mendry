@@ -109,6 +109,99 @@ func TestCoordinator_CodeFixableReachesDiagnosisReady(t *testing.T) {
 	}
 }
 
+func TestCoordinator_PlanningExecutesMultipleNativeRepositoryTools(t *testing.T) {
+	model := &nativeScriptedModel{results: []domain.ModelResult{
+		{Content: diagnosisEnvelope("code_fixable"), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+		{
+			Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2,
+			ToolCalls: []domain.ToolCall{
+				{ID: "plan-read", Name: application.ToolRepoReadFile, Arguments: map[string]interface{}{"path": "main.go"}},
+				{ID: "plan-search", Name: application.ToolRepoSearch, Arguments: map[string]interface{}{"query": "TriggerNilPointerFault"}},
+			},
+		},
+		{Content: planEnvelope(), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
+	}
+	if repo.calls != 2 || len(store.invocations) != 2 {
+		t.Fatalf("repository calls/invocations = %d/%d, want 2/2", repo.calls, len(store.invocations))
+	}
+	for _, invocation := range store.invocations {
+		if invocation.Phase != domain.RunStatePlanning || invocation.Error != "" {
+			t.Fatalf("planning invocation = %#v", invocation)
+		}
+	}
+	if store.budget.ModelCalls != 3 || store.budget.ToolCalls != 2 {
+		t.Fatalf("model/tool budget = %d/%d, want 3/2", store.budget.ModelCalls, store.budget.ToolCalls)
+	}
+	if len(model.turns) != 3 || len(model.turns[2].Messages) < 4 {
+		t.Fatalf("planning tool history = %#v", model.turns)
+	}
+	messages := model.turns[2].Messages
+	if messages[len(messages)-2].ToolCallID != "plan-read" || messages[len(messages)-1].ToolCallID != "plan-search" {
+		t.Fatalf("planning tool results lost provider call identity: %#v", messages)
+	}
+}
+
+func TestCoordinator_PlanningToolRejectionFeedsNextTurn(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		requestToolEnvelope(application.ToolRepoReadFile, "../secret"),
+		planEnvelope(),
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || repo.calls != 0 {
+		t.Fatalf("state/repository calls = %s/%d", store.state, repo.calls)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Phase != domain.RunStatePlanning || store.invocations[0].Error != "path_out_of_scope" {
+		t.Fatalf("rejected planning invocation = %#v", store.invocations)
+	}
+	if len(model.turns) != 3 || !strings.Contains(model.turns[2].UserMessage, "tool_observation") ||
+		!strings.Contains(model.turns[2].UserMessage, "path_out_of_scope") {
+		t.Fatalf("planning rejection was not fed back safely: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_PlanningToolRequestResetsProtocolFailureCounter(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || model.calls != 7 {
+		t.Fatalf("state/calls = %s/%d, want diagnosis_ready_for_review/7", store.state, model.calls)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Phase != domain.RunStatePlanning {
+		t.Fatalf("planning invocations = %#v", store.invocations)
+	}
+}
+
 // TestCoordinator_InsufficientEvidenceBoundedLoop verifies the collect-more-
 // context loop is bounded and terminates in blocked_manual_review.
 func TestCoordinator_InsufficientEvidenceBoundedLoop(t *testing.T) {

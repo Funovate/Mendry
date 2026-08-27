@@ -24,6 +24,7 @@ import (
 const (
 	testProjectID = "019ff544-405c-7d21-9f10-cb3fc579605c"
 	testSecretID  = "019ff544-405c-7d24-9f10-cb3fc579605c"
+	testBranch    = "main"
 )
 
 type staticConfig struct {
@@ -42,6 +43,7 @@ func TestReaderLogsCloneAndFetchWithPublicIdentity(t *testing.T) {
 	reader, err := git.NewReader(git.Options{
 		Configs: staticConfig{cfg: git.RepositoryConfig{
 			RemoteURL: "file://" + dir, Transport: "file", CredentialSecretID: testSecretID,
+			ProductionBranch: testBranch,
 		}},
 		Secrets: staticSecrets{secret: projectdomain.EncryptedSecret{Secret: projectdomain.Secret{
 			ID: testSecretID, ProjectID: testProjectID,
@@ -134,6 +136,7 @@ func initLocalRepo(t *testing.T) (string, string, string) {
 	}
 	run("init", "-q")
 	run("config", "user.name", "tester")
+	run("symbolic-ref", "HEAD", "refs/heads/"+testBranch)
 	run("config", "user.email", "tester@example.invalid")
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -167,8 +170,9 @@ func newTestReader(t *testing.T, dir string) *git.Reader {
 	t.Helper()
 	reader, err := git.NewReader(git.Options{
 		Configs: staticConfig{cfg: git.RepositoryConfig{
-			RemoteURL: "file://" + dir,
-			Transport: "file",
+			RemoteURL:        "file://" + dir,
+			Transport:        "file",
+			ProductionBranch: testBranch,
 		}},
 		Secrets:  staticSecrets{secret: projectdomain.EncryptedSecret{Secret: projectdomain.Secret{ID: testSecretID, ProjectID: testProjectID}}},
 		Cipher:   staticCipher{},
@@ -180,7 +184,7 @@ func newTestReader(t *testing.T, dir string) *git.Reader {
 	return reader
 }
 
-func TestReaderReadsExactDeployedCommit(t *testing.T) {
+func TestReaderReadsLatestProductionBranch(t *testing.T) {
 	dir, old, _ := initLocalRepo(t)
 	reader := newTestReader(t, dir)
 	ref := domain.RepoRef{ProjectID: testProjectID, RemoteURL: "file://" + dir, Commit: old}
@@ -193,16 +197,40 @@ func TestReaderReadsExactDeployedCommit(t *testing.T) {
 	for _, entry := range listing.Entries {
 		paths[entry.Path] = true
 	}
-	if !paths["main.go"] || paths["later.go"] {
-		t.Fatalf("list at old commit = %#v", listing.Entries)
+	if !paths["main.go"] || !paths["later.go"] {
+		t.Fatalf("list at latest production branch = %#v", listing.Entries)
 	}
 
-	content, err := reader.ReadFile(context.Background(), ref, "main.go", domain.ReadOptions{MaxBytes: 1024})
-	if err != nil || !strings.Contains(string(content.Content), "package main") {
+	commitTestFile(t, dir, "latest.go", "package latest\n")
+	refreshed, err := reader.ListTree(context.Background(), ref, "", domain.TreeOptions{MaxDepth: 2, MaxEntries: 50})
+	if err != nil {
+		t.Fatalf("refreshed ListTree() error = %v", err)
+	}
+	refreshedPaths := map[string]bool{}
+	for _, entry := range refreshed.Entries {
+		refreshedPaths[entry.Path] = true
+	}
+	if !refreshedPaths["latest.go"] {
+		t.Fatalf("list after branch update = %#v", refreshed.Entries)
+	}
+
+	content, err := reader.ReadFile(context.Background(), ref, "latest.go", domain.ReadOptions{MaxBytes: 1024})
+	if err != nil || !strings.Contains(string(content.Content), "package latest") {
 		t.Fatalf("ReadFile() = %#v, err=%v", content, err)
 	}
-	if _, err := reader.ReadFile(context.Background(), ref, "later.go", domain.ReadOptions{MaxBytes: 1024}); err == nil {
-		t.Fatal("ReadFile(later.go) at old commit succeeded")
+}
+
+func commitTestFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+	for _, args := range [][]string{{"add", name}, {"commit", "-q", "-m", "latest"}} {
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+		}
 	}
 }
 
@@ -271,7 +299,7 @@ func TestReaderPreservesSafeGitDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader, err := git.NewReader(git.Options{
-		Configs: staticConfig{cfg: git.RepositoryConfig{RemoteURL: "file:///tmp/repository", Transport: "file"}},
+		Configs: staticConfig{cfg: git.RepositoryConfig{RemoteURL: "file:///tmp/repository", Transport: "file", ProductionBranch: testBranch}},
 		Secrets: staticSecrets{secret: projectdomain.EncryptedSecret{Secret: projectdomain.Secret{ID: testSecretID, ProjectID: testProjectID}}},
 		Cipher:  staticCipher{}, GitCommand: stub, CacheDir: t.TempDir(),
 	})
@@ -287,13 +315,40 @@ func TestReaderPreservesSafeGitDiagnostic(t *testing.T) {
 	}
 }
 
+func TestReaderRejectsInvalidProductionBranchBeforeClone(t *testing.T) {
+	dir, _, _ := initLocalRepo(t)
+	cache := t.TempDir()
+	reader, err := git.NewReader(git.Options{
+		Configs: staticConfig{cfg: git.RepositoryConfig{
+			RemoteURL: "file://" + dir, Transport: "file", ProductionBranch: "release..fault",
+		}},
+		Secrets: staticSecrets{secret: projectdomain.EncryptedSecret{Secret: projectdomain.Secret{ID: testSecretID, ProjectID: testProjectID}}},
+		Cipher:  staticCipher{}, CacheDir: cache,
+	})
+	if err != nil {
+		t.Fatalf("NewReader() error = %v", err)
+	}
+	_, err = reader.ListTree(context.Background(), domain.RepoRef{ProjectID: testProjectID, RemoteURL: "file://" + dir, Commit: "ignored"}, "", domain.TreeOptions{})
+	if err == nil || !strings.Contains(err.Error(), "production branch is invalid") {
+		t.Fatalf("ListTree() error = %v, want invalid branch", err)
+	}
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("cache entries = %d, want no clone before branch validation", len(entries))
+	}
+}
+
 func TestReaderCachedOriginHasNoUserinfo(t *testing.T) {
 	dir, old, _ := initLocalRepo(t)
 	cache := t.TempDir()
 	reader, err := git.NewReader(git.Options{
 		Configs: staticConfig{cfg: git.RepositoryConfig{
-			RemoteURL: "file://" + dir,
-			Transport: "file",
+			RemoteURL:        "file://" + dir,
+			Transport:        "file",
+			ProductionBranch: testBranch,
 		}},
 		Secrets:  staticSecrets{secret: projectdomain.EncryptedSecret{Secret: projectdomain.Secret{ID: testSecretID, ProjectID: testProjectID}}},
 		Cipher:   staticCipher{},

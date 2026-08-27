@@ -239,6 +239,7 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	t.Setenv("FAKE_DOCKER_INSPECT", dockerInspectFixture(id, "checkout-api", "registry.example/checkout:v1", "running"))
 	t.Setenv("FAKE_DOCKER_STDOUT", "panic: nil pointer\n")
 	t.Setenv("FAKE_DOCKER_STDERR", "stack frame\n")
+	t.Setenv("FAKE_DOCKER_WINDOW_LINES", "386130")
 	reader := newDockerReader(t, fakeSSH, "checkout-api")
 	start := time.Date(2026, 8, 24, 7, 0, 0, 0, time.UTC)
 	end := start.Add(20 * time.Minute)
@@ -252,7 +253,7 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDockerLogs() error = %v", err)
 	}
-	if result.Container.ID != id || result.Stdout != "panic: nil pointer\n" || result.Stderr != "stack frame\n" || result.Truncated {
+	if result.Container.ID != id || result.Stdout != "panic: nil pointer\n" || result.Stderr != "stack frame\n" || result.Truncated || result.WindowLines != 386130 || result.FilteredLines != 0 {
 		t.Fatalf("Docker logs result = %#v", result)
 	}
 	commandBytes, err := os.ReadFile(commands)
@@ -269,7 +270,6 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 			t.Fatalf("Docker logs used durable name instead of resolved ID: %q", line)
 		}
 	}
-
 	t.Setenv("FAKE_DOCKER_STDOUT", strings.Repeat("x", 128))
 	t.Setenv("FAKE_DOCKER_STDERR", "")
 	bounded, err := reader.ReadDockerLogs(context.Background(), domain.EvidenceScope{
@@ -283,6 +283,137 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	}
 	if !bounded.Truncated || bounded.BytesRetrieved != 32 || len(bounded.Stdout) != 32 {
 		t.Fatalf("bounded Docker logs result = %#v", bounded)
+	}
+}
+
+func TestReaderDockerLogsPatternFiltersBeforeTailAndReportsCoverage(t *testing.T) {
+	fakeSSH := writeDockerSSH(t)
+	commands := filepath.Join(t.TempDir(), "commands.txt")
+	t.Setenv("FAKE_DOCKER_COMMANDS", commands)
+	t.Setenv("FAKE_DOCKER_WINDOW_LINES", "386130")
+	t.Setenv("FAKE_DOCKER_FILTERED_LINES", "1")
+	t.Setenv("FAKE_DOCKER_STDOUT", "panic: nil pointer\ngoroutine 1 [running]:\nframe\n")
+	t.Setenv("FAKE_DOCKER_STDERR", "")
+	id := strings.Repeat("8", 64)
+	t.Setenv("FAKE_DOCKER_PS", dockerInventoryFixture("checkout-api", id, "running", "Up 1 minute"))
+	t.Setenv("FAKE_DOCKER_INSPECT", dockerInspectFixture(id, "checkout-api", "registry.example/checkout:v1", "running"))
+	reader := newDockerReader(t, fakeSSH, "checkout-api")
+	start := time.Date(2026, 8, 24, 7, 0, 0, 0, time.UTC)
+	end := start.Add(20 * time.Minute)
+	result, err := reader.ReadDockerLogs(context.Background(), domain.EvidenceScope{
+		ProjectID: dockerTestProjectID, SourceID: dockerTestSourceID,
+		TimeRange: domain.TimeRange{Start: start, End: end},
+	}, domain.DockerLogQuery{
+		Since: start.Add(-5 * time.Minute), Until: end.Add(5 * time.Minute), Tail: 42,
+		MaxBytes: 1 << 20, Pattern: "panic.*nil pointer", ContextBefore: 1, ContextAfter: 2,
+	})
+	if err != nil {
+		t.Fatalf("filtered ReadDockerLogs() error = %v", err)
+	}
+	if result.WindowLines != 386130 || result.FilteredLines != 1 || !strings.Contains(result.Stdout, "goroutine 1") {
+		t.Fatalf("filtered Docker logs result = %#v", result)
+	}
+	commandBytes, err := os.ReadFile(commands)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	var filteredCommands []string
+	for _, line := range strings.Split(strings.TrimSpace(string(commandBytes)), "\n") {
+		if strings.Contains(line, "grep -E") {
+			filteredCommands = append(filteredCommands, line)
+		}
+	}
+	if len(filteredCommands) != 2 {
+		t.Fatalf("filtered command count = %d, commands=%q", len(filteredCommands), commandBytes)
+	}
+	if !strings.Contains(filteredCommands[0], "grep -E -A 2 -B 1 -- 'panic.*nil pointer' | tail -42") {
+		t.Fatalf("filtered read command = %q", filteredCommands[0])
+	}
+	for _, command := range filteredCommands {
+		if strings.Contains(command, "--tail 42") || strings.Count(command, "'panic.*nil pointer'") != 1 {
+			t.Fatalf("filtered command applied tail before grep or quoted pattern incorrectly: %q", command)
+		}
+	}
+}
+
+func TestReaderDockerLogsUsesFilterForLargeEarlyWindow(t *testing.T) {
+	const fixtureLines = 386130
+
+	fixturePath := filepath.Join(t.TempDir(), "docker.log")
+	fixture, err := os.Create(fixturePath)
+	if err != nil {
+		t.Fatalf("create Docker fixture: %v", err)
+	}
+	for index := 0; index < fixtureLines; index++ {
+		switch index {
+		case 100:
+			_, err = fmt.Fprintln(fixture, "panic TriggerNilPointerFault")
+		case 101:
+			_, err = fmt.Fprintln(fixture, "goroutine 1 [running]:")
+		case 102:
+			_, err = fmt.Fprintln(fixture, "runtime frame")
+		default:
+			_, err = fmt.Fprintf(fixture, "noise-%d\n", index)
+		}
+		if err != nil {
+			_ = fixture.Close()
+			t.Fatalf("write Docker fixture line %d: %v", index, err)
+		}
+	}
+	if err := fixture.Close(); err != nil {
+		t.Fatalf("close Docker fixture: %v", err)
+	}
+
+	fakeSSH, dockerBin := writeExecutingDockerSSH(t)
+	id := strings.Repeat("a", 64)
+	t.Setenv("FAKE_DOCKER_BIN_DIR", dockerBin)
+	t.Setenv("FAKE_DOCKER_FIXTURE", fixturePath)
+	t.Setenv("FAKE_DOCKER_ID", id)
+	reader := newDockerReader(t, fakeSSH, "checkout-api")
+	start := time.Date(2026, 8, 24, 7, 0, 0, 0, time.UTC)
+	end := start.Add(20 * time.Minute)
+	scope := domain.EvidenceScope{
+		ProjectID: dockerTestProjectID, SourceID: dockerTestSourceID,
+		TimeRange: domain.TimeRange{Start: start, End: end},
+	}
+	query := domain.DockerLogQuery{
+		Since: start.Add(-5 * time.Minute), Until: end.Add(5 * time.Minute), Tail: 10, MaxBytes: 1 << 20,
+	}
+
+	unfiltered, err := reader.ReadDockerLogs(context.Background(), scope, query)
+	if err != nil {
+		t.Fatalf("unfiltered ReadDockerLogs() error = %v", err)
+	}
+	if strings.Contains(unfiltered.Stdout, "TriggerNilPointerFault") || unfiltered.WindowLines != fixtureLines || unfiltered.Truncated {
+		t.Fatalf("unfiltered Docker logs = %#v, want only the fixture tail", unfiltered)
+	}
+
+	filtered, err := reader.ReadDockerLogs(context.Background(), scope, domain.DockerLogQuery{
+		Since: start.Add(-5 * time.Minute), Until: end.Add(5 * time.Minute), Tail: 10, MaxBytes: 1 << 20,
+		Pattern: "TriggerNilPointerFault", ContextAfter: 2,
+	})
+	if err != nil {
+		t.Fatalf("filtered ReadDockerLogs() error = %v", err)
+	}
+	if filtered.Truncated || len(filtered.Stdout) > 1<<20 || filtered.WindowLines != fixtureLines || filtered.FilteredLines != 1 ||
+		!strings.Contains(filtered.Stdout, "panic TriggerNilPointerFault") ||
+		!strings.Contains(filtered.Stdout, "goroutine 1 [running]:") ||
+		!strings.Contains(filtered.Stdout, "runtime frame") {
+		t.Fatalf("filtered Docker logs = %#v, want early panic and context within the byte cap", filtered)
+	}
+}
+
+func TestDockerLogsCommandOmitsZeroContextFlags(t *testing.T) {
+	start := time.Date(2026, 8, 24, 7, 0, 0, 0, time.UTC)
+	query := domain.DockerLogQuery{
+		Since: start, Until: start.Add(time.Minute), Tail: 2000, Pattern: "panic|fatal",
+	}
+	command := dockerLogsCommand(strings.Repeat("9", 64), query)
+	if strings.Contains(command, "-A ") || strings.Contains(command, "-B ") {
+		t.Fatalf("zero context command contains context flags: %q", command)
+	}
+	if !strings.Contains(command, "grep -E -- 'panic|fatal' | tail -2000") {
+		t.Fatalf("zero context command = %q", command)
 	}
 }
 
@@ -346,6 +477,58 @@ func dockerInspectFixture(id, name, image, state string) string {
 	return string(raw)
 }
 
+func writeExecutingDockerSSH(t *testing.T) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ssh script uses a POSIX shell")
+	}
+	directory := t.TempDir()
+	dockerPath := filepath.Join(directory, "docker")
+	dockerScript := `#!/bin/sh
+case "$1" in
+  ps)
+    printf '{"ID":"%s","Names":"checkout-api","Image":"registry.example/checkout:v1","State":"running","Status":"Up 1 minute"}\n' "$FAKE_DOCKER_ID"
+    ;;
+  inspect)
+    printf '{"id":"%s","name":"/checkout-api","image":"registry.example/checkout:v1","state":"running","status":"Up 1 minute"}\n' "$FAKE_DOCKER_ID"
+    ;;
+  logs)
+    tail_lines=
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = "--tail" ]; then
+        tail_lines=$argument
+      fi
+      previous=$argument
+    done
+    if [ -n "$tail_lines" ]; then
+      exec tail -n "$tail_lines" "$FAKE_DOCKER_FIXTURE"
+    fi
+    exec cat "$FAKE_DOCKER_FIXTURE"
+    ;;
+  *)
+    exit 97
+    ;;
+esac
+`
+	if err := os.WriteFile(dockerPath, []byte(dockerScript), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+
+	sshPath := filepath.Join(directory, "fake-ssh")
+	sshScript := `#!/bin/sh
+remote=
+for argument in "$@"; do
+  remote=$argument
+done
+PATH="$FAKE_DOCKER_BIN_DIR:$PATH" sh -c "$remote"
+`
+	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
+		t.Fatalf("write executing fake ssh: %v", err)
+	}
+	return sshPath, directory
+}
+
 func writeDockerSSH(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -361,6 +544,8 @@ case "$remote" in
   *"docker ps -a --no-trunc --format"*) printf '%s\n' "${FAKE_DOCKER_INVENTORY:-}" ;;
   *"docker ps -a --no-trunc --filter"*) printf '%s\n' "${FAKE_DOCKER_PS:-}" ;;
   *"docker inspect --type=container"*) printf '%s\n' "${FAKE_DOCKER_INSPECT:-}" ;;
+  *"docker logs --since"*"grep -E"*"wc -l"*) printf '%s\n' "${FAKE_DOCKER_FILTERED_LINES:-0}" ;;
+  *"docker logs --since"*"wc -l"*) printf '%s\n' "${FAKE_DOCKER_WINDOW_LINES:-0}" ;;
   *"docker logs --since"*) printf '%s' "${FAKE_DOCKER_STDOUT:-}"; printf '%s' "${FAKE_DOCKER_STDERR:-}" >&2 ;;
   *) printf 'unexpected remote command: %s\n' "$remote" >&2; exit 97 ;;
 esac

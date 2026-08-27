@@ -18,6 +18,10 @@ const EnvelopeVersion = "v1"
 // 提供商/基础设施错误不得包装成该哨兵。
 var ErrInvalidEnvelope = errors.New("invalid agent envelope")
 
+// errInvalidDiagnosisTimeAssessment 标记可安全映射的 timeAssessment 合同错误；
+// 具体模型值只留在 operator 诊断中，不得进入 protocol correction。
+var errInvalidDiagnosisTimeAssessment = errors.New("invalid diagnosis time assessment")
+
 // DecodeAgentEnvelope 是 DecodeEnvelope 的别名，用于清晰性。
 func DecodeAgentEnvelope(raw []byte) (*AgentEnvelope, error) {
 	return DecodeEnvelope(string(raw))
@@ -279,12 +283,12 @@ func validateDiagnosis(d *DiagnosisOutput) error {
 	}
 	if d.TimeAssessment != nil {
 		if len(d.TimeAssessment.OriginalValues) > 32 || len(d.TimeAssessment.Basis) > 40 || len(d.TimeAssessment.Certainty) > 40 {
-			return fmt.Errorf("diagnosis: time assessment is invalid")
+			return fmt.Errorf("diagnosis: %w", errInvalidDiagnosisTimeAssessment)
 		}
 		switch d.TimeAssessment.Basis {
 		case "", "paired_epoch", "explicit_offset", "contextual_zone", "unresolved":
 		default:
-			return fmt.Errorf("diagnosis: unknown time assessment basis %q", d.TimeAssessment.Basis)
+			return fmt.Errorf("diagnosis: %w: unknown basis %q", errInvalidDiagnosisTimeAssessment, d.TimeAssessment.Basis)
 		}
 	}
 	if len(d.Hypotheses) > 16 {
@@ -311,6 +315,9 @@ func validatePlanCandidates(pc *PlanCandidatesOutput) error {
 	if pc.SuggestedDiff == "" {
 		return fmt.Errorf("planCandidates: suggestedDiff is required")
 	}
+	if strings.TrimSpace(pc.Rationale) == "" {
+		return fmt.Errorf("planCandidates: rationale is required")
+	}
 
 	found := false
 	for _, c := range pc.Candidates {
@@ -327,6 +334,18 @@ func validatePlanCandidates(pc *PlanCandidatesOutput) error {
 		}
 		if !validRisk[c.Risk] {
 			return fmt.Errorf("planCandidates: unknown risk %q", c.Risk)
+		}
+		if len(c.EvidenceRefs) == 0 {
+			return fmt.Errorf("planCandidates: candidate evidenceRefs is required")
+		}
+		if len(c.AffectedFiles) == 0 {
+			return fmt.Errorf("planCandidates: candidate affectedFiles is required")
+		}
+		if strings.TrimSpace(c.IntendedBehavior) == "" {
+			return fmt.Errorf("planCandidates: candidate intendedBehavior is required")
+		}
+		if strings.TrimSpace(c.RollbackStrategy) == "" {
+			return fmt.Errorf("planCandidates: candidate rollbackStrategy is required")
 		}
 	}
 	if !found {

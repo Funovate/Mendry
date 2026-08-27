@@ -261,7 +261,7 @@ func TestDecodeEnvelope_MissingRecommendedId(t *testing.T) {
 		"kind": "planCandidates",
 		"planCandidates": {
 			"candidates": [
-				{"planId": "p1", "evidenceRefs": [], "affectedFiles": [], "intendedBehavior": "x", "risk": "ordinary", "rollbackStrategy": "x"}
+				{"planId": "p1", "evidenceRefs": ["ev-1"], "affectedFiles": ["main.go"], "intendedBehavior": "x", "risk": "ordinary", "rollbackStrategy": "x"}
 			],
 			"recommendedId": "p2",
 			"rationale": "x",
