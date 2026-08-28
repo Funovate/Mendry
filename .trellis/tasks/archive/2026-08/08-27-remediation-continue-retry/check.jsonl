@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend test/validation gates (go vet, race, generate-check) used by the Phase D verification checklist."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error ownership, wrapping and safe client diagnostics for the stable 409/403/404 mappings of the retry endpoint."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Structured logging and sensitive-data rules for auditable skip/continue reasons without payload leakage."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Build, lint, unit and route-mocked E2E quality gates for the expanded remediation console flows."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Capability gates and accessibility rules for the Start/Continue analysis controls in RemediationPanel."}

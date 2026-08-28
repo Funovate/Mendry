@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Owning remediation conventions: frozen RunStore port, coordinator, HTTP adapters, credential isolation — direct contracts touched by continue/retry."}
+{"file": ".trellis/spec/backend/incident-guidelines.md", "reason": "Incident domain/lifecycle, webhook inbound ingestion path, fingerprint coalescing and protected REST routes that the automatic gate hooks into."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration, sqlc, transaction and test-isolation conventions for the additive remediation_run columns and atomic CreateNextAttempt."}
+{"file": ".trellis/spec/backend/remediation-evidence-guidelines.md", "reason": "Evidence citations and safe bounded reads that shape the continuation brief and new-context version requirement."}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "TanStack Query ownership, mutation invalidation and cancellation conventions for the RemediationPanel start/retry mutations."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Typed API boundary and DTO validation conventions for the expanded review contract and retry request/response."}
