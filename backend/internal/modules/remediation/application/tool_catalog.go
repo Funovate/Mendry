@@ -21,17 +21,18 @@ const (
 	ToolSourceSearchTools  = "source.search_tools"
 	ToolSourceRefreshTools = "source.refresh_tools"
 
-	maxDynamicSchemaBytes    = 64 << 10
-	maxDynamicSchemaDepth    = 8
-	maxDynamicDescription    = 4096
-	maxDynamicResultBytes    = 64 << 10
-	maxDynamicTools          = 128
-	maxTencentDetailAttempts = 2
-	dynamicDiscoveryLimit    = 5 * time.Second
-	defaultToolSearchLimit   = 5
-	maxToolSearchLimit       = 10
-	maxToolSearchQuery       = 256
-	maxToolSearchDescription = 256
+	maxDynamicSchemaBytes     = 64 << 10
+	maxDynamicSchemaDepth     = 8
+	maxDynamicDescription     = 4096
+	maxDynamicResultBytes     = 64 << 10
+	maxDynamicTools           = 128
+	maxTencentDetailAttempts  = 2
+	priorTencentDetailFailure = "prior_detail_failure"
+	dynamicDiscoveryLimit     = 5 * time.Second
+	defaultToolSearchLimit    = 5
+	maxToolSearchLimit        = 10
+	maxToolSearchQuery        = 256
+	maxToolSearchDescription  = 256
 )
 
 // ToolCatalog 保存每个 run、phase 的 tool snapshot；route map 保持私有，避免 model
@@ -239,6 +240,29 @@ func (g *ToolGateway) BuildCatalogWithBootstrap(
 	return catalog, nil
 }
 
+// BuildAnalysisOnlyCatalog creates the manual-continuation catalog without
+// resolving source policy or probing a dynamic runtime. Persisted operational
+// evidence is already present in bootstrap context, so only repository reads
+// remain available to the analysis model.
+func (g *ToolGateway) BuildAnalysisOnlyCatalog(
+	runID string,
+	phase domain.RunState,
+	scope domain.EvidenceScope,
+) *ToolCatalog {
+	catalog := &ToolCatalog{
+		phase:  phase,
+		source: domain.SourceCapabilitySnapshot{Kind: "persisted_evidence"},
+		scope: domain.DynamicToolScope{
+			RunID: runID, ProjectID: scope.ProjectID, SourceID: scope.SourceID,
+		},
+		routes:    make(map[string]dynamicToolRoute),
+		activated: make(map[string]struct{}),
+	}
+	catalog.base = g.baseDefinitions(phase, scope, domain.SourceCapabilitySnapshot{})
+	catalog.rebuild()
+	return catalog
+}
+
 func requiresTencentCLSDetail(bootstrap domain.BootstrapEvidence) bool {
 	for _, record := range bootstrap.Records {
 		if record.Provider == "tencent_cls" && record.EvidenceKind == domain.EvidenceKindNormalizedAlert {
@@ -264,6 +288,48 @@ func (c *ToolCatalog) tencentDetailGateClosed() bool {
 func (c *ToolCatalog) tencentDetailRetryAvailable() bool {
 	return c != nil && c.tencentDetailRequired && !c.tencentDetailReady &&
 		c.tencentDetailRetryable && c.tencentDetailAttempts < maxTencentDetailAttempts
+}
+
+// seedPriorTencentDetailFailure carries a predecessor's failed detail call into a
+// continuation. A child must not repeat a non-retryable detail failure merely
+// because its fresh bootstrap still contains the normalized Tencent alert.
+func (c *ToolCatalog) seedPriorTencentDetailFailure(invocations []domain.ToolInvocation) {
+	if c == nil || !c.tencentDetailRequired || c.tencentDetailReady {
+		return
+	}
+	for _, invocation := range invocations {
+		if invocation.ToolName != ToolTencentCLSDetail {
+			continue
+		}
+		code, failed := priorTencentDetailFailureCode(invocation)
+		if !failed {
+			continue
+		}
+		c.tencentDetailAttempts = 1
+		c.tencentDetailRetryable = false
+		c.tencentDetailFailure = code
+		c.rebuild()
+		return
+	}
+}
+
+func priorTencentDetailFailureCode(invocation domain.ToolInvocation) (string, bool) {
+	if strings.TrimSpace(invocation.Error) != "" {
+		code := safeContinuationErrorCode(invocation.Error)
+		if code != "unknown" && strings.HasPrefix(code, "provider_detail_") {
+			return code, true
+		}
+		// Older rows retained only Error=error. Treat unknown error metadata as
+		// a failed detail attempt, but never replay its raw value.
+		return priorTencentDetailFailure, true
+	}
+	switch strings.TrimSpace(invocation.ResultSummary) {
+	case "error", "failure", "unavailable":
+		// Legacy adapters may retain only the invocation outcome.
+		return priorTencentDetailFailure, true
+	default:
+		return "", false
+	}
 }
 
 func (c *ToolCatalog) markTencentDetailReady() {

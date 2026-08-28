@@ -2,8 +2,8 @@ package domain
 
 import "context"
 
-// RepositoryReadPort 读取仓库在不可变 commit 的内容。
-// 适配器内部注入凭据；调用者只传递不透明引用。
+// RepositoryReadPort 读取项目配置 production branch 的当前代码内容；调用方只传递
+// 项目身份和历史基线元数据，不携带凭据或裸客户端。
 type RepositoryReadPort interface {
 	ListTree(ctx context.Context, ref RepoRef, path string, opts TreeOptions) (TreeListing, error)
 	ReadFile(ctx context.Context, ref RepoRef, path string, opts ReadOptions) (FileContent, error)
@@ -54,4 +54,18 @@ type RunStore interface {
 	RecordToolInvocation(ctx context.Context, runID string, t ToolInvocation) error
 	Transition(ctx context.Context, runID string, from, to RunState, effect Effect) error
 	Get(ctx context.Context, runID string) (RunAggregate, error)
+}
+
+// AttemptStore 负责 continuation 专用读取和 linked next attempt 的原子创建。
+// 它独立于 RunStore，以保持既有 coordinator 和 adapter 使用的原始 port 不变。
+type AttemptStore interface {
+	GetLatestForIncident(ctx context.Context, incidentID string, generation int64, deployedCommit string) (RunAggregate, error)
+	CreateNextAttempt(ctx context.Context, in NextAttempt) (Run, error)
+}
+
+// PlanningCheckpointStore 在 bounded review history 之外按 durable series/context
+// 查询最近一次通过 evidence gate 的 code_fixable decision。throughAttemptNumber
+// 保证 continuation 不会读取 expected predecessor 之后的尝试。
+type PlanningCheckpointStore interface {
+	GetLatestPlanningCheckpoint(ctx context.Context, seriesID string, contextVersion int64, throughAttemptNumber int32) (RunAggregate, error)
 }

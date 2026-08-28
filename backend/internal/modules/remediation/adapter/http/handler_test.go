@@ -22,17 +22,27 @@ import (
 )
 
 type mockService struct {
-	run        domain.Run
-	review     application.Review
-	err        error
-	projectKey string
-	identifier string
-	generation int64
+	run             domain.Run
+	review          application.Review
+	err             error
+	continueRun     domain.Run
+	continueErr     error
+	projectKey      string
+	identifier      string
+	generation      int64
+	expectedRunID   string
+	expectedVersion int64
 }
 
 func (m *mockService) StartRemediation(_ context.Context, _ authdomain.User, projectKey, identifier string, generation int64) (domain.Run, error) {
 	m.projectKey, m.identifier, m.generation = projectKey, identifier, generation
 	return m.run, m.err
+}
+
+func (m *mockService) ContinueRemediation(_ context.Context, _ authdomain.User, projectKey, identifier string, generation int64, expectedRunID string, expectedVersion int64) (domain.Run, error) {
+	m.projectKey, m.identifier, m.generation = projectKey, identifier, generation
+	m.expectedRunID, m.expectedVersion = expectedRunID, expectedVersion
+	return m.continueRun, m.continueErr
 }
 
 func (m *mockService) GetRemediation(_ context.Context, _ authdomain.User, projectKey, identifier string) (application.Review, error) {
@@ -106,6 +116,81 @@ func TestStartRemediationRequiresAuthenticationAndReturnsRunEnvelope(t *testing.
 	}
 }
 
+func TestRetryRemediationRequiresAuthenticationAndReturnsNewAttempt(t *testing.T) {
+	service := &mockService{continueRun: domain.Run{
+		RunID: "run-2", SeriesID: "series-1", State: domain.RunStateQueued,
+		LifecycleGeneration: 2, AttemptNumber: 2, Version: 1,
+	}}
+	authService := &fakeAuthService{}
+	handler := newHandler(t, service, authService)
+
+	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/retry", `{"generation":2,"runId":"run-1","version":4}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusUnauthorized || !strings.Contains(response.Body.String(), `"authentication_required"`) {
+		t.Fatalf("unauthenticated response = %d %q", response.Code, response.Body.String())
+	}
+
+	authService.user = authdomain.User{Enabled: true, Role: authdomain.RoleOperator}
+	request = jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/retry", `{"generation":2,"runId":"run-1","version":4}`)
+	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" || service.identifier != "INC-2049" ||
+		service.generation != 2 || service.expectedRunID != "run-1" || service.expectedVersion != 4 {
+		t.Fatalf("response = %d %q, service = %#v", response.Code, response.Body.String(), service)
+	}
+	var body struct {
+		Code string `json:"code"`
+		Data struct {
+			RunID         string          `json:"runId"`
+			SeriesID      string          `json:"seriesId"`
+			Status        domain.RunState `json:"status"`
+			Generation    int64           `json:"generation"`
+			AttemptNumber int32           `json:"attemptNumber"`
+			Version       int64           `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil || body.Code != "ok" ||
+		body.Data.RunID != "run-2" || body.Data.SeriesID != "series-1" || body.Data.Status != domain.RunStateQueued ||
+		body.Data.Generation != 2 || body.Data.AttemptNumber != 2 || body.Data.Version != 1 {
+		t.Fatalf("body = %#v, error = %v", body, err)
+	}
+}
+
+func TestRetryRemediationRejectsStrictJSONAndMapsContinuationErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code int
+		want string
+	}{
+		{name: "invalid input", err: application.ErrInvalidInput, code: nethttp.StatusBadRequest, want: "invalid_request"},
+		{name: "stale predecessor", err: application.ErrConflict, code: nethttp.StatusConflict, want: "remediation_conflict"},
+		{name: "active attempt", err: application.ErrActiveAttempt, code: nethttp.StatusConflict, want: "remediation_active"},
+		{name: "unsupported state", err: application.ErrUnsupportedContinuation, code: nethttp.StatusConflict, want: "remediation_unsupported"},
+		{name: "project forbidden", err: projectapplication.ErrForbidden, code: nethttp.StatusForbidden, want: "forbidden"},
+	} {
+		handler := newHandler(t, &mockService{continueErr: test.err}, &fakeAuthService{user: authdomain.User{Enabled: true}})
+		request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/retry", `{"generation":2,"runId":"run-1","version":4}`)
+		request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != test.code || !strings.Contains(response.Body.String(), test.want) {
+			t.Errorf("%s response = %d %q", test.name, response.Code, response.Body.String())
+		}
+	}
+
+	handler := newHandler(t, &mockService{}, &fakeAuthService{user: authdomain.User{Enabled: true}})
+	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/retry", `{"generation":2,"runId":"run-1","version":4,"unexpected":true}`)
+	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
+		t.Fatalf("unknown field response = %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestStartRemediationRejectsInvalidJSONAndMapsApplicationErrors(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -170,7 +255,12 @@ func jsonRequest(method, target, body string) *nethttp.Request {
 func TestGetRemediationRequiresAuthenticationAndReturnsSecretFreeEnvelope(t *testing.T) {
 	service := &mockService{review: application.Review{
 		RunID: "run-1", SeriesID: "series-1", Status: domain.RunStateDiagnosisReadyForReview,
-		Generation: 2, DeployedCommit: "abc123",
+		Generation: 2, DeployedCommit: "abc123", AttemptNumber: 1, Version: 3,
+		Origin: "automatic", TerminalReason: "", ManualSuggestion: "apply suggested patch", Retryable: false, ContinuationAvailable: false,
+		Attempts: []application.ReviewAttempt{{
+			ID: "run-1", AttemptNumber: 1, Status: domain.RunStateDiagnosisReadyForReview,
+			Origin: "automatic", ContextVersion: 2, Version: 3,
+		}},
 		SuggestedDiff: "diff --git a/auth/token.go\n+Authorization: Bearer [redacted]\n",
 		Risk:          domain.RiskOrdinary,
 		Diagnosis: &application.ReviewDiagnosis{
@@ -206,7 +296,8 @@ func TestGetRemediationRequiresAuthenticationAndReturnsSecretFreeEnvelope(t *tes
 	if !strings.Contains(body, `"status":"diagnosis_ready_for_review"`) ||
 		!strings.Contains(body, `"suggestedDiff"`) ||
 		!strings.Contains(body, `"plans"`) ||
-		!strings.Contains(body, `"auth/token.go"`) {
+		!strings.Contains(body, `"auth/token.go"`) ||
+		!strings.Contains(body, `"manualSuggestion":"apply suggested patch"`) {
 		t.Fatalf("GET body = %s", body)
 	}
 	if strings.Contains(body, `"toolInvocations"`) || strings.Contains(body, `"content"`) {

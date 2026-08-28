@@ -41,7 +41,7 @@ type Model struct{}
 
 func (Model) Complete(context.Context, domain.ModelTurn) (domain.ModelResult, error) {
 	return domain.ModelResult{
-		Content:      `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"step5 placeholder model"}}`,
+		Content:      `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"step5 placeholder model","recommendedNextAction":"ask an operator to review the incident"}}`,
 		Provider:     "fake",
 		Model:        "step5-placeholder",
 		FinishReason: "stop",

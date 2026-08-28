@@ -15,6 +15,13 @@ WHERE incident_id = $1 AND lifecycle_generation = $2 AND deployed_commit = $3;
 -- name: GetRemediationSeriesByID :one
 SELECT * FROM remediation_series WHERE id = $1;
 
+-- name: LockRemediationSeriesForRun :one
+SELECT series.*
+FROM remediation_series AS series
+JOIN remediation_run AS run ON run.series_id = series.id
+WHERE run.id = sqlc.arg(run_id)
+FOR UPDATE OF series;
+
 -- name: GetRemediationToolPolicy :one
 SELECT project_id, source_id, version, policy_hash, entries
 FROM remediation_tool_policy
@@ -24,8 +31,26 @@ WHERE project_id = $1 AND source_id = $2;
 INSERT INTO remediation_run (
     series_id,
     attempt_number,
-    state
-) VALUES ($1, $2, $3)
+    state,
+    context_version,
+    trigger_reason
+) VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: CreateRemediationNextRun :one
+INSERT INTO remediation_run (
+    series_id,
+    attempt_number,
+    state,
+    continuation_of_run_id,
+    trigger_reason,
+    continuation_reason,
+    context_version
+) VALUES (
+    sqlc.arg(series_id), sqlc.arg(attempt_number), 'queued',
+    sqlc.arg(continuation_of_run_id), sqlc.arg(trigger_reason),
+    sqlc.arg(continuation_reason), sqlc.arg(context_version)
+)
 RETURNING *;
 
 -- name: GetRemediationRun :one
@@ -36,11 +61,32 @@ SELECT * FROM remediation_run
 WHERE series_id = $1
 ORDER BY attempt_number ASC;
 
+-- name: GetLatestRemediationPlanningCheckpoint :one
+SELECT run.*
+FROM remediation_run AS run
+WHERE run.series_id = sqlc.arg(series_id)
+  AND run.context_version = sqlc.arg(context_version)
+  AND run.attempt_number <= sqlc.arg(through_attempt_number)
+  AND (
+      SELECT decision.fixability_class
+      FROM remediation_decision AS decision
+      WHERE decision.run_id = run.id
+      ORDER BY decision.sequence DESC
+      LIMIT 1
+  ) = 'code_fixable'
+ORDER BY run.attempt_number DESC
+LIMIT 1;
+
+-- name: LockRemediationIncidentContextVersion :one
+SELECT version FROM incidents WHERE id = $1 FOR SHARE;
+
 -- name: UpdateRemediationRunState :one
 UPDATE remediation_run
 SET state = $2,
     ended_at = CASE WHEN $3::boolean THEN now() ELSE ended_at END,
     elapsed_ms = CASE WHEN $3::boolean THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE elapsed_ms END,
+    terminal_reason = CASE WHEN $3::boolean THEN sqlc.arg(terminal_reason)::text ELSE terminal_reason END,
+    retryable = CASE WHEN $3::boolean THEN sqlc.arg(retryable)::boolean ELSE retryable END,
     version = version + 1
 WHERE id = $1 AND version = $4
 RETURNING *;
@@ -169,7 +215,7 @@ INSERT INTO remediation_evidence (
     sqlc.arg(operational_correlation), sqlc.narg(occurred_at), sqlc.arg(content_hash),
     sqlc.arg(byte_count), sqlc.arg(provenance), sqlc.arg(payload)
 )
-ON CONFLICT (project_id, deduplication_key)
+ON CONFLICT (project_id, incident_id, run_id, deduplication_key)
 DO UPDATE SET
     run_id = COALESCE(EXCLUDED.run_id, remediation_evidence.run_id),
     observation_id = COALESCE(EXCLUDED.observation_id, remediation_evidence.observation_id),
@@ -210,7 +256,17 @@ JOIN incidents AS incident
 WHERE evidence.incident_id = sqlc.arg(incident_id)
   AND evidence.observation_id = sqlc.arg(observation_id)
   AND evidence.run_id IS NULL
-ORDER BY evidence.created_at ASC, evidence.id ASC
+ORDER BY
+    CASE WHEN evidence.provider = 'tencent_cls'
+        AND evidence.evidence_kind = 'provider_detail'
+        AND evidence.classification = 'direct_fault'
+        AND evidence.available
+        AND evidence.outcome = 'success'
+        AND evidence.provenance->>'adapter' = 'tencent_cls'
+        AND evidence.provenance->>'detail_capability_validated' = 'true'
+        AND evidence.provenance->>'detail_resolution' = 'validated_provider_detail_get_alert_detail'
+        THEN 0 ELSE 1 END,
+    evidence.created_at ASC, evidence.id ASC
 LIMIT sqlc.arg(result_limit);
 
 -- name: GetRemediationRunProject :one

@@ -46,7 +46,7 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 11 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 {
+	if len(migrations) != 15 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	if migrations[1].Name != "create_mvp_data" {
@@ -80,6 +80,15 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if migrations[10].Name != "remove_configuration_names" {
 		t.Fatalf("migration 000011 name = %q", migrations[10].Name)
 	}
+	if migrations[11].Name != "remediation_tool_policy" {
+		t.Fatalf("migration 000012 name = %q", migrations[11].Name)
+	}
+	if migrations[12].Name != "remediation_evidence" {
+		t.Fatalf("migration 000013 name = %q", migrations[12].Name)
+	}
+	if migrations[13].Name != "scope_remediation_evidence_dedup" {
+		t.Fatalf("migration 000014 name = %q", migrations[13].Name)
+	}
 	requiredSchema := []string{
 		"CREATE TABLE users",
 		"CONSTRAINT users_role_known",
@@ -95,6 +104,30 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	}
 	if strings.Contains(migrations[1].SQL, "job_outbox") {
 		t.Fatal("migration 000002 still creates job_outbox")
+	}
+	if migrations[14].Name != "remediation_continuation" {
+		t.Fatalf("migration 000015 name = %q", migrations[14].Name)
+	}
+	requiredContinuationSchema := []string{
+		"ADD COLUMN continuation_of_run_id uuid",
+		"ADD COLUMN trigger_reason text NOT NULL DEFAULT ''",
+		"ADD COLUMN continuation_reason text NOT NULL DEFAULT ''",
+		"ADD COLUMN context_version bigint NOT NULL DEFAULT 0",
+		"ADD COLUMN terminal_reason text NOT NULL DEFAULT ''",
+		"ADD COLUMN retryable boolean NOT NULL DEFAULT false",
+		"remediation_run_continuation_of_run_fk",
+		"remediation_run_context_version_nonnegative",
+		"COMMENT ON COLUMN remediation_run.continuation_of_run_id IS",
+		"COMMENT ON COLUMN remediation_run.trigger_reason IS",
+		"COMMENT ON COLUMN remediation_run.continuation_reason IS",
+		"COMMENT ON COLUMN remediation_run.context_version IS",
+		"COMMENT ON COLUMN remediation_run.terminal_reason IS",
+		"COMMENT ON COLUMN remediation_run.retryable IS",
+	}
+	for _, fragment := range requiredContinuationSchema {
+		if !strings.Contains(migrations[14].SQL, fragment) {
+			t.Errorf("migration 000015 does not contain %q", fragment)
+		}
 	}
 
 	requiredProjectSchema := []string{
@@ -221,6 +254,45 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	for _, fragment := range requiredWebhookTokenSchema {
 		if !strings.Contains(migrations[9].SQL, fragment) {
 			t.Errorf("migration 000010 does not contain %q", fragment)
+		}
+	}
+	requiredToolPolicySchema := []string{
+		"CREATE TABLE remediation_tool_policy",
+		"remediation_tool_policy_source_same_project",
+		"remediation_tool_policy_version_positive",
+		"remediation_tool_policy_hash_bounded",
+		"remediation_tool_policy_entries_bounded",
+	}
+	for _, fragment := range requiredToolPolicySchema {
+		if !strings.Contains(migrations[11].SQL, fragment) {
+			t.Errorf("migration 000012 does not contain %q", fragment)
+		}
+	}
+	requiredEvidenceSchema := []string{
+		"CREATE TABLE remediation_evidence",
+		"CREATE TABLE remediation_evidence_assessment",
+		"remediation_evidence_project_environment_source_same_scope",
+		"remediation_evidence_classification_known",
+		"remediation_evidence_payload_bounded",
+		"remediation_evidence_assessment_confidence_cap_valid",
+		"remediation_evidence_assessment_arrays_bounded",
+	}
+	for _, fragment := range requiredEvidenceSchema {
+		if !strings.Contains(migrations[12].SQL, fragment) {
+			t.Errorf("migration 000013 does not contain %q", fragment)
+		}
+	}
+	requiredEvidenceDedupScope := []string{
+		"DROP INDEX remediation_evidence_project_dedup_idx",
+		"evidence.incident_id <> series.incident_id",
+		"SET run_id = NULL",
+		"remediation_evidence_scope_dedup_idx",
+		"(project_id, incident_id, run_id, deduplication_key)",
+		"NULLS NOT DISTINCT",
+	}
+	for _, fragment := range requiredEvidenceDedupScope {
+		if !strings.Contains(migrations[13].SQL, fragment) {
+			t.Errorf("migration 000014 does not contain %q", fragment)
 		}
 	}
 }

@@ -289,7 +289,9 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 	session, err := c.resolveSession(ctx, req.ProjectID)
 	if err != nil {
 		if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
-			return domain.ModelResult{}, ErrModelTurnTimeout
+			return domain.ModelResult{}, &domain.ProviderRuntimeError{
+				Code: "provider_timeout", Retryable: true, Cause: ErrModelTurnTimeout,
+			}
 		}
 		return domain.ModelResult{}, err
 	}
@@ -518,16 +520,13 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		resp, err := c.http.Do(httpReq)
 		elapsed := time.Since(started)
 		if err != nil {
-			wrapped := fmt.Errorf("call openai: %w", err)
-			if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
-				wrapped = fmt.Errorf("call openai: %w", ErrModelTurnTimeout)
-			}
+			wrapped := fmt.Errorf("call openai: %w", classifyOpenAITransportFailure(ctx, err))
 			c.logRequest(ctx, endpoint, session.model, payload, 0, elapsed, nil, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, err) {
 				return nil, 0, elapsed, wrapped
 			}
 			if err := waitForOpenAIRetry(ctx, attempt, ""); err != nil {
-				return nil, 0, elapsed, err
+				return nil, 0, elapsed, classifyOpenAITransportFailure(ctx, err)
 			}
 			continue
 		}
@@ -535,16 +534,13 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 		_ = resp.Body.Close()
 		if readErr != nil {
-			wrapped := fmt.Errorf("read openai response: %w", readErr)
-			if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
-				wrapped = fmt.Errorf("read openai response: %w", ErrModelTurnTimeout)
-			}
+			wrapped := fmt.Errorf("read openai response: %w", classifyOpenAITransportFailure(ctx, readErr))
 			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, readErr) {
 				return nil, resp.StatusCode, elapsed, wrapped
 			}
 			if err := waitForOpenAIRetry(ctx, attempt, resp.Header.Get("Retry-After")); err != nil {
-				return nil, resp.StatusCode, elapsed, err
+				return nil, resp.StatusCode, elapsed, classifyOpenAITransportFailure(ctx, err)
 			}
 			continue
 		}
@@ -554,13 +550,13 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 			return nil, resp.StatusCode, elapsed, wrapped
 		}
 		if resp.StatusCode != http.StatusOK {
-			wrapped := fmt.Errorf("openai returned status %d", resp.StatusCode)
+			wrapped := fmt.Errorf("openai returned status %d: %w", resp.StatusCode, openAIStatusFailure(resp.StatusCode))
 			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAIStatus(resp.StatusCode) {
 				return nil, resp.StatusCode, elapsed, wrapped
 			}
 			if err := waitForOpenAIRetry(ctx, attempt, resp.Header.Get("Retry-After")); err != nil {
-				return nil, resp.StatusCode, elapsed, err
+				return nil, resp.StatusCode, elapsed, classifyOpenAITransportFailure(ctx, err)
 			}
 			continue
 		}
@@ -589,6 +585,40 @@ func retryableOpenAIStatus(status int) bool {
 	default:
 		return false
 	}
+}
+
+func classifyOpenAITransportFailure(ctx context.Context, cause error) error {
+	if cause == nil {
+		return nil
+	}
+	if errors.Is(context.Cause(ctx), ErrModelTurnTimeout) {
+		return &domain.ProviderRuntimeError{
+			Code: "provider_timeout", Retryable: true,
+			Cause: errors.Join(cause, ErrModelTurnTimeout),
+		}
+	}
+	if ctx.Err() != nil || !retryableOpenAITransport(ctx, cause) {
+		return cause
+	}
+	var networkFailure net.Error
+	if errors.As(cause, &networkFailure) && networkFailure.Timeout() {
+		return &domain.ProviderRuntimeError{Code: "provider_timeout", Retryable: true, Cause: cause}
+	}
+	return &domain.ProviderRuntimeError{Code: "provider_transport", Retryable: true, Cause: cause}
+}
+
+func openAIStatusFailure(status int) *domain.ProviderRuntimeError {
+	code := "provider_http_4xx"
+	retryable := false
+	switch status {
+	case http.StatusTooManyRequests:
+		code, retryable = "provider_rate_limit", true
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		code, retryable = "provider_timeout", true
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		code, retryable = "provider_http_5xx", true
+	}
+	return &domain.ProviderRuntimeError{Code: code, Retryable: retryable}
 }
 
 func waitForOpenAIRetry(ctx context.Context, attempt int, retryAfter string) error {

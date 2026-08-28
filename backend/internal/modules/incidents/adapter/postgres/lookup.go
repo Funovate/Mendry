@@ -58,5 +58,6 @@ func identityFromIncident(incident domain.Incident) application.IncidentIdentity
 		DeployedCommit:      incident.DeployedCommit,
 		Number:              incident.Number,
 		LifecycleGeneration: incident.LifecycleGeneration,
+		ContextVersion:      incident.Version,
 	}
 }

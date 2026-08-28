@@ -302,6 +302,7 @@ func createRemediationRoot(ctx context.Context, tx pgx.Tx, request *application.
 		DeployedCommit:      request.DeployedCommit,
 		Priority:            request.Priority,
 		TriggerReason:       request.Reason,
+		ContextVersion:      request.ContextVersion,
 	})
 	if err != nil {
 		return newRepositoryError("create remediation root", err)

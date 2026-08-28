@@ -27,7 +27,10 @@ func NewFailureReporter(logger *slog.Logger) (*FailureReporter, error) {
 	return &FailureReporter{logger: logger}, nil
 }
 
-var _ remediationapplication.FailureReporter = (*FailureReporter)(nil)
+var (
+	_ remediationapplication.FailureReporter = (*FailureReporter)(nil)
+	_ remediationapplication.GateReporter    = (*FailureReporter)(nil)
+)
 
 // Report 记录失败原因、cause chain 和 origin stack，不记录 webhook/model payload。
 func (r *FailureReporter) Report(ctx context.Context, request remediationapplication.TriggerRequest, cause error) {
@@ -52,6 +55,22 @@ func (r *FailureReporter) Report(ctx context.Context, request remediationapplica
 		slog.Any(observability.FieldErrorCauses, collectErrorCauses(cause)),
 		slog.String(observability.FieldErrorStack, stack.String()),
 		slog.String(observability.FieldErrorStackSource, stackSource),
+	)
+}
+
+func (r *FailureReporter) ReportGate(ctx context.Context, request remediationapplication.TriggerRequest, observation remediationapplication.GateObservation) {
+	if observation.Outcome == "" || observation.Reason == "" {
+		return
+	}
+	observability.Log(ctx, r.logger, slog.LevelInfo, observability.EventRemediationContinuationGate, "remediation continuation gate evaluated",
+		slog.String(observability.FieldComponent, "remediation"),
+		slog.String(observability.FieldIncidentID, request.IncidentID),
+		slog.Int64(observability.FieldLifecycleGeneration, request.LifecycleGeneration),
+		slog.Int64(observability.FieldContextVersion, request.ContextVersion),
+		slog.String("priority", request.Priority),
+		slog.String("trigger_reason", request.Reason),
+		slog.String(observability.FieldGateOutcome, observation.Outcome),
+		slog.String(observability.FieldGateReason, observation.Reason),
 	)
 }
 

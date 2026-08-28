@@ -14,14 +14,15 @@ import (
 // repository, evidence, and SSH inspect tools exist; any other identifier
 // (including reserved mutation/execution tools) is rejected as tool_unavailable.
 const (
-	ToolRepoListTree    = "repository.list_tree"
-	ToolRepoReadFile    = "repository.read_file"
-	ToolRepoSearch      = "repository.search"
-	ToolRepoHistory     = "repository.history"
-	ToolEvidenceSearch  = "evidence.search"
-	ToolEvidenceContext = "evidence.context"
-	ToolSSHInspect      = "ssh.inspect"
-	ToolDockerLogs      = "docker.logs"
+	ToolRepoListTree     = "repository.list_tree"
+	ToolRepoReadFile     = "repository.read_file"
+	ToolRepoSearch       = "repository.search"
+	ToolRepoHistory      = "repository.history"
+	ToolEvidenceSearch   = "evidence.search"
+	ToolEvidenceContext  = "evidence.context"
+	ToolSSHInspect       = "ssh.inspect"
+	ToolDockerLogs       = "docker.logs"
+	ToolTencentCLSDetail = "evidence.tencent_cls_detail"
 )
 
 // ToolRejectionCode is a stable machine code for a rejected tool request. The
@@ -123,12 +124,13 @@ func (g *ToolGateway) ExecuteToolObserved(
 // The gateway holds only domain ports; it never receives credentials or raw
 // clients. Adapters inject their own credentials internally.
 type ToolGateway struct {
-	repoPort       domain.RepositoryReadPort
-	evidencePort   domain.EvidenceLogPort
-	inspectPort    domain.SSHInspectPort
-	dockerPort     domain.DockerEvidencePort
-	dynamicRuntime domain.DynamicToolRuntimePort
-	policyResolver domain.ToolPolicyResolver
+	repoPort          domain.RepositoryReadPort
+	evidencePort      domain.EvidenceLogPort
+	inspectPort       domain.SSHInspectPort
+	dockerPort        domain.DockerEvidencePort
+	tencentDetailPort domain.TencentCLSDetailPort
+	dynamicRuntime    domain.DynamicToolRuntimePort
+	policyResolver    domain.ToolPolicyResolver
 
 	maxReadBytes   int64
 	maxTreeEntries int
@@ -155,6 +157,12 @@ func NewToolGateway(
 // Docker deployment without changing the legacy gateway constructor.
 func (g *ToolGateway) SetDockerEvidencePort(port domain.DockerEvidencePort) {
 	g.dockerPort = port
+}
+
+// SetTencentCLSDetailPort 注入 incident-bound 的 public detail reader，供 mandatory
+// pre-diagnosis evidence gate 使用。
+func (g *ToolGateway) SetTencentCLSDetailPort(port domain.TencentCLSDetailPort) {
+	g.tencentDetailPort = port
 }
 
 // AdvertisedTools returns the read tool identifiers available in the given
@@ -224,6 +232,9 @@ func (g *ToolGateway) advertisedToolDefinitions(names []string) []domain.ToolDef
 
 func toolParameterSchema(tool string) map[string]interface{} {
 	object := func(properties map[string]interface{}, required ...string) map[string]interface{} {
+		if properties == nil {
+			properties = map[string]interface{}{}
+		}
 		schema := map[string]interface{}{
 			"type":                 "object",
 			"properties":           properties,
@@ -274,10 +285,15 @@ func toolParameterSchema(tool string) map[string]interface{} {
 		}, "command")
 	case ToolDockerLogs:
 		return object(map[string]interface{}{
-			"since": stringProperty("RFC3339 start of the bounded incident window."),
-			"until": stringProperty("RFC3339 end of the bounded incident window."),
-			"tail":  map[string]interface{}{"type": "integer", "minimum": 1, "maximum": maxDockerLogLines},
+			"since":          stringProperty("RFC3339 start of the bounded incident window."),
+			"until":          stringProperty("RFC3339 end of the bounded incident window."),
+			"tail":           map[string]interface{}{"type": "integer", "minimum": 1, "maximum": maxDockerLogLines},
+			"pattern":        map[string]interface{}{"type": "string", "description": "Optional bounded regular expression matched remotely before the tail limit.", "minLength": 1, "maxLength": maxDockerPatternBytes},
+			"context_after":  map[string]interface{}{"type": "integer", "description": "Lines to include after each matching line.", "minimum": 0, "maximum": 100},
+			"context_before": map[string]interface{}{"type": "integer", "description": "Lines to include before each matching line.", "minimum": 0, "maximum": 100},
 		}, "since", "until", "tail")
+	case ToolTencentCLSDetail:
+		return object(nil)
 	case ToolSourceSearchTools:
 		return object(map[string]interface{}{
 			"query": map[string]interface{}{
@@ -294,14 +310,15 @@ func toolParameterSchema(tool string) map[string]interface{} {
 }
 
 var toolDescriptions = map[string]string{
-	ToolRepoListTree:       "List repository entries at the deployed commit.",
-	ToolRepoReadFile:       "Read a bounded file at the deployed commit.",
-	ToolRepoSearch:         "Search repository content at the deployed commit.",
-	ToolRepoHistory:        "Read bounded commit history for a path.",
+	ToolRepoListTree:       "List repository entries at the current production branch tip.",
+	ToolRepoReadFile:       "Read a bounded file at the current production branch tip.",
+	ToolRepoSearch:         "Search repository content at the current production branch tip.",
+	ToolRepoHistory:        "Read bounded commit history from the current production branch for a path.",
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
 	ToolSSHInspect:         "Inspect the SSH host with an allowlisted command. List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath.",
 	ToolDockerLogs:         "Read bounded stdout and stderr from the configured Docker container. The container identity comes from saved project configuration.",
+	ToolTencentCLSDetail:   "Required for Tencent CLS webhooks: fetch the current incident's validated public detail record. This tool takes no URL and must succeed before diagnosis or stop.",
 	ToolSourceSearchTools:  "Find and activate approved MCP tools for the current remediation phase.",
 	ToolSourceRefreshTools: "Refresh the approved MCP tool catalog for this source.",
 }
@@ -311,7 +328,7 @@ var toolDescriptions = map[string]string{
 func (g *ToolGateway) isRegistered(tool string) bool {
 	switch tool {
 	case ToolRepoListTree, ToolRepoReadFile, ToolRepoSearch, ToolRepoHistory,
-		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect, ToolDockerLogs:
+		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect, ToolDockerLogs, ToolTencentCLSDetail:
 		return true
 	default:
 		return false
@@ -423,14 +440,18 @@ func validateToolParameters(tool string, params map[string]interface{}) error {
 	}
 	for key, value := range params {
 		switch key {
-		case "path", "query", "pathGlob", "level", "evidenceId", "command", "since", "until":
+		case "path", "query", "pathGlob", "level", "evidenceId", "command", "since", "until", "pattern":
 			if _, ok := value.(string); !ok {
 				return fmt.Errorf("%s must be a string", key)
 			}
 		case "maxBytes", "tail":
 			n, ok := numericArg(value)
-			if !ok || n < 1 {
-				return fmt.Errorf("maxBytes must be a positive integer")
+			if !ok || !isIntegerArgument(value) || n < 1 {
+				return fmt.Errorf("%s must be a positive integer", key)
+			}
+		case "context_after", "context_before":
+			if !isIntegerArgument(value) {
+				return fmt.Errorf("%s must be an integer", key)
 			}
 		case "keywords":
 			switch items := value.(type) {

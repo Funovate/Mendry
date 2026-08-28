@@ -39,6 +39,67 @@ func TestProtocolCorrectionForConfidenceTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestProtocolCorrectionForStopRecommendation(t *testing.T) {
+	raw := `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed"}}`
+	_, cause := DecodeEnvelope(raw)
+	if cause == nil {
+		t.Fatal("DecodeEnvelope() unexpectedly accepted stop without recommendation")
+	}
+
+	correction := ProtocolCorrectionFor(domain.RunStateDiagnosing, cause)
+	if correction.Code != protocolCorrectionRequiredStopSuggestion ||
+		correction.Path != protocolCorrectionRequiredStopSuggestionPath ||
+		correction.ExpectedField != "non-empty string" {
+		t.Fatalf("correction = %#v", correction)
+	}
+	if !strings.Contains(correction.Message, stopWireContractInstruction) {
+		t.Fatalf("correction omitted stop wire contract: %s", correction.Message)
+	}
+	conversation := NewAgentConversation("bootstrap")
+	conversation.AppendProtocolError(domain.RunStateDiagnosing, correction)
+	observed := conversation.ContextText()
+	for _, want := range []string{"required_stop_suggestion", "stop.recommendedNextAction", "non-empty bounded handoff suggestion"} {
+		if !strings.Contains(observed, want) {
+			t.Fatalf("conversation missing %q: %s", want, observed)
+		}
+	}
+}
+
+func TestProtocolCorrectionForStopRecommendationTypeMismatch(t *testing.T) {
+	raw := `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed","recommendedNextAction":{"private":"do-not-replay"}}}`
+	_, cause := DecodeEnvelope(raw)
+	if cause == nil {
+		t.Fatal("DecodeEnvelope() unexpectedly accepted a non-string stop recommendation")
+	}
+	correction := ProtocolCorrectionFor(domain.RunStateDiagnosing, cause)
+	if correction.Code != protocolCorrectionRequiredStopSuggestion || correction.Path != protocolCorrectionRequiredStopSuggestionPath {
+		t.Fatalf("correction = %#v", correction)
+	}
+	if strings.Contains(correction.Message, "do-not-replay") {
+		t.Fatalf("correction leaked invalid stop value: %s", correction.Message)
+	}
+}
+
+func TestProtocolCorrectionDoesNotConfuseDiagnosisRecommendationType(t *testing.T) {
+	raw := `{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"fixability":"insufficient_evidence","confidence":0.2,"causalReasoning":"need evidence","contradictions":[],"missingEvidence":[],"evidenceCitations":[],"recommendedNextAction":{"private":"do-not-replay"}}}`
+	_, cause := DecodeEnvelope(raw)
+	if cause == nil {
+		t.Fatal("DecodeEnvelope() unexpectedly accepted a non-string diagnosis recommendation")
+	}
+	correction := ProtocolCorrectionFor(domain.RunStateDiagnosing, cause)
+	if correction.Code == protocolCorrectionRequiredStopSuggestion {
+		t.Fatalf("diagnosis correction was misclassified as stop correction: %#v", correction)
+	}
+}
+
+func TestDiagnosingPromptRequiresStopRecommendation(t *testing.T) {
+	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
+	if !strings.Contains(prompt, stopWireContractInstruction) ||
+		!strings.Contains(prompt, "stop.recommendedNextAction") {
+		t.Fatalf("diagnosing prompt omitted stop contract: %s", prompt)
+	}
+}
+
 func TestProtocolCorrectionForTimeAssessmentValidation(t *testing.T) {
 	raw := `{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{` +
 		`"fixability":"insufficient_evidence","confidence":0.2,"causalReasoning":"need evidence",` +

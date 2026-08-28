@@ -232,6 +232,28 @@ func TestCoordinator_InsufficientEvidenceBoundedLoop(t *testing.T) {
 	}
 }
 
+func TestCoordinator_InsufficientEvidenceWithoutCollectionStopsImmediately(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 1 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/1", store.state, model.calls)
+	}
+	if store.countTransitionsTo(domain.RunStateCollectingMoreContext) != 0 || len(store.invocations) != 0 || len(store.decisions) != 1 {
+		t.Fatalf("empty collection loop was consumed: transitions=%#v invocations=%#v decisions=%#v", store.transitions, store.invocations, store.decisions)
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
 // TestCoordinator_InsufficientThenCodeFixable verifies the loop can recover:
 // collect once, then a code-fixable diagnosis reaches diagnosis_ready.
 func TestCoordinator_InsufficientThenCodeFixable(t *testing.T) {
@@ -481,7 +503,7 @@ func TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn(t *testing.T) {
 }
 
 // TestCoordinator_StopReachesBlockedManualReview verifies a model stop routes
-// to blocked_manual_review.
+// to blocked_manual_review and persists its human handoff suggestion.
 func TestCoordinator_StopReachesBlockedManualReview(t *testing.T) {
 	model := &scriptedModel{responses: []string{stopEnvelope()}}
 	store, _, err := runStart(t, model)
@@ -490,6 +512,37 @@ func TestCoordinator_StopReachesBlockedManualReview(t *testing.T) {
 	}
 	if store.state != domain.RunStateBlockedManualReview {
 		t.Fatalf("final state = %s, want blocked_manual_review", store.state)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1", len(store.decisions))
+	}
+	decision := store.decisions[0]
+	if decision.Fixability != domain.FixabilityUnsafeToAutomate ||
+		decision.RecommendedNextAction != "ask an operator to collect the missing runtime evidence" {
+		t.Fatalf("stop decision = %#v", decision)
+	}
+}
+
+func TestCoordinator_StopWithoutRecommendationIsRetried(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		`{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed","recommendedNextAction":"   "}}`,
+		stopEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 2 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/2", store.state, model.calls)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want one decision from the corrected stop", len(store.decisions))
+	}
+	correction := model.turns[1].UserMessage
+	for _, want := range []string{"required_stop_suggestion", "stop.recommendedNextAction", "non-empty bounded handoff suggestion"} {
+		if !strings.Contains(correction, want) {
+			t.Fatalf("retry correction missing %q: %s", want, correction)
+		}
 	}
 }
 

@@ -13,14 +13,17 @@ import (
 )
 
 type catalogRuntime struct {
-	discovered  domain.DynamicToolCatalog
-	discoverErr error
-	result      domain.DynamicToolResult
-	callErr     error
-	calls       []domain.DynamicToolCall
+	discovered    domain.DynamicToolCatalog
+	discoverErr   error
+	result        domain.DynamicToolResult
+	callErr       error
+	discoverCalls int
+	closeCalls    int
+	calls         []domain.DynamicToolCall
 }
 
 func (r *catalogRuntime) Discover(context.Context, domain.DynamicToolScope) (domain.DynamicToolCatalog, error) {
+	r.discoverCalls++
 	return r.discovered, r.discoverErr
 }
 
@@ -29,7 +32,10 @@ func (r *catalogRuntime) Call(_ context.Context, _ domain.DynamicToolScope, call
 	return r.result, r.callErr
 }
 
-func (r *catalogRuntime) CloseRun(context.Context, string) error { return nil }
+func (r *catalogRuntime) CloseRun(context.Context, string) error {
+	r.closeCalls++
+	return nil
+}
 
 type catalogPolicy struct {
 	snapshot domain.ToolPolicySnapshot
@@ -133,6 +139,28 @@ func activateDynamicTool(t *testing.T, gateway *application.ToolGateway, catalog
 		t.Fatalf("search match has no name: %#v", matches[0])
 	}
 	return name
+}
+
+func TestAnalysisOnlyCatalogSkipsDynamicRuntimeAndEvidenceTools(t *testing.T) {
+	runtime := &catalogRuntime{discovered: mcpDiscovery("query_logs")}
+	gateway := application.NewToolGatewayWithDynamicRuntime(
+		&fakeRepoPort{}, &fakeEvidencePort{}, nil, runtime, &catalogPolicy{snapshot: mcpPolicy("query_logs")},
+	)
+	catalog := gateway.BuildAnalysisOnlyCatalog("run-2", domain.RunStateDiagnosing, domain.EvidenceScope{
+		ProjectID: "project-1", SourceID: "source-1",
+	})
+	definitions := catalog.DefinitionsForPhase(domain.RunStateDiagnosing)
+	if len(definitions) != 4 {
+		t.Fatalf("analysis-only definitions = %#v", definitions)
+	}
+	for _, definition := range definitions {
+		if !strings.HasPrefix(definition.Name, "repository.") {
+			t.Fatalf("analysis-only catalog exposed %q", definition.Name)
+		}
+	}
+	if runtime.discoverCalls != 0 || len(runtime.calls) != 0 || runtime.closeCalls != 0 {
+		t.Fatalf("analysis-only runtime calls = discover:%d call:%d close:%d", runtime.discoverCalls, len(runtime.calls), runtime.closeCalls)
+	}
 }
 
 func TestDynamicCatalogFiltersPolicyAndPreservesNamespacedMetadata(t *testing.T) {

@@ -331,6 +331,132 @@
   gap: 14px;
 }
 
+.remediation-actions,
+.remediation-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.remediation-empty {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.remediation-actions .readonly-note,
+.remediation-empty .readonly-note {
+  margin: 0;
+}
+
+.remediation-manual-suggestion {
+  padding: 14px 16px;
+  color: #5f3b12;
+  background: #fff8e8;
+  border: 1px solid #e4bd76;
+  border-left: 4px solid #bd6e1e;
+  border-radius: var(--radius-control);
+  overflow-wrap: anywhere;
+}
+
+.remediation-manual-suggestion h3 {
+  margin: 0 0 7px;
+  color: #8b4f13;
+  font-size: 14px;
+}
+
+.remediation-manual-suggestion p {
+  margin: 0;
+  color: #5f3b12;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remediation-missing-evidence {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #efd39f;
+}
+
+.remediation-missing-evidence h4 {
+  margin: 0 0 5px;
+  color: #8b4f13;
+  font-size: 11px;
+}
+
+.remediation-missing-evidence ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #6f4a20;
+  font-size: 12px;
+}
+
+.remediation-missing-evidence li {
+  margin: 3px 0;
+}
+
+.remediation-action-success {
+  margin: 0;
+  padding: 8px 10px;
+  color: #236d60;
+  background: #eff9f6;
+  border: 1px solid #d1ebe4;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+
+.remediation-attempts {
+  border-top: 1px solid #e2e8eb;
+  padding-top: 13px;
+}
+
+.remediation-attempts h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.remediation-attempts ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.remediation-attempts li {
+  min-width: 0;
+  padding: 9px 10px;
+  color: #374f5a;
+  background: #f7f9fa;
+  border: 1px solid #e1e8eb;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+
+.attempt-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.attempt-heading span,
+.remediation-attempts li p,
+.remediation-attempts li time {
+  color: #70808d;
+  font-size: 11px;
+}
+
+.remediation-attempts li p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.remediation-attempts li time {
+  display: block;
+  margin-top: 6px;
+}
+
 .remediation-diagnosis h3 {
   margin: 0 0 6px;
   font-size: 13px;

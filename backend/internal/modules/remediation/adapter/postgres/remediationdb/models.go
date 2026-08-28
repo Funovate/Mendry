@@ -95,7 +95,7 @@ type RemediationEvidence struct {
 	ObservationID pgtype.UUID
 	Provider      string
 	EvidenceKind  string
-	// Stable connector-owned append key used to make callback/detail persistence idempotent without storing a URL capability.
+	// Stable connector-owned append key unique within the owning incident and run; retries stay idempotent without reassigning evidence across ownership boundaries.
 	DeduplicationKey string
 	// Trusted evidence classification used by the service-owned diagnosis gate, never assigned by model text.
 	Classification         string
@@ -196,6 +196,18 @@ type RemediationRun struct {
 	RepositoryBytes int64
 	// run 聚合的单调递增版本号，供状态迁移时执行乐观并发控制。
 	Version int64
+	// Direct predecessor run for a continuation attempt; NULL identifies a root attempt and prior runs remain immutable history.
+	ContinuationOfRunID pgtype.UUID
+	// Safe origin classification: automatic, manual, automatic_continue, or manual_continue; never a webhook body or provider message.
+	TriggerReason string
+	// Bounded operator or system reason for creating this continuation; contains no credentials, prompts, payloads, or unrestricted error text.
+	ContinuationReason string
+	// Incident and evidence context version observed when this attempt was admitted; used to require newer context for automatic continuation.
+	ContextVersion int64
+	// Safe terminal classification recorded by remediation; never stores a raw provider, model, connector, or database error.
+	TerminalReason string
+	// Service-owned eligibility marker for bounded automatic continuation; false is conservative for legacy and non-transient outcomes.
+	Retryable bool
 }
 
 // 一次事故在固定 lifecycle_generation 与 deployed_commit 下的 remediation 系列；唯一键阻止同一基线重复建根 run。

@@ -17,6 +17,7 @@ func TestPortContractNoCredentials(t *testing.T) {
 		(*domain.SSHInspectPort)(nil),
 		(*domain.LLMProviderPort)(nil),
 		(*domain.RunStore)(nil),
+		(*domain.AttemptStore)(nil),
 	}
 
 	forbiddenTypes := []string{
@@ -121,6 +122,7 @@ func TestContextIsFirstParameter(t *testing.T) {
 		(*domain.SSHInspectPort)(nil),
 		(*domain.LLMProviderPort)(nil),
 		(*domain.RunStore)(nil),
+		(*domain.AttemptStore)(nil),
 	}
 
 	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()

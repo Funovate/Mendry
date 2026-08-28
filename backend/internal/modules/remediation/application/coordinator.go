@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"fixthe/backend/internal/modules/remediation/domain"
@@ -57,6 +58,7 @@ type IncidentIdentity struct {
 	DeployedCommit      string
 	Number              int64
 	LifecycleGeneration int64
+	ContextVersion      int64
 }
 
 // IncidentLookup 按事故编号或内部 UUID 解析项目/来源身份与 series key。
@@ -261,28 +263,153 @@ func (c *RemediationCoordinator) Start(ctx context.Context, in domain.NewRun) (d
 	if run.State != domain.RunStateQueued {
 		return run, nil
 	}
+	return c.runQueued(ctx, run, "", domain.RunStateDiagnosing, in.TriggerReason, in.Priority, nil)
+}
+
+// Continue 创建并驱动一个新的 linked attempt。已通过 evidence gate 的 durable
+// code_fixable diagnosis 可直接恢复 planning；其余前置结果仍从 diagnosis 重新验证。
+// AttemptStore 在事务内再次执行 predecessor/version 检查。
+func (c *RemediationCoordinator) Continue(ctx context.Context, in domain.NextAttempt) (domain.Run, error) {
+	child, brief, resumePhase, priorInvocations, err := c.prepareContinuation(ctx, in)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	return c.runQueued(ctx, child, brief, resumePhase, child.TriggerReason, "", priorInvocations)
+}
+
+// prepareContinuation 只执行 continuation 的读取、校验和 queued child 持久化。
+// 它不访问 connector 或 model，使 HTTP 可以在创建 attempt 后立即返回；调用方
+// 负责决定同步驱动还是在脱离请求取消的后台上下文中驱动。
+func (c *RemediationCoordinator) prepareContinuation(
+	ctx context.Context,
+	in domain.NextAttempt,
+) (domain.Run, string, domain.RunState, []domain.ToolInvocation, error) {
+	if err := in.Validate(); err != nil {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+	}
+	attempts, ok := c.store.(domain.AttemptStore)
+	if !ok {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation attempt store is required")
+	}
+	predecessor, err := c.store.Get(ctx, in.ContinuationOfRunID)
+	if err != nil {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("load continuation predecessor: %w", err)
+	}
+	if err := validateContinuationPredecessor(predecessor.Run, in); err != nil {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, err
+	}
+	var planningCheckpoint *domain.RunAggregate
+	if predecessor.Run.ContextVersion == in.ContextVersion {
+		checkpoints, ok := c.store.(domain.PlanningCheckpointStore)
+		if !ok {
+			return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation planning checkpoint store is required")
+		}
+		checkpoint, checkpointErr := checkpoints.GetLatestPlanningCheckpoint(
+			ctx, in.SeriesID, in.ContextVersion, predecessor.Run.AttemptNumber,
+		)
+		switch {
+		case checkpointErr == nil:
+			if !validContinuationPlanningCheckpoint(checkpoint, predecessor.Run, in) {
+				return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation planning checkpoint is invalid")
+			}
+			planningCheckpoint = &checkpoint
+		case errors.Is(checkpointErr, domain.ErrPlanningCheckpointNotFound):
+			// 同一 context 没有 durable code_fixable checkpoint 时按正常 diagnosis 路径继续。
+		default:
+			return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("load continuation planning checkpoint: %w", checkpointErr)
+		}
+	}
+	brief := buildContinuationBrief(predecessor, planningCheckpoint, in)
+	resumePhase := continuationResumePhase(planningCheckpoint)
+	child, err := attempts.CreateNextAttempt(ctx, in)
+	if err != nil {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, err
+	}
+	if child.State != domain.RunStateQueued || child.RunID == "" || child.SeriesID != in.SeriesID ||
+		child.IncidentID != in.IncidentID || child.LifecycleGeneration != in.LifecycleGeneration ||
+		child.DeployedCommit != in.DeployedCommit || child.ContinuationOfRunID != in.ContinuationOfRunID ||
+		child.AttemptNumber != predecessor.Run.AttemptNumber+1 {
+		return domain.Run{}, "", domain.RunStateDiagnosing, nil, domain.ErrStalePredecessor
+	}
+	return child, brief, resumePhase, predecessor.ToolInvocations, nil
+}
+
+func continuationResumePhase(checkpoint *domain.RunAggregate) domain.RunState {
+	if checkpoint != nil {
+		// checkpoint 查询只返回同一 context 中最新的 durable code_fixable decision；
+		// 后续失败 attempt 的低质量 diagnosis 不能覆盖已经通过的 evidence gate。
+		return domain.RunStatePlanning
+	}
+	return domain.RunStateDiagnosing
+}
+
+func validContinuationPlanningCheckpoint(checkpoint domain.RunAggregate, predecessor domain.Run, in domain.NextAttempt) bool {
+	if checkpoint.Run.RunID == "" || checkpoint.Run.SeriesID != in.SeriesID ||
+		checkpoint.Run.IncidentID != in.IncidentID || checkpoint.Run.LifecycleGeneration != in.LifecycleGeneration ||
+		checkpoint.Run.DeployedCommit != in.DeployedCommit || checkpoint.Run.ContextVersion != in.ContextVersion ||
+		checkpoint.Run.AttemptNumber < 1 || checkpoint.Run.AttemptNumber > predecessor.AttemptNumber ||
+		len(checkpoint.Decisions) == 0 {
+		return false
+	}
+	return checkpoint.Decisions[len(checkpoint.Decisions)-1].Fixability == domain.FixabilityCodeFixable
+}
+
+func validateContinuationPredecessor(run domain.Run, in domain.NextAttempt) error {
+	if run.RunID != in.ContinuationOfRunID || run.SeriesID != in.SeriesID ||
+		run.IncidentID != in.IncidentID || run.LifecycleGeneration != in.LifecycleGeneration ||
+		run.DeployedCommit != in.DeployedCommit || run.Version != in.ExpectedPreviousVersion {
+		return domain.ErrStalePredecessor
+	}
+	return nil
+}
+
+func (c *RemediationCoordinator) runQueued(
+	ctx context.Context,
+	run domain.Run,
+	continuationBrief string,
+	resumePhase domain.RunState,
+	triggerReason string,
+	priority string,
+	priorInvocations []domain.ToolInvocation,
+) (domain.Run, error) {
 	started := time.Now()
 	ctx = withRunObservationContext(ctx, run)
+	if triggerReason == "" {
+		triggerReason = run.TriggerReason
+	}
+	claimedRun, claimed, err := c.claimQueued(ctx, run)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	if !claimed {
+		return claimedRun, nil
+	}
 	c.observer.RunStarted(ctx, RunStartedObservation{
-		Run: runIdentity(run), Phase: run.State, TriggerReason: in.TriggerReason, Priority: in.Priority,
+		Run: runIdentity(run), Phase: run.State, TriggerReason: triggerReason, Priority: priority,
+	})
+	c.observer.StateTransitioned(ctx, StateTransitionObservation{
+		Run: runIdentity(run), From: domain.RunStateQueued, To: domain.RunStatePreparingContext,
+		Effect: domain.Effect{},
 	})
 	ref, scope, err := c.resolveRefs(ctx, run)
 	if err != nil {
-		failure := c.fail(ctx, run.RunID, domain.RunStateQueued, err)
+		failure := c.fail(ctx, run.RunID, domain.RunStatePreparingContext, err)
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, failure
 	}
-	if err := c.drive(ctx, run.RunID, ref, scope); err != nil {
+	analysisOnly := triggerReason == domain.TriggerOriginManualContinue
+	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, resumePhase, priorInvocations, analysisOnly); err != nil {
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, err
 	}
-	final, err := c.store.Get(ctx, run.RunID)
+	final, err := c.store.Get(context.WithoutCancel(ctx), run.RunID)
 	if err != nil {
 		c.observeRunCompleted(ctx, run, started, "", "failure")
 		return domain.Run{}, fmt.Errorf("load final run: %w", err)
 	}
 	// Get 聚合不保证带回 series key；用创建结果补齐身份字段。
 	final.Run.IncidentID = run.IncidentID
+	final.Run.SeriesID = run.SeriesID
 	final.Run.LifecycleGeneration = run.LifecycleGeneration
 	final.Run.DeployedCommit = run.DeployedCommit
 	c.observer.RunCompleted(ctx, RunCompletedObservation{
@@ -299,7 +426,7 @@ func (c *RemediationCoordinator) observeRunCompleted(
 	fallback domain.RunState,
 	outcome string,
 ) {
-	aggregate, err := c.store.Get(ctx, run.RunID)
+	aggregate, err := c.store.Get(context.WithoutCancel(ctx), run.RunID)
 	if err != nil {
 		aggregate.Run = run
 		aggregate.Run.State = fallback
@@ -323,6 +450,26 @@ func terminalOutcome(state domain.RunState) string {
 		return "stopped"
 	default:
 		return "success"
+	}
+}
+
+// claimQueued 只负责 queued→preparing_context 的单次 claim。若其他进程或
+// goroutine 先完成 claim，失败方返回当前 durable state，不重复驱动同一 run。
+func (c *RemediationCoordinator) claimQueued(ctx context.Context, run domain.Run) (domain.Run, bool, error) {
+	if err := c.store.Transition(ctx, run.RunID, domain.RunStateQueued, domain.RunStatePreparingContext, domain.Effect{}); err == nil {
+		return run, true, nil
+	} else {
+		current, getErr := c.store.Get(context.WithoutCancel(ctx), run.RunID)
+		if getErr == nil && current.Run.RunID == run.RunID && current.Run.State != domain.RunStateQueued {
+			// Store implementations may omit series identity on a compact read;
+			// preserve the identity already returned by the create operation.
+			current.Run.SeriesID = run.SeriesID
+			current.Run.IncidentID = run.IncidentID
+			current.Run.LifecycleGeneration = run.LifecycleGeneration
+			current.Run.DeployedCommit = run.DeployedCommit
+			return current.Run, false, nil
+		}
+		return domain.Run{}, false, fmt.Errorf("claim queued remediation run: %w", err)
 	}
 }
 
@@ -360,6 +507,7 @@ func (c *RemediationCoordinator) newRunFromRequest(ctx context.Context, req port
 		DeployedCommit:      identity.DeployedCommit,
 		Priority:            identity.Priority,
 		TriggerReason:       TriggerReasonManual,
+		ContextVersion:      identity.ContextVersion,
 	}, nil
 }
 
@@ -377,14 +525,14 @@ func (c *RemediationCoordinator) resolveRefs(ctx context.Context, run domain.Run
 	remoteURL := ""
 	if c.remotes != nil {
 		if identity.ProjectID == "" {
-			return domain.RepoRef{}, domain.EvidenceScope{}, fmt.Errorf("resolve repository remote: project id is required")
+			return domain.RepoRef{}, domain.EvidenceScope{}, markConfigurationFailure(fmt.Errorf("resolve repository remote: project id is required"))
 		}
 		resolved, err := c.remotes.CredentialFreeRemoteURL(ctx, identity.ProjectID)
 		if err != nil {
-			return domain.RepoRef{}, domain.EvidenceScope{}, fmt.Errorf("resolve repository remote: %w", err)
+			return domain.RepoRef{}, domain.EvidenceScope{}, markConfigurationFailure(fmt.Errorf("resolve repository remote: %w", err))
 		}
 		if resolved == "" {
-			return domain.RepoRef{}, domain.EvidenceScope{}, fmt.Errorf("resolve repository remote: remote URL is empty")
+			return domain.RepoRef{}, domain.EvidenceScope{}, markConfigurationFailure(fmt.Errorf("resolve repository remote: remote URL is empty"))
 		}
 		remoteURL = resolved
 	}
@@ -399,21 +547,28 @@ func (c *RemediationCoordinator) resolveRefs(ctx context.Context, run domain.Run
 		}, nil
 }
 
-// drive runs the state machine from queued to a terminal state.
-func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref domain.RepoRef, scope domain.EvidenceScope) error {
+// drive 从已 claim 的 preparing_context 驱动 state machine 到终态。continuation 每次使用新的
+// budget 与 bounded predecessor brief；已通过 gate 的 code_fixable diagnosis 从 planning 恢复。
+func (c *RemediationCoordinator) drive(
+	ctx context.Context,
+	runID string,
+	ref domain.RepoRef,
+	scope domain.EvidenceScope,
+	continuationBrief string,
+	resumePhase domain.RunState,
+	priorInvocations []domain.ToolInvocation,
+	analysisOnly bool,
+) error {
 	budget := newRunBudget(c.budgetLimits)
 
-	// queued → preparing_context
-	if err := c.transition(ctx, runID, domain.RunStateQueued, domain.RunStatePreparingContext, domain.Effect{}); err != nil {
-		return err
-	}
-
+	// runQueued 已经以 optimistic transition claim queued；此处从
+	// preparing_context 继续，避免重复推进或并发驱动同一 root。
 	bootstrap := domain.BootstrapEvidence{}
 	if c.bootstrapLoader != nil {
 		loaded, err := c.bootstrapLoader.LoadBootstrapEvidence(ctx, observationRun(ctx).IncidentID)
 		if err != nil {
 			return c.fail(ctx, runID, domain.RunStatePreparingContext,
-				fmt.Errorf("load triggering evidence: %w", err))
+				markPersistenceFailure(fmt.Errorf("load triggering evidence: %w", err)))
 		}
 		bootstrap = prepareBootstrapEvidence(loaded)
 		scope.TimeRange = bootstrap.TimeRange
@@ -424,28 +579,61 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 		resolved, err := c.sourceCaps.ResolveSourceCapability(ctx, scope.ProjectID, scope.SourceID)
 		if err != nil {
 			return c.fail(ctx, runID, domain.RunStatePreparingContext,
-				fmt.Errorf("resolve source capability: %w", err))
+				markConfigurationFailure(fmt.Errorf("resolve source capability: %w", err)))
 		}
 		source = resolved
 	}
-	catalog, err := c.toolGateway.BuildCatalogWithBootstrap(
-		ctx, runID, observationRun(ctx).IncidentID, domain.RunStateDiagnosing, scope, source, bootstrap,
-	)
-	if err != nil {
-		return c.fail(ctx, runID, domain.RunStatePreparingContext, err)
+	var catalog *ToolCatalog
+	var err error
+	switch {
+	case analysisOnly:
+		if resumePhase != domain.RunStatePlanning {
+			resumePhase = domain.RunStateDiagnosing
+		}
+		catalog = c.toolGateway.BuildAnalysisOnlyCatalog(runID, resumePhase, scope)
+	case resumePhase == domain.RunStatePlanning:
+		// predecessor 已经以 durable code_fixable decision 通过 evidence gate。
+		// planning retry 不重新打开当前重复告警的 Tencent detail/log gate。
+		catalog, err = c.toolGateway.BuildCatalog(ctx, runID, domain.RunStatePlanning, scope, source)
+	default:
+		resumePhase = domain.RunStateDiagnosing
+		catalog, err = c.toolGateway.BuildCatalogWithBootstrap(
+			ctx, runID, observationRun(ctx).IncidentID, domain.RunStateDiagnosing, scope, source, bootstrap,
+		)
+		if err == nil {
+			catalog.seedPriorTencentDetailFailure(priorInvocations)
+		}
 	}
-	if c.dynamicRuntime != nil {
+	if err != nil {
+		return c.fail(ctx, runID, domain.RunStatePreparingContext, markConfigurationFailure(err))
+	}
+	if c.dynamicRuntime != nil && !analysisOnly {
 		defer func() { _ = c.dynamicRuntime.CloseRun(context.Background(), runID) }()
 	}
 
+	contextSource := source
+	if analysisOnly {
+		contextSource = domain.SourceCapabilitySnapshot{Kind: "persisted_evidence"}
+	}
 	initialContext, contextEffect, err := c.contextAssem.AssembleInitialContextWithEvidenceObserved(
-		ctx, observationRun(ctx), c.observer, ref, scope, source, bootstrap,
+		ctx, observationRun(ctx), c.observer, ref, scope, contextSource, bootstrap,
 	)
 	if err != nil {
-		return c.fail(ctx, runID, domain.RunStatePreparingContext, err)
+		return c.fail(ctx, runID, domain.RunStatePreparingContext, markConfigurationFailure(err))
 	}
 	initialContext += "\n" + catalog.StatusText()
+	if analysisOnly {
+		initialContext += "\nManual continuation analysis mode: analyze the persisted operational evidence above without refreshing it. External evidence, source, SSH, Docker, Tencent detail, and dynamic runtime tools are unavailable; repository read-only tools may be used for code analysis."
+	}
+	if continuationBrief != "" {
+		// brief 只是 predecessor 的 hypothesis；fresh incident/evidence bootstrap
+		// 保留在同一 model context 中并具有更高权威。
+		initialContext = continuationBrief + "\n\n" + initialContext
+	}
 	conversation := NewAgentConversation(initialContext)
+	if resumePhase == domain.RunStatePlanning {
+		return c.planFrom(ctx, budget, runID, ref, scope, catalog, domain.RunStatePreparingContext, contextEffect, conversation)
+	}
 
 	// preparing_context → diagnosing
 	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStatePreparingContext, domain.RunStateDiagnosing, contextEffect)
@@ -465,7 +653,7 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 			domain.RunStateDiagnosing, ref.ProjectID, conversation.ContextText(),
 			c.toolGateway.AdvertisedToolDefinitionsForCatalog(catalog, domain.RunStateDiagnosing), conversation,
 		)
-		runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
+		runDeadlineExceeded := operationDeadlineExceeded(operationCtx)
 		cancelOperation()
 		if runDeadlineExceeded {
 			_, transitionErr := c.recordElapsedOperation(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
@@ -516,12 +704,12 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 				}
 				gated, _, gateErr := c.evidenceGate.Apply(ctx, runID, diagnosis)
 				if gateErr != nil {
-					return c.fail(ctx, runID, domain.RunStateDiagnosing, fmt.Errorf("evaluate evidence gate: %w", gateErr))
+					return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(fmt.Errorf("evaluate evidence gate: %w", gateErr)))
 				}
 				diagnosis = gated
 			}
 			if err := c.appendDecision(ctx, runID, diagnosis); err != nil {
-				return err
+				return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 			}
 			done, err := c.routeDiagnosis(ctx, budget, runID, ref, scope, catalog, diagnosis, usage, &collectLoops, conversation)
 			if err != nil {
@@ -542,13 +730,39 @@ func (c *RemediationCoordinator) drive(ctx context.Context, runID string, ref do
 				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
 				continue
 			}
+			if env.Stop == nil || strings.TrimSpace(env.Stop.RecommendedNextAction) == "" {
+				// stop 也必须留下可执行的人工交接建议；缺失时沿用协议错误的
+				// 预算与有界重试路径，不能把不完整的 stop 直接终态化。
+				validationErr := wrapEnvelopeError("validate stop", errStopRecommendationRequired)
+				exhausted, err := c.handleTurnError(
+					ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, &protocolFailures,
+					validationErr,
+				)
+				if err != nil || exhausted {
+					return err
+				}
+				continue
+			}
 			protocolFailures = 0
+			// 将模型的 stop 转成结构化 diagnosis，保证人工建议进入 review chain，
+			// 同时保留 blocked_manual_review 的原有终态和安全 terminal reason。
+			stopDiagnosis := &DiagnosisOutput{
+				Fixability:            domain.FixabilityUnsafeToAutomate,
+				Confidence:            0,
+				CausalReasoning:       env.Stop.Reason,
+				RecommendedNextAction: env.Stop.RecommendedNextAction,
+			}
+			if err := c.appendDecision(ctx, runID, stopDiagnosis); err != nil {
+				return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+			}
 			// The model deliberately gives up; a human must take over.
-			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, modelEffect(usage))
+			effect := modelEffect(usage)
+			effect.TerminalReason = "blocked_manual_review"
+			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect)
 			if err != nil || exhausted {
 				return err
 			}
-			return c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, "")
+			return c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, stopDiagnosis.Fixability)
 		default:
 			exhausted, err := c.handleTurnError(
 				ctx, budget, runID, domain.RunStateDiagnosing, usage, conversation, &protocolFailures,
@@ -580,27 +794,31 @@ func (c *RemediationCoordinator) routeDiagnosis(
 	switch diag.Fixability {
 	case domain.FixabilityExternalDependency, domain.FixabilityConfiguration,
 		domain.FixabilityData, domain.FixabilityInfrastructure:
-		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateCompletedNonCode, modelEffect(usage))
+		effect := modelEffect(usage)
+		effect.TerminalReason = "completed_non_code"
+		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateCompletedNonCode, effect)
 		if err != nil || exhausted {
 			return true, err
 		}
 		return true, c.notifyTerminal(ctx, runID, domain.RunStateCompletedNonCode, diag.Fixability)
 
 	case domain.FixabilityUnsafeToAutomate:
-		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, modelEffect(usage))
+		effect := modelEffect(usage)
+		effect.TerminalReason = "blocked_manual_review"
+		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect)
 		if err != nil || exhausted {
 			return true, err
 		}
 		return true, c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, diag.Fixability)
 
 	case domain.FixabilityInsufficientEvidence:
+		if diag.CollectMoreContext == nil || len(diag.CollectMoreContext.ToolCalls) == 0 {
+			// insufficient_evidence 是完整终态 diagnosis。没有明确 tool request 时重放
+			// 同一 prompt 不会增加 evidence，analysis-only continuation 尤其不能空转。
+			return true, c.blockForInsufficientEvidence(ctx, budget, runID, usage, diag.Fixability)
+		}
 		if *collectLoops >= c.maxCollectLoops {
-			// Exhausted the bounded loop without enough evidence.
-			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, modelEffect(usage))
-			if err != nil || exhausted {
-				return true, err
-			}
-			return true, c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, diag.Fixability)
+			return true, c.blockForInsufficientEvidence(ctx, budget, runID, usage, diag.Fixability)
 		}
 		*collectLoops++
 		done, err := c.collectMoreContext(ctx, budget, runID, ref, scope, catalog, diag, usage, conversation)
@@ -613,6 +831,22 @@ func (c *RemediationCoordinator) routeDiagnosis(
 		return true, c.fail(ctx, runID, domain.RunStateDiagnosing,
 			fmt.Errorf("unknown fixability %q", diag.Fixability))
 	}
+}
+
+func (c *RemediationCoordinator) blockForInsufficientEvidence(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	usage domain.ModelResult,
+	fixability domain.FixabilityClass,
+) error {
+	effect := modelEffect(usage)
+	effect.TerminalReason = "insufficient_evidence"
+	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect)
+	if err != nil || exhausted {
+		return err
+	}
+	return c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, fixability)
 }
 
 // collectMoreContext performs one bounded collect-more-context iteration:
@@ -649,7 +883,21 @@ func (c *RemediationCoordinator) collectMoreContext(
 // plan drives diagnosing → planning → diagnosis_ready_for_review. The suggested
 // diff is advisory only; nothing is written or published.
 func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, runID string, ref domain.RepoRef, scope domain.EvidenceScope, catalog *ToolCatalog, diagUsage domain.ModelResult, conversation *AgentConversation) error {
-	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStatePlanning, modelEffect(diagUsage))
+	return c.planFrom(ctx, budget, runID, ref, scope, catalog, domain.RunStateDiagnosing, modelEffect(diagUsage), conversation)
+}
+
+func (c *RemediationCoordinator) planFrom(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	ref domain.RepoRef,
+	scope domain.EvidenceScope,
+	catalog *ToolCatalog,
+	from domain.RunState,
+	initialEffect domain.Effect,
+	conversation *AgentConversation,
+) error {
+	exhausted, err := c.transitionBudgeted(ctx, budget, runID, from, domain.RunStatePlanning, initialEffect)
 	if err != nil || exhausted {
 		return err
 	}
@@ -669,7 +917,7 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 			domain.RunStatePlanning, ref.ProjectID, contextText,
 			c.toolGateway.AdvertisedToolDefinitionsForCatalog(catalog, domain.RunStatePlanning), conversation,
 		)
-		runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
+		runDeadlineExceeded := operationDeadlineExceeded(operationCtx)
 		cancelOperation()
 		if runDeadlineExceeded {
 			_, transitionErr := c.recordElapsedOperation(ctx, budget, runID, domain.RunStatePlanning, modelEffect(usage))
@@ -715,10 +963,12 @@ func (c *RemediationCoordinator) plan(ctx context.Context, budget *runBudget, ru
 
 		// 先写入计划和建议 diff，再进入 diagnosis_ready_for_review，保证 GET 能读到完整 review chain。
 		if err := c.recordPlans(ctx, runID, env.PlanCandidates); err != nil {
-			return c.fail(ctx, runID, domain.RunStatePlanning, err)
+			return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(err))
 		}
 
-		exhausted, err = c.transitionBudgeted(ctx, budget, runID, domain.RunStatePlanning, domain.RunStateDiagnosisReadyForReview, modelEffect(usage))
+		effect := modelEffect(usage)
+		effect.TerminalReason = "diagnosis_ready_for_review"
+		exhausted, err = c.transitionBudgeted(ctx, budget, runID, domain.RunStatePlanning, domain.RunStateDiagnosisReadyForReview, effect)
 		if err != nil || exhausted {
 			return err
 		}
@@ -871,7 +1121,9 @@ func (c *RemediationCoordinator) handleTurnError(
 			*protocolFailures = *protocolFailures + 1
 		}
 		if protocolFailures != nil && *protocolFailures >= maxConsecutiveProtocolFailures {
-			if err := c.transition(ctx, runID, phase, domain.RunStateBlockedManualReview, domain.Effect{}); err != nil {
+			if err := c.transition(ctx, runID, phase, domain.RunStateBlockedManualReview, domain.Effect{
+				TerminalReason: "invalid_envelope",
+			}); err != nil {
 				return true, err
 			}
 			return true, c.notifyTerminal(ctx, runID, domain.RunStateBlockedManualReview, "")
@@ -884,10 +1136,21 @@ func (c *RemediationCoordinator) handleTurnError(
 	return true, c.fail(ctx, runID, phase, cause)
 }
 
-// fail transitions from a known active state to failed.
+// fail transitions from a known active state to failed and records only the
+// typed, safe classification that controls future automatic eligibility.
 func (c *RemediationCoordinator) fail(ctx context.Context, runID string, from domain.RunState, cause error) error {
-	if err := c.transition(ctx, runID, from, domain.RunStateFailed, domain.Effect{}); err != nil {
-		return fmt.Errorf("transition to failed after %v: %w", cause, err)
+	classification := classifyTerminalFailure(cause)
+	target := domain.RunStateFailed
+	budgetReason := budgetExhaustionReason("")
+	if classification.reason == string(budgetReasonElapsed) {
+		target = domain.RunStateBudgetExhausted
+		budgetReason = budgetReasonElapsed
+	}
+	if err := c.transitionWithReason(ctx, runID, from, target, domain.Effect{
+		TerminalReason: classification.reason,
+		Retryable:      classification.retryable,
+	}, budgetReason); err != nil {
+		return fmt.Errorf("transition to terminal after %v: %w", cause, err)
 	}
 	return fmt.Errorf("run %s failed in %s: %w", runID, from, cause)
 }
@@ -950,13 +1213,24 @@ func (c *RemediationCoordinator) transition(ctx context.Context, runID string, f
 }
 
 func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID string, from, to domain.RunState, effect domain.Effect, reason budgetExhaustionReason) error {
-	if err := c.store.Transition(ctx, runID, from, to, effect); err != nil {
+	effect = terminalEffectForState(to, effect, reason)
+	transitionContext := ctx
+	if isTerminalStateForApplication(to) {
+		// Terminal persistence must survive a caller/run operation deadline; the
+		// run budget and database transaction still bound the actual write.
+		transitionContext = context.WithoutCancel(ctx)
+	}
+	if err := c.store.Transition(transitionContext, runID, from, to, effect); err != nil {
 		return fmt.Errorf("transition %s→%s: %w", from, to, err)
 	}
 	c.observer.StateTransitioned(ctx, StateTransitionObservation{
 		Run: observationRun(ctx), From: from, To: to, Effect: effect, BudgetExhaustedReason: string(reason),
 	})
 	return nil
+}
+
+func operationDeadlineExceeded(ctx context.Context) bool {
+	return runWorkDeadlineExceeded(ctx) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 // modelEffect builds a budget effect crediting one model call and its tokens.

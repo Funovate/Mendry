@@ -12,9 +12,9 @@ import (
 	"fixthe/backend/internal/modules/remediation/domain"
 )
 
-// ExecuteToolObservedWithCatalog is the dynamic-runtime counterpart to the
-// legacy gateway method. It emits the same credential-free observation shape,
-// including policy rejection and safe connector failure classifications.
+// ExecuteToolObservedWithCatalog 是 dynamic runtime 对应的 observed 执行入口，
+// 发出与 legacy gateway 相同的 credential-free observation，包括 policy rejection
+// 与安全 connector failure classification。
 func (g *ToolGateway) ExecuteToolObservedWithCatalog(
 	ctx context.Context,
 	run RunIdentity,
@@ -52,9 +52,8 @@ func (g *ToolGateway) ExecuteToolObservedWithCatalog(
 	return result, err
 }
 
-// ExecuteToolWithCatalog validates a model request against the immutable
-// per-run catalog before routing either to a built-in port or the dynamic MCP
-// runtime. The old ExecuteTool path remains available for legacy callers.
+// ExecuteToolWithCatalog 在调用 built-in port 或 dynamic MCP runtime 前，依据
+// immutable per-run catalog 校验 model request 并完成路由。
 func (g *ToolGateway) ExecuteToolWithCatalog(
 	ctx context.Context,
 	phase domain.RunState,
@@ -97,6 +96,12 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 			},
 		}, nil
 	}
+	if tool == ToolTencentCLSDetail {
+		if err := validateToolParameters(tool, params); err != nil {
+			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
+		}
+		return g.execTencentCLSDetail(ctx, scope, catalog)
+	}
 	if tool == ToolDockerLogs {
 		if err := validateToolParameters(tool, params); err != nil {
 			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
@@ -134,6 +139,80 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 	// A catalog entry with no dynamic route is a built-in tool. The legacy
 	// validator still owns path and adapter-specific parameter bounds.
 	return g.ExecuteTool(ctx, phase, ref, scope, tool, params)
+}
+
+func trustedTencentDetailEvidence(evidence domain.StoredEvidence) bool {
+	if strings.TrimSpace(evidence.EvidenceID) == "" || evidence.Provider != "tencent_cls" ||
+		evidence.EvidenceKind != domain.EvidenceKindProviderDetail ||
+		evidence.Classification != domain.EvidenceDirectFault || evidence.Outcome != "success" ||
+		!evidence.Available || !evidence.Primary {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(evidence.Payload, &payload) != nil || len(payload) == 0 {
+		return false
+	}
+	var provenance struct {
+		Adapter                   string   `json:"adapter"`
+		DetailCapabilityValidated bool     `json:"detail_capability_validated"`
+		DetailResolution          string   `json:"detail_resolution"`
+		Contradictions            []string `json:"contradictions"`
+	}
+	if err := json.Unmarshal(evidence.Provenance, &provenance); err != nil || provenance.Contradictions == nil {
+		return false
+	}
+	return provenance.Adapter == "tencent_cls" && provenance.DetailCapabilityValidated &&
+		provenance.DetailResolution == "validated_provider_detail_get_alert_detail" &&
+		len(provenance.Contradictions) == 0
+}
+
+func (g *ToolGateway) execTencentCLSDetail(ctx context.Context, scope domain.EvidenceScope, catalog *ToolCatalog) (ToolResult, error) {
+	if g.tencentDetailPort == nil {
+		return g.recordTencentDetailFailure(catalog, &domain.ToolRuntimeError{Code: "capability_unavailable", Message: "Tencent CLS detail reader is unavailable"})
+	}
+	if catalog == nil || strings.TrimSpace(catalog.incidentID) == "" || strings.TrimSpace(catalog.scope.RunID) == "" {
+		return g.recordTencentDetailFailure(catalog, &domain.ToolRuntimeError{Code: "provider_detail_invalid", Message: "Tencent CLS detail scope is unavailable"})
+	}
+	result, err := g.tencentDetailPort.ResolveTencentCLSDetail(ctx, domain.TencentCLSDetailRequest{
+		RunID:         catalog.scope.RunID,
+		IncidentID:    catalog.incidentID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+		SourceID:      scope.SourceID,
+	})
+	if err != nil {
+		return g.recordTencentDetailFailure(catalog, err)
+	}
+	if !trustedTencentDetailEvidence(result.Evidence) {
+		return g.recordTencentDetailFailure(catalog, &domain.ToolRuntimeError{Code: "provider_detail_invalid", Message: "Tencent CLS detail reader returned untrusted evidence"})
+	}
+	catalog.markTencentDetailReady()
+	bytesRetrieved := result.BytesRetrieved
+	if bytesRetrieved <= 0 {
+		bytesRetrieved = result.Evidence.ByteCount
+	}
+	return ToolResult{
+		Tool:           ToolTencentCLSDetail,
+		Summary:        fmt.Sprintf("Tencent CLS provider detail (%d bytes)", bytesRetrieved),
+		BytesRetrieved: bytesRetrieved,
+		EvidenceIDs:    []string{result.Evidence.EvidenceID},
+		Payload: map[string]interface{}{
+			"evidenceId":     result.Evidence.EvidenceID,
+			"provider":       result.Evidence.Provider,
+			"evidenceKind":   result.Evidence.EvidenceKind,
+			"classification": result.Evidence.Classification,
+			"available":      result.Evidence.Available,
+			"content":        json.RawMessage(result.Evidence.Payload),
+		},
+	}, nil
+}
+
+func (g *ToolGateway) recordTencentDetailFailure(catalog *ToolCatalog, err error) (ToolResult, error) {
+	if catalog != nil {
+		safe := classifyToolError(err)
+		catalog.markTencentDetailFailure(safe.Code, safe.Retryable)
+	}
+	return ToolResult{Tool: ToolTencentCLSDetail}, err
 }
 
 type toolSearchMatch struct {

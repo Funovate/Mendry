@@ -77,6 +77,7 @@ function baseIncident() {
     fingerprint: "b2a8:validator-locale",
     status: "Open",
     priority: "Info",
+    lifecycleGeneration: 1,
     source: "mcp",
     sourceId: "source-id",
     environmentId: "env-id",
@@ -92,6 +93,8 @@ function baseIncident() {
   };
 }
 
+type RemediationMode = "ready" | "retryable" | "missing" | "started" | "conflict" | "continued" | "blocked";
+
 type MockOptions = {
   authenticated?: boolean;
   role?: MockRole;
@@ -101,6 +104,7 @@ type MockOptions = {
   failResource?: "audit" | "observations";
   expireResource?: "observations";
   environmentName?: string;
+  remediationMode?: RemediationMode;
 };
 
 async function mockApi(page: Page, options: MockOptions = {}) {
@@ -109,6 +113,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
   const systemRole = options.systemRole ?? (activeRole === "admin" ? "admin" : "viewer");
   let projects = options.projects ?? [project(activeRole)];
   let currentConfiguration = options.configured === false ? null : configuration({ environmentName: options.environmentName });
+  let remediationMode = options.remediationMode ?? "ready";
   let incidents = [incident()];
   let members = [
     { userId: "user-admin", username: "admin", role: "admin", version: 1, createdAt: now, updatedAt: now },
@@ -129,6 +134,77 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     trigger: currentConfiguration?.trigger ?? null,
     llm: currentConfiguration?.llm ?? null,
   });
+
+  const remediationReview = () => {
+    const retryable = remediationMode === "retryable" || remediationMode === "conflict";
+    const blocked = remediationMode === "blocked";
+    const continued = remediationMode === "continued";
+    const started = remediationMode === "started";
+    const currentAttempt = continued ? 2 : 1;
+    const currentRunId = continued ? "run-2" : "run-1";
+    const currentStatus = continued || started ? "queued" : blocked ? "blocked_manual_review" : retryable ? "failed" : "diagnosis_ready_for_review";
+    const currentVersion = continued ? 1 : started ? 1 : retryable ? 4 : 3;
+    const rootAttempt = {
+      id: "run-1",
+      attemptNumber: 1,
+      status: blocked ? "blocked_manual_review" : retryable ? "failed" : started || continued ? "queued" : "diagnosis_ready_for_review",
+      origin: "automatic",
+      contextVersion: 1,
+      terminalReason: blocked ? "insufficient_evidence" : retryable ? "provider_timeout" : "",
+      retryable,
+      version: retryable ? 4 : started ? 1 : 3,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const attempts = continued ? [rootAttempt, {
+      id: "run-2",
+      attemptNumber: 2,
+      status: "queued",
+      origin: "manual_continue",
+      contextVersion: 1,
+      terminalReason: "",
+      retryable: false,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    }] : [rootAttempt];
+    return {
+      runId: currentRunId,
+      seriesId: "series-1",
+      status: currentStatus,
+      generation: 1,
+      deployedCommit: "4f9c2b7",
+      attemptNumber: currentAttempt,
+      version: currentVersion,
+      origin: continued ? "manual_continue" : "automatic",
+      terminalReason: continued ? "" : blocked ? "insufficient_evidence" : retryable ? "provider_timeout" : "",
+      manualSuggestion: blocked ? "Collect runtime logs around the alert window and review the provider path before applying a change." : "",
+      retryable,
+      continuationAvailable: (retryable || blocked) && !continued,
+      attempts,
+      diagnosis: {
+        fixability: blocked ? "insufficient_evidence" : "code_fixable",
+        confidence: 0.9,
+        causalReasoning: "The locale reaches validator lookup before the configured fallback is applied.",
+        evidenceRefs: ["observation-id"],
+        contradictions: [],
+        missingEvidence: blocked ? ["runtime logs", "provider detail"] : [],
+        recommendedNextAction: blocked ? "Collect runtime logs around the alert window and review the provider path before applying a change." : "Review the guarded fallback patch.",
+      },
+      plans: [{
+        planId: "plan-1",
+        intendedBehavior: "Apply the locale fallback before validator lookup",
+        risk: "ordinary",
+        rationale: "Preserves configured locale behavior while preventing the missing validator lookup.",
+        evidenceRefs: ["observation-id"],
+        affectedFiles: ["backend/http_encoder.go"],
+        rollbackStrategy: "Revert the guarded fallback commit.",
+        recommended: true,
+      }],
+      suggestedDiff: "diff --git a/backend/http_encoder.go b/backend/http_encoder.go",
+      risk: "ordinary",
+    };
+  };
 
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -198,6 +274,13 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       return currentConfiguration ? json(currentConfiguration) : error(404, "configuration_not_found", "Project configuration was not found.");
     }
     if (path === "/api/v1/projects/real-estate/configuration/draft" && method === "GET") return json(configurationDraft());
+    if (path === "/api/v1/projects/real-estate/configuration/source/ssh/containers" && method === "POST") {
+      writes.push({ method, path, body });
+      return json({ containers: [
+        { name: "checkout-api", id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", image: "registry.example/checkout:v1", state: "running", status: "Up 2 minutes" },
+        { name: "checkout-api-old", id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", image: "registry.example/checkout:v0", state: "stopped", status: "Exited (0)" },
+      ] });
+    }
     if (path.startsWith("/api/v1/projects/real-estate/configuration/") && method === "PUT") {
       const component = path.split("/").at(-1);
       const base = currentConfiguration ?? configuration();
@@ -277,6 +360,23 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       }]);
     }
     if (path === "/api/v1/projects/real-estate/incidents" && method === "GET") return json(incidents);
+    if (path === "/api/v1/projects/real-estate/incidents/INC-2048/remediation/start" && method === "POST") {
+      if (remediationMode !== "missing") return error(409, "remediation_conflict", "Remediation already exists.");
+      writes.push({ method, path, body });
+      remediationMode = "started";
+      return json({ runId: "run-1", seriesId: "series-1", status: "queued", generation: 1, attemptNumber: 1, version: 1 });
+    }
+    if (path === "/api/v1/projects/real-estate/incidents/INC-2048/remediation/retry" && method === "POST") {
+      writes.push({ method, path, body });
+      if (remediationMode === "conflict") return error(409, "remediation_conflict", "Remediation request conflicts with the current incident.");
+      if (remediationMode !== "retryable") return error(409, "remediation_unsupported", "The current remediation result cannot be continued.");
+      remediationMode = "continued";
+      return json({ runId: "run-2", seriesId: "series-1", status: "queued", generation: 1, attemptNumber: 2, version: 1 });
+    }
+    if (path === "/api/v1/projects/real-estate/incidents/INC-2048/remediation" && method === "GET") {
+      if (remediationMode === "missing") return error(404, "remediation_not_found", "Remediation run was not found.");
+      return json(remediationReview());
+    }
     if (path === "/api/v1/projects/payments/incidents" && method === "GET") {
       return json([incident({ id: "INC-3001", title: "Payment capture timed out", fingerprint: "payments:capture-timeout" })]);
     }
@@ -398,6 +498,79 @@ test("loads project-owned configuration, events, incidents, members, and audit r
   await expect(page.getByText("Project configuration updated.", { exact: true })).toBeVisible();
 });
 
+test("renders remediation diagnostics in the selected incident detail", async ({ page }) => {
+  await mockApi(page, { role: "admin" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await expect(page.getByRole("heading", { name: "Remediation review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Diagnosis" })).toBeVisible();
+  await expect(page.getByText("The locale reaches validator lookup before the configured fallback is applied.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Evidence observation-id", { exact: true })).toBeVisible();
+  await expect(page.getByText("Apply the locale fallback before validator lookup", { exact: true })).toBeVisible();
+  await expect(page.getByText("diff --git a/backend/http_encoder.go b/backend/http_encoder.go", { exact: true })).toBeVisible();
+});
+
+test("highlights the manual fix suggestion for blocked remediation", async ({ page }) => {
+  await mockApi(page, { role: "operator", remediationMode: "blocked" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await expect(page.getByRole("heading", { name: "人工修复建议 / Manual fix suggestion", exact: true })).toBeVisible();
+  await expect(page.getByText("Collect runtime logs around the alert window and review the provider path before applying a change.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "缺失证据", exact: true })).toBeVisible();
+  await expect(page.getByText("runtime logs", { exact: true })).toBeVisible();
+  await expect(page.getByText("provider detail", { exact: true })).toBeVisible();
+});
+
+test("operator can continue a retryable remediation and see attempt two", async ({ page }) => {
+  const state = await mockApi(page, { role: "operator", remediationMode: "retryable" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Continue analysis", exact: true }).click();
+  await expect(page.getByText("Continuation queued. Refreshing the latest attempt.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Attempt 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("manual_continue · queued", { exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("sk-");
+  expect(state.writes).toContainEqual({
+    method: "POST",
+    path: "/api/v1/projects/real-estate/incidents/INC-2048/remediation/retry",
+    body: { generation: 1, runId: "run-1", version: 4 },
+  });
+});
+
+test("viewer sees retry history but no continuation control", async ({ page }) => {
+  await mockApi(page, { role: "viewer", remediationMode: "retryable" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Viewer access is read-only.", { exact: true }).first()).toBeVisible();
+});
+
+test("a stale remediation retry reports conflict without rendering a new attempt", async ({ page }) => {
+  const state = await mockApi(page, { role: "operator", remediationMode: "conflict" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await page.getByRole("button", { name: "Continue analysis", exact: true }).click();
+  await expect(page.getByText("Remediation request conflicts with the current incident.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toBeDisabled();
+  await expect(page.getByText("Attempt 2", { exact: true })).toHaveCount(0);
+  expect(state.writes.filter((write) => write.path.endsWith("/remediation/retry"))).toHaveLength(1);
+});
+
+test("operator can start remediation when the incident has no series", async ({ page }) => {
+  const state = await mockApi(page, { role: "operator", remediationMode: "missing" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  await expect(page.getByRole("button", { name: "Start remediation", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Start remediation", exact: true }).click();
+  await expect(page.getByText("Attempt 1", { exact: true })).toBeVisible();
+  expect(state.writes).toContainEqual({
+    method: "POST",
+    path: "/api/v1/projects/real-estate/incidents/INC-2048/remediation/start",
+    body: { generation: 1 },
+  });
+});
+
 test("distinguishes an existing project with no configuration from an empty project list", async ({ page }) => {
   await mockApi(page, { role: "admin", configured: false });
   await page.goto("/");
@@ -492,7 +665,7 @@ test("administrator persists credentials, configuration, members, and incident l
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-ci", kind: "ssh_private_key", value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----\nkey-passphrase" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/members/oncall", body: { role: "operator" } },
     { method: "POST", path: "/api/v1/projects/real-estate/repository/refs", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", transport: "https", credentialSecretId: "secret-git" } },
-    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/trigger", body: { kind: "signed_webhook", signingSecretId: null, config: { schemaVersion: 1, eventTypes: ["alarm"], deduplicationKey: "title" }, enabled: true } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/trigger", body: { kind: "signed_webhook", signingSecretId: null, config: { schemaVersion: 2, provider: "generic", eventTypes: ["alarm"], deduplicationKey: "title" }, enabled: true } },
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/repository", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", scmProvider: "yunxiao", transport: "https", credentialSecretId: "secret-git", productionBranch: "production", deployedCommit: "abcdef0123456789abcdef0123456789abcdef01" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "openai-prod", kind: "http_bearer", value: "sk-e2e-openai-key" } },
     { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
@@ -579,10 +752,6 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
   await page.getByRole("button", { name: "New credential" }).click();
   await expect(page.getByLabel("Source credential type")).toHaveValue("ssh_private_key");
   await expect(page.getByLabel("Source SSH private key file")).toBeVisible();
-  await page.getByLabel("Source credential type").selectOption("ssh_password");
-  await expect(page.getByLabel("Source SSH private key file")).toHaveCount(0);
-  await expect(page.getByLabel("Source credential value")).toHaveAttribute("type", "password");
-  await page.getByLabel("Source credential type").selectOption("ssh_private_key");
   await page.getByLabel("Source credential name").fill("source-ssh-pem");
   await page.getByLabel("Source SSH private key file").setInputFiles({
     name: "collector.pem",
@@ -616,29 +785,34 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
 
 test("administrator renames a project and refreshes a derived environment name", async ({ page }) => {
   const state = await mockApi(page, { role: "admin", environmentName: "Real Estate API" });
-  await page.goto("/projects/real-estate/configuration");
-  await expect(page.getByRole("heading", { name: "Project identity" })).toBeVisible();
-  await expect(page.getByLabel("Project key")).toHaveValue("real-estate");
-  await expect(page.getByLabel("Project key")).toHaveAttribute("readonly", "");
-  await expect(page.getByRole("cell", { name: "Real Estate API" })).toBeVisible();
+  await page.goto("/projects/real-estate/incidents");
+  await expect(page.getByRole("button", { name: "Project Real Estate API" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit project name" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Project name" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Edit project name" }).click();
-  await page.getByLabel("Project name").fill("Property Platform");
+  await page.getByRole("textbox", { name: "Project name" }).fill("Property Platform");
   await page.getByRole("button", { name: "Save project name" }).click();
 
   await expect(page.getByRole("button", { name: "Project Property Platform" })).toBeVisible();
+  await expect(page.getByText("Property Platform", { exact: true }).first()).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/real-estate\/incidents$/);
+  expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
+
+  await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByText("Property Platform / Property Platform")).toBeVisible();
   await expect(page.getByRole("cell", { name: "Property Platform" })).toBeVisible();
-  await expect(page).toHaveURL(/\/projects\/real-estate\/configuration$/);
-  expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
+  await expect(page.getByRole("heading", { name: "Project identity" })).toHaveCount(0);
+  await expect(page.getByLabel("Project key")).toHaveCount(0);
 });
 
 test("administrator preserves a distinct environment name when renaming a project", async ({ page }) => {
   const state = await mockApi(page, { role: "admin", environmentName: "Production" });
   await page.goto("/projects/real-estate/configuration");
   await page.getByRole("button", { name: "Edit project name" }).click();
-  await page.getByLabel("Project name").fill("Property Platform");
+  await page.getByRole("textbox", { name: "Project name" }).fill("Property Platform");
   await page.getByRole("button", { name: "Save project name" }).click();
+  await expect(page.getByRole("button", { name: "Project Property Platform" })).toBeVisible();
   await expect(page.getByText("Property Platform / Production")).toBeVisible();
   await expect(page.getByRole("cell", { name: "Production", exact: true })).toBeVisible();
   expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
@@ -691,21 +865,53 @@ test("administrator edits Git, source, and webhook credentials without disclosin
   expect(state.writes.some((write) => JSON.stringify(write.body).includes("ciphertext"))).toBeFalsy();
 });
 
+test("administrator discovers a Docker container through the bounded source probe", async ({ page }) => {
+  const state = await mockApi(page, { role: "admin" });
+  await page.goto("/projects/real-estate/configuration/edit");
+  await page.getByRole("tab", { name: "Collection source" }).click();
+  await page.getByLabel("Source type").selectOption("ssh");
+  await page.getByLabel("Source credential reference").selectOption("secret-ssh");
+  await page.getByLabel("SSH deployment").selectOption("docker");
+  await expect(page.getByLabel("Docker container")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Docker container" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Refresh containers" }).click();
+  await expect(page.getByRole("option", { name: /checkout-api · registry\.example\/checkout:v1/ })).toHaveCount(1);
+  await page.getByLabel("Docker container").selectOption("checkout-api");
+  await expect(page.getByLabel("Docker container")).toHaveValue("checkout-api");
+
+  await page.getByLabel("SSH host").fill("new-host.example.internal");
+  await expect(page.getByLabel("Docker container")).toHaveValue("");
+  await expect(page.getByRole("option", { name: /checkout-api · registry\.example\/checkout:v1/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Refresh containers" }).click();
+  await page.getByLabel("Docker container").selectOption("checkout-api");
+  await page.getByRole("button", { name: "Save collection source" }).click();
+
+  const sourceWrite = state.writes.find((write) => write.method === "PUT" && write.path.endsWith("/configuration/source"));
+  expect(sourceWrite?.body).toEqual(expect.objectContaining({
+    kind: "ssh",
+    credentialSecretId: "secret-ssh",
+    config: expect.objectContaining({ deployment: { kind: "docker", containerName: "checkout-api" } }),
+  }));
+  await expect(page.locator("body")).not.toContainText("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+});
+
 test("viewer receives the permission matrix without mutation controls", async ({ page }) => {
   const state = await mockApi(page, { role: "viewer", systemRole: "viewer" });
   await page.goto("/");
   await expect(page.getByText("viewer · local user", { exact: true })).toBeVisible();
   await page.getByText("Validator locale fr is not registered", { exact: true }).click();
-  await expect(page.getByText("Viewer access is read-only.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Viewer access is read-only.", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Recovered" })).toBeDisabled();
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByRole("button", { name: "Edit configuration" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Project identity" })).toBeVisible();
-  await expect(page.getByLabel("Project name")).toHaveValue("Real Estate API");
-  await expect(page.getByLabel("Project name")).toHaveAttribute("readonly", "");
-  await expect(page.getByLabel("Project key")).toHaveValue("real-estate");
+  await expect(page.getByRole("heading", { name: "Project identity" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Project name" })).toHaveCount(0);
+  await expect(page.getByLabel("Project key")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit project name" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Project Real Estate API" })).toBeVisible();
   await expect(page.getByText("Inbound webhook", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Members" }).click();
   await expect(page.getByRole("row", { name: /operator operator Yes Yes No/ })).toBeVisible();

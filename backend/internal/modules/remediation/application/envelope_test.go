@@ -134,7 +134,8 @@ func TestDecodeEnvelope_ValidStop(t *testing.T) {
 		"schemaVersion": "v1",
 		"kind": "stop",
 		"stop": {
-			"reason": "Insufficient context"
+			"reason":                "Insufficient context",
+			"recommendedNextAction": "Ask an operator to collect the missing runtime evidence"
 		}
 	}`
 	env, err := DecodeEnvelope(raw)
@@ -143,6 +144,43 @@ func TestDecodeEnvelope_ValidStop(t *testing.T) {
 	}
 	if env.Kind != "stop" {
 		t.Errorf("expected kind stop, got %s", env.Kind)
+	}
+}
+
+func TestDecodeEnvelope_StopRequiresRecommendedNextAction(t *testing.T) {
+	for _, raw := range []string{
+		`{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed"}}`,
+		`{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed","recommendedNextAction":"   "}}`,
+		`{"schemaVersion":"v1","kind":"stop","stop":null}`,
+	} {
+		_, err := DecodeEnvelope(raw)
+		if err == nil || !strings.Contains(err.Error(), "stop: recommendedNextAction is required") {
+			t.Fatalf("DecodeEnvelope() error = %v, want required stop recommendation", err)
+		}
+	}
+}
+
+func TestAgentEnvelopeSchemaRequiresStopRecommendation(t *testing.T) {
+	schema := AgentEnvelopeSchema()
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema properties = %#v", schema["properties"])
+	}
+	stop, ok := properties["stop"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("stop schema = %#v", properties["stop"])
+	}
+	required, ok := stop["required"].([]string)
+	if !ok || len(required) != 2 || required[0] != "reason" || required[1] != "recommendedNextAction" {
+		t.Fatalf("stop required fields = %#v", stop["required"])
+	}
+	stopProperties, ok := stop["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("stop properties = %#v", stop["properties"])
+	}
+	recommendation, ok := stopProperties["recommendedNextAction"].(map[string]interface{})
+	if !ok || recommendation["minLength"] != 1 {
+		t.Fatalf("stop recommendation schema = %#v", stopProperties["recommendedNextAction"])
 	}
 }
 

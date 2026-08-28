@@ -14,7 +14,11 @@ import (
 )
 
 type service interface {
-	Ingest(context.Context, string, string) (application.Result, error)
+	Ingest(context.Context, string, string) error
+}
+
+type contentTypeService interface {
+	IngestWithContentType(context.Context, string, string, string) error
 }
 
 // HandlerOptions 注入公开 webhook HTTP 适配器依赖。
@@ -41,8 +45,7 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 }
 
 type ingestResponse struct {
-	IncidentID string `json:"incidentId"`
-	Created    bool   `json:"created"`
+	Accepted bool `json:"accepted"`
 }
 
 func (h *Handler) ingest(writer nethttp.ResponseWriter, request *nethttp.Request) {
@@ -57,12 +60,16 @@ func (h *Handler) ingest(writer nethttp.ResponseWriter, request *nethttp.Request
 		writeBodyError(writer, request, err)
 		return
 	}
-	result, err := h.service.Ingest(request.Context(), request.PathValue("token"), raw)
+	if providerService, ok := h.service.(contentTypeService); ok {
+		err = providerService.IngestWithContentType(request.Context(), request.PathValue("token"), raw, request.Header.Get("Content-Type"))
+	} else {
+		err = h.service.Ingest(request.Context(), request.PathValue("token"), raw)
+	}
 	if err != nil {
 		writeApplicationError(writer, request, err)
 		return
 	}
-	if writeErr := httpserver.WriteJSON(writer, nethttp.StatusAccepted, ingestResponse{IncidentID: result.IncidentID, Created: result.Created}); writeErr != nil {
+	if writeErr := httpserver.WriteJSON(writer, nethttp.StatusAccepted, ingestResponse{Accepted: true}); writeErr != nil {
 		httpserver.WriteInternalError(writer, request, writeErr)
 	}
 }
@@ -108,6 +115,10 @@ func writeBodyError(writer nethttp.ResponseWriter, request *nethttp.Request, err
 
 func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Request, err error) {
 	switch {
+	case errors.Is(err, application.ErrInvalidTencentCallback):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusBadRequest, Code: "invalid_tencent_cls_callback", Message: "Tencent CLS callback is invalid.",
+		})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Webhook request is invalid.",

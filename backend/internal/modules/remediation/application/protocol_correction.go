@@ -9,41 +9,44 @@ import (
 )
 
 const (
-	protocolCorrectionInvalidEnvelope       = "invalid_envelope"
-	protocolCorrectionEvidenceCitation      = "invalid_evidence_citation"
-	protocolCorrectionEvidencePath          = "diagnosis.evidenceCitations[].evidenceRef"
-	protocolCorrectionEvidenceField         = "evidenceId"
-	protocolCorrectionEvidenceMessage       = "diagnosis.evidenceCitations entries must use evidenceId as the canonical field. " + diagnosisWireContractInstruction
-	protocolCorrectionFixability            = "invalid_fixability"
-	protocolCorrectionFixabilityPath        = "diagnosis.fixability"
-	protocolCorrectionFixabilityMessage     = "diagnosis.fixability must be an allowed JSON string, never an object. " + diagnosisWireContractInstruction
-	protocolCorrectionConfidence            = "invalid_confidence"
-	protocolCorrectionConfidencePath        = "diagnosis.confidence"
-	protocolCorrectionConfidenceMessage     = "diagnosis.confidence must be a JSON number between 0 and 1; do not use low, medium, or high as strings. " + diagnosisWireContractInstruction
-	protocolCorrectionSourceCoverage        = "invalid_source_coverage"
-	protocolCorrectionSourceCoveragePath    = "diagnosis.sourceCoverage"
-	protocolCorrectionSourceCoverageMessage = "diagnosis.sourceCoverage must be a JSON array, never an object. " + diagnosisWireContractInstruction
-	protocolCorrectionTimeAssessment        = "invalid_time_assessment"
-	protocolCorrectionTimeAssessmentPath    = "diagnosis.timeAssessment.basis"
-	protocolCorrectionTimeAssessmentMessage = "diagnosis.timeAssessment.basis must be one allowed short enum value, with explanation text kept outside basis. " + diagnosisWireContractInstruction
-	protocolCorrectionRequiredDetail        = "required_direct_evidence"
-	protocolCorrectionRequiredDetailPath    = "evidence.tencent_cls_detail"
-	protocolCorrectionRequiredDetailMessage = "Tencent CLS webhook detail evidence is mandatory before diagnosis or stop; request evidence.tencent_cls_detail with an empty object and wait for a successful observation"
-	protocolCorrectionDiagnosisMessage      = "previous response was not a valid agent envelope; diagnosis must be an object. " + diagnosisWireContractInstruction
-	protocolCorrectionPlanningInvalidJSON   = "invalid_planning_json"
-	protocolCorrectionPlanningSchema        = "invalid_planning_schema_version"
-	protocolCorrectionPlanningShape         = "invalid_planning_envelope"
-	protocolCorrectionPlanningKind          = "invalid_planning_kind"
-	protocolCorrectionPlanningCandidates    = "invalid_plan_candidates"
-	protocolCorrectionPlanningRecommended   = "invalid_plan_recommended_id"
-	protocolCorrectionPlanningDiff          = "invalid_plan_suggested_diff"
-	protocolCorrectionPlanningPlanID        = "invalid_plan_id"
-	protocolCorrectionPlanningRisk          = "invalid_plan_risk"
-	protocolCorrectionPlanningRationale     = "invalid_plan_rationale"
-	protocolCorrectionPlanningEvidenceRefs  = "invalid_plan_evidence_refs"
-	protocolCorrectionPlanningAffectedFiles = "invalid_plan_affected_files"
-	protocolCorrectionPlanningBehavior      = "invalid_plan_intended_behavior"
-	protocolCorrectionPlanningRollback      = "invalid_plan_rollback_strategy"
+	protocolCorrectionInvalidEnvelope               = "invalid_envelope"
+	protocolCorrectionEvidenceCitation              = "invalid_evidence_citation"
+	protocolCorrectionEvidencePath                  = "diagnosis.evidenceCitations[].evidenceRef"
+	protocolCorrectionEvidenceField                 = "evidenceId"
+	protocolCorrectionEvidenceMessage               = "diagnosis.evidenceCitations entries must use evidenceId as the canonical field. " + diagnosisWireContractInstruction
+	protocolCorrectionFixability                    = "invalid_fixability"
+	protocolCorrectionFixabilityPath                = "diagnosis.fixability"
+	protocolCorrectionFixabilityMessage             = "diagnosis.fixability must be an allowed JSON string, never an object. " + diagnosisWireContractInstruction
+	protocolCorrectionConfidence                    = "invalid_confidence"
+	protocolCorrectionConfidencePath                = "diagnosis.confidence"
+	protocolCorrectionConfidenceMessage             = "diagnosis.confidence must be a JSON number between 0 and 1; do not use low, medium, or high as strings. " + diagnosisWireContractInstruction
+	protocolCorrectionSourceCoverage                = "invalid_source_coverage"
+	protocolCorrectionSourceCoveragePath            = "diagnosis.sourceCoverage"
+	protocolCorrectionSourceCoverageMessage         = "diagnosis.sourceCoverage must be a JSON array, never an object. " + diagnosisWireContractInstruction
+	protocolCorrectionTimeAssessment                = "invalid_time_assessment"
+	protocolCorrectionTimeAssessmentPath            = "diagnosis.timeAssessment.basis"
+	protocolCorrectionTimeAssessmentMessage         = "diagnosis.timeAssessment.basis must be one allowed short enum value, with explanation text kept outside basis. " + diagnosisWireContractInstruction
+	protocolCorrectionRequiredDetail                = "required_direct_evidence"
+	protocolCorrectionRequiredDetailPath            = "evidence.tencent_cls_detail"
+	protocolCorrectionRequiredDetailMessage         = "Tencent CLS webhook detail evidence is mandatory before diagnosis or stop; request evidence.tencent_cls_detail with an empty object and wait for a successful observation"
+	protocolCorrectionRequiredStopSuggestion        = "required_stop_suggestion"
+	protocolCorrectionRequiredStopSuggestionPath    = "stop.recommendedNextAction"
+	protocolCorrectionRequiredStopSuggestionMessage = "stop.recommendedNextAction is required and must be a bounded handoff suggestion for a human operator. " + stopWireContractInstruction
+	protocolCorrectionDiagnosisMessage              = "previous response was not a valid agent envelope; diagnosis must be an object. " + diagnosisWireContractInstruction
+	protocolCorrectionPlanningInvalidJSON           = "invalid_planning_json"
+	protocolCorrectionPlanningSchema                = "invalid_planning_schema_version"
+	protocolCorrectionPlanningShape                 = "invalid_planning_envelope"
+	protocolCorrectionPlanningKind                  = "invalid_planning_kind"
+	protocolCorrectionPlanningCandidates            = "invalid_plan_candidates"
+	protocolCorrectionPlanningRecommended           = "invalid_plan_recommended_id"
+	protocolCorrectionPlanningDiff                  = "invalid_plan_suggested_diff"
+	protocolCorrectionPlanningPlanID                = "invalid_plan_id"
+	protocolCorrectionPlanningRisk                  = "invalid_plan_risk"
+	protocolCorrectionPlanningRationale             = "invalid_plan_rationale"
+	protocolCorrectionPlanningEvidenceRefs          = "invalid_plan_evidence_refs"
+	protocolCorrectionPlanningAffectedFiles         = "invalid_plan_affected_files"
+	protocolCorrectionPlanningBehavior              = "invalid_plan_intended_behavior"
+	protocolCorrectionPlanningRollback              = "invalid_plan_rollback_strategy"
 )
 
 // ProtocolCorrection 是一次被拒绝模型信封的有界 provider-neutral 修正；进入
@@ -59,6 +62,9 @@ type ProtocolCorrection struct {
 // decoder 或 validation error 使用按 phase 选择的安全 fallback。
 func ProtocolCorrectionFor(phase domain.RunState, cause error) ProtocolCorrection {
 	if phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext {
+		if errors.Is(cause, errStopRecommendationRequired) {
+			return requiredStopSuggestionCorrection()
+		}
 		var typeErr *json.UnmarshalTypeError
 		if errors.As(cause, &typeErr) && typeErr != nil {
 			switch {
@@ -83,6 +89,8 @@ func ProtocolCorrectionFor(phase domain.RunState, cause error) ProtocolCorrectio
 					ExpectedField: "array",
 					Message:       protocolCorrectionSourceCoverageMessage,
 				}
+			case typeErr.Field == "stop.recommendedNextAction" || strings.HasSuffix(typeErr.Field, ".stop.recommendedNextAction"):
+				return requiredStopSuggestionCorrection()
 			}
 		}
 	}
@@ -232,6 +240,15 @@ func requiredTencentDetailCorrection() ProtocolCorrection {
 	}
 }
 
+func requiredStopSuggestionCorrection() ProtocolCorrection {
+	return ProtocolCorrection{
+		Code:          protocolCorrectionRequiredStopSuggestion,
+		Path:          protocolCorrectionRequiredStopSuggestionPath,
+		ExpectedField: "non-empty string",
+		Message:       protocolCorrectionRequiredStopSuggestionMessage,
+	}
+}
+
 func genericProtocolCorrection(phase domain.RunState) ProtocolCorrection {
 	if phase == domain.RunStatePlanning {
 		return planningProtocolCorrection(nil)
@@ -249,6 +266,10 @@ func normalizeProtocolCorrection(phase domain.RunState, correction ProtocolCorre
 	if (phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext) &&
 		correction.Code == protocolCorrectionRequiredDetail {
 		return requiredTencentDetailCorrection()
+	}
+	if (phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext) &&
+		correction.Code == protocolCorrectionRequiredStopSuggestion {
+		return requiredStopSuggestionCorrection()
 	}
 	if (phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext) &&
 		correction.Code == protocolCorrectionFixability {

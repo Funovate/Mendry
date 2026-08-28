@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"time"
 
 	"fixthe/backend/internal/modules/remediation/domain"
 )
@@ -18,6 +19,8 @@ const (
 	// NotificationManualReviewRequired 是其余 blocked_manual_review 终态的通知 action。
 	NotificationManualReviewRequired = "remediation.manual_review_required"
 )
+
+const maxReviewAttempts = 64
 
 // ReviewRecorder 把计划候选和建议 diff 写入 run，供 GET review chain 读取。
 // 这是冻结 RunStore 之外的 companion port，避免改动已冻结的方法签名。
@@ -56,11 +59,34 @@ type Review struct {
 	Generation     int64
 	DeployedCommit string
 	AttemptNumber  int32
-	Budget         domain.BudgetCounters
-	Diagnosis      *ReviewDiagnosis
-	Plans          []ReviewPlan
-	SuggestedDiff  string
-	Risk           domain.RiskClassification
+	Version        int64
+	Origin         string
+	TerminalReason string
+	// ManualSuggestion 是 blocked_manual_review 时供值班人执行的安全建议。
+	ManualSuggestion      string
+	Retryable             bool
+	ContinuationAvailable bool
+	Attempts              []ReviewAttempt
+	Budget                domain.BudgetCounters
+	Diagnosis             *ReviewDiagnosis
+	Plans                 []ReviewPlan
+	SuggestedDiff         string
+	Risk                  domain.RiskClassification
+}
+
+// ReviewAttempt 是 review 页显示的有界 attempt history；不含 prompt、provider
+// payload、credential 或 unrestricted tool output。
+type ReviewAttempt struct {
+	ID             string
+	AttemptNumber  int32
+	Status         domain.RunState
+	Origin         string
+	ContextVersion int64
+	TerminalReason string
+	Retryable      bool
+	Version        int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // ReviewDiagnosis 是最新一条结构化诊断的安全投影。
@@ -127,12 +153,28 @@ func buildReview(agg domain.RunAggregate) Review {
 		Generation:     agg.Run.LifecycleGeneration,
 		DeployedCommit: sanitizeReviewText(agg.Run.DeployedCommit),
 		AttemptNumber:  agg.Run.AttemptNumber,
+		Version:        agg.Run.Version,
+		Origin:         safeReviewOrigin(agg.Run.Origin, agg.Run.TriggerReason),
+		TerminalReason: safeReviewTerminalReason(agg.Run.TerminalReason),
+		Retryable:      agg.Run.Retryable,
+		Attempts:       make([]ReviewAttempt, 0, min(len(agg.AttemptSummaries), maxReviewAttempts)),
 		Budget:         agg.Run.Budget,
 		Plans:          make([]ReviewPlan, 0, len(agg.Plans)),
 		SuggestedDiff:  sanitizeSuggestedDiff(agg.SuggestedDiff),
 	}
+	summaries := agg.AttemptSummaries
+	if len(summaries) > maxReviewAttempts {
+		summaries = summaries[len(summaries)-maxReviewAttempts:]
+	}
+	for _, summary := range summaries {
+		review.Attempts = append(review.Attempts, mapReviewAttempt(summary))
+	}
+	if len(review.Attempts) == 0 && review.RunID != "" {
+		review.Attempts = append(review.Attempts, reviewAttemptFromRun(agg.Run))
+	}
 	if len(agg.Decisions) > 0 {
 		latest := agg.Decisions[len(agg.Decisions)-1]
+		review.ManualSuggestion = sanitizeReviewText(latest.RecommendedNextAction)
 		review.Diagnosis = &ReviewDiagnosis{
 			Fixability:            latest.Fixability,
 			Confidence:            latest.Confidence,
@@ -171,6 +213,83 @@ func buildReview(agg domain.RunAggregate) Review {
 	return review
 }
 
+func mapReviewAttempt(summary domain.AttemptSummary) ReviewAttempt {
+	id := strings.TrimSpace(summary.ID)
+	if id == "" {
+		id = strings.TrimSpace(summary.RunID)
+	}
+	return ReviewAttempt{
+		ID:             sanitizeReviewText(id),
+		AttemptNumber:  summary.AttemptNumber,
+		Status:         domain.RunState(safeContinuationState(summary.Status)),
+		Origin:         safeReviewOrigin(summary.Origin),
+		ContextVersion: max(summary.ContextVersion, 0),
+		TerminalReason: safeReviewTerminalReason(summary.TerminalReason),
+		Retryable:      summary.Retryable,
+		Version:        max(summary.Version, 0),
+		CreatedAt:      summary.CreatedAt,
+		UpdatedAt:      summary.UpdatedAt,
+	}
+}
+
+func reviewAttemptFromRun(run domain.Run) ReviewAttempt {
+	return ReviewAttempt{
+		ID:             sanitizeReviewText(run.RunID),
+		AttemptNumber:  run.AttemptNumber,
+		Status:         run.State,
+		Origin:         safeReviewOrigin(run.Origin, run.TriggerReason),
+		ContextVersion: max(run.ContextVersion, 0),
+		TerminalReason: safeReviewTerminalReason(run.TerminalReason),
+		Retryable:      run.Retryable,
+		Version:        max(run.Version, 0),
+		CreatedAt:      run.CreatedAt,
+		UpdatedAt:      run.UpdatedAt,
+	}
+}
+
+func safeReviewOrigin(values ...string) string {
+	return safeContinuationOrigin(values...)
+}
+
+func safeReviewTerminalReason(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return safeContinuationReasonCode(value)
+}
+
+func aggregateHasActiveAttempt(aggregate domain.RunAggregate) bool {
+	if isActiveRunState(aggregate.Run.State) {
+		return true
+	}
+	for _, summary := range aggregate.AttemptSummaries {
+		if isActiveRunState(summary.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func isActiveRunState(state domain.RunState) bool {
+	switch state {
+	case domain.RunStateQueued, domain.RunStatePreparingContext, domain.RunStateDiagnosing,
+		domain.RunStateCollectingMoreContext, domain.RunStatePlanning, domain.RunStateRunning,
+		domain.RunStatePatching, domain.RunStateValidating, domain.RunStatePublishing:
+		return true
+	default:
+		return false
+	}
+}
+
+func isManualContinuationState(state domain.RunState) bool {
+	switch state {
+	case domain.RunStateFailed, domain.RunStateBudgetExhausted, domain.RunStateBlockedManualReview:
+		return true
+	default:
+		return false
+	}
+}
+
 func sanitizeEvidenceAssessment(value *domain.EvidenceGateDecision) *domain.EvidenceGateDecision {
 	if value == nil {
 		return nil
@@ -197,7 +316,7 @@ func sanitizeReviewList(values []string) []string {
 		if value == "" || isCredentialLiteral(value) {
 			continue
 		}
-		if cleaned := redactSensitiveValues(value); cleaned != "" {
+		if cleaned := sanitizeReviewText(value); cleaned != "" {
 			out = append(out, cleaned)
 		}
 	}
@@ -205,13 +324,13 @@ func sanitizeReviewList(values []string) []string {
 }
 
 func sanitizeReviewText(value string) string {
-	return redactSensitiveValues(strings.TrimSpace(value))
+	return redactConversationText(redactSensitiveValues(strings.TrimSpace(value)))
 }
 
-// sanitizeSuggestedDiff 只遮蔽凭据字面量，绝不因 diff 里出现 token/secret
+// sanitizeSuggestedDiff 只遮蔽凭据字面量和 authenticated URL，绝不因 diff 里出现 token/secret
 // 这类普通英文就丢弃整份建议补丁。
 func sanitizeSuggestedDiff(value string) string {
-	return redactSensitiveValues(value)
+	return redactConversationText(redactSensitiveValues(value))
 }
 
 // NotificationMetadata 是写入 audit_events.metadata 的白名单投影。
@@ -228,7 +347,7 @@ func NotificationMetadata(n TerminalNotification) map[string]string {
 var (
 	openAIKeyPattern = regexp.MustCompile(`(?i)sk-[A-Za-z0-9_-]{8,}`)
 	bearerPattern    = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{8,}`)
-	assignedSecret   = regexp.MustCompile(`(?i)\b(password|token|secret|authorization|api[_-]?key|credential)\s*[:=]\s*\S+`)
+	assignedSecret   = regexp.MustCompile(`(?i)\b(password|token|secret|authorization|api[_-]?key|credential|value)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
 	pemBlockPattern  = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
 )
 

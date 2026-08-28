@@ -52,6 +52,18 @@ const repositoryRefsSchema = z.object({
   branches: z.array(gitBranchSchema),
 });
 
+const dockerContainerSchema = z.object({
+	name: z.string(),
+	id: z.string(),
+	image: z.string(),
+	state: z.string(),
+	status: z.string(),
+});
+
+const sshContainersSchema = z.object({
+	containers: z.array(dockerContainerSchema).max(100),
+});
+
 const projectSecretSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -159,6 +171,7 @@ const incidentSchema = z.object({
   fingerprint: z.string(),
   status: incidentStatusSchema,
   priority: z.string(),
+  lifecycleGeneration: z.number().int().positive(),
   source: z.string(),
   sourceId: z.string(),
   environmentId: z.string(),
@@ -205,12 +218,48 @@ const remediationPlanSchema = z.object({
   recommended: z.boolean(),
 });
 
+const remediationAttemptSchema = z.object({
+  id: z.string(),
+  attemptNumber: z.number().int().positive(),
+  status: z.string(),
+  origin: z.string(),
+  contextVersion: z.number().int().nonnegative(),
+  terminalReason: z.string(),
+  retryable: z.boolean(),
+  version: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const remediationActionSchema = z.object({
+  runId: z.string().min(1),
+  seriesId: z.string().min(1),
+  status: z.string(),
+  generation: z.number().int().positive(),
+  attemptNumber: z.number().int().positive(),
+  version: z.number().int().positive(),
+});
+
+const remediationContinuationInputSchema = z.object({
+  generation: z.number().int().positive(),
+  runId: z.string().min(1),
+  version: z.number().int().positive(),
+}).strict();
+
 const remediationReviewSchema = z.object({
   runId: z.string(),
   seriesId: z.string(),
   status: z.string(),
-  generation: z.number(),
+  generation: z.number().int().positive(),
   deployedCommit: z.string(),
+  attemptNumber: z.number().int().positive(),
+  version: z.number().int().positive(),
+  origin: z.string(),
+  terminalReason: z.string(),
+  manualSuggestion: z.string().optional().default(""),
+  retryable: z.boolean(),
+  continuationAvailable: z.boolean(),
+  attempts: z.array(remediationAttemptSchema).max(64),
   diagnosis: remediationDiagnosisSchema.nullable().optional(),
   plans: z.array(remediationPlanSchema),
   suggestedDiff: z.string(),
@@ -260,12 +309,17 @@ export type Project = z.infer<typeof projectSchema>;
 export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export type ProjectSecret = z.infer<typeof projectSecretSchema>;
 export type RepositoryRefs = z.infer<typeof repositoryRefsSchema>;
+export type DockerContainer = z.infer<typeof dockerContainerSchema>;
 export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 export type ProjectConfigurationDraft = z.infer<typeof projectConfigurationDraftSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 export type RemediationReview = z.infer<typeof remediationReviewSchema>;
+export type RemediationAttempt = z.infer<typeof remediationAttemptSchema>;
+export type RemediationAction = z.infer<typeof remediationActionSchema>;
+export type RemediationContinuationInput = z.infer<typeof remediationContinuationInputSchema>;
+export type RemediationRetryInput = RemediationContinuationInput;
 export type ListResult<T> = { items: T[]; total: number };
 
 export class ApiError extends Error {
@@ -355,6 +409,24 @@ async function requestEmpty(path: string, init?: RequestInit): Promise<void> {
 const projectPath = (projectKey: string, suffix = "") =>
   `/api/v1/projects/${encodeURIComponent(projectKey)}${suffix}`;
 
+const startRemediation = (projectKey: string, incidentId: string, generation: number) =>
+  requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation/start`), remediationActionSchema, {
+    method: "POST",
+    body: JSON.stringify({ generation }),
+  });
+
+const retryRemediation = (projectKey: string, incidentId: string, input: RemediationContinuationInput) => {
+  const path = projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation/retry`);
+  const parsed = remediationContinuationInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return Promise.reject(new ApiContractError(path, "The remediation request does not match the frontend contract.", parsed.error));
+  }
+  return requestData(path, remediationActionSchema, {
+    method: "POST",
+    body: JSON.stringify(parsed.data),
+  });
+};
+
 export const api = {
   me: (signal?: AbortSignal) => requestData("/api/v1/auth/me", currentUserSchema, { signal }),
   login: (username: string, password: string) => requestData("/api/v1/auth/login", currentUserSchema, {
@@ -387,6 +459,8 @@ export const api = {
     }),
   probeRepositoryRefs: (projectKey: string, input: { remoteUrl: string; transport: "https" | "ssh"; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/repository/refs"), repositoryRefsSchema, { method: "POST", body: JSON.stringify(input) }),
+  probeSSHContainers: (projectKey: string, input: { host: string; port: number; user: string; credentialSecretId: string }) =>
+    requestData(projectPath(projectKey, "/configuration/source/ssh/containers"), sshContainersSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMModels: (projectKey: string, input: { baseUrl: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
@@ -416,6 +490,9 @@ export const api = {
     }),
   getRemediation: (projectKey: string, incidentId: string, signal?: AbortSignal) =>
     requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation`), remediationReviewSchema, { signal }),
+  startRemediation,
+  retryRemediation,
+  continueRemediation: retryRemediation,
   listAuditEvents: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/audit-events?limit=100"), auditEventSchema, { signal }),
 };
 

@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -77,5 +78,79 @@ func TestAttemptValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNextAttemptValidate(t *testing.T) {
+	valid := domain.NextAttempt{
+		ContinuationOfRunID:     uuid.New().String(),
+		SeriesID:                uuid.New().String(),
+		IncidentID:              uuid.New().String(),
+		LifecycleGeneration:     2,
+		DeployedCommit:          "abc123",
+		ContextVersion:          3,
+		ExpectedPreviousVersion: 4,
+		TriggerReason:           domain.TriggerReasonManualContinue,
+		ContinuationReason:      "operator requested another bounded analysis",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid next attempt should not error, got: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		modify func(domain.NextAttempt) domain.NextAttempt
+	}{
+		{"missing predecessor", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ContinuationOfRunID = ""
+			return value
+		}},
+		{"negative context version", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ContextVersion = -1
+			return value
+		}},
+		{"stale expected version", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ExpectedPreviousVersion = 0
+			return value
+		}},
+		{"root origin", func(value domain.NextAttempt) domain.NextAttempt {
+			value.TriggerReason = domain.TriggerReasonAutomatic
+			return value
+		}},
+		{"empty reason", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ContinuationReason = ""
+			return value
+		}},
+		{"oversized reason", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ContinuationReason = strings.Repeat("x", 513)
+			return value
+		}},
+		{"secret-bearing reason", func(value domain.NextAttempt) domain.NextAttempt {
+			value.ContinuationReason = "provider token=secret"
+			return value
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.modify(valid).Validate(); err == nil {
+				t.Fatal("Validate() error = nil")
+			}
+		})
+	}
+}
+
+func TestTriggerOriginValuesAreKnown(t *testing.T) {
+	for _, value := range []string{
+		domain.TriggerOriginAutomatic,
+		domain.TriggerOriginManual,
+		domain.TriggerOriginAutomaticContinue,
+		domain.TriggerOriginManualContinue,
+	} {
+		if !domain.TriggerOrigin(value).IsKnown() {
+			t.Fatalf("trigger origin %q is not known", value)
+		}
+	}
+	if domain.TriggerOrigin("unexpected").IsKnown() {
+		t.Fatal("unexpected trigger origin was accepted")
 	}
 }

@@ -52,7 +52,12 @@ func (f *fakeRunStore) CreateSeriesAndRun(_ context.Context, in domain.NewRun) (
 		IncidentID:          in.IncidentID,
 		LifecycleGeneration: in.LifecycleGeneration,
 		DeployedCommit:      in.DeployedCommit,
+		AttemptNumber:       1,
 		State:               domain.RunStateQueued,
+		Origin:              in.TriggerReason,
+		TriggerReason:       in.TriggerReason,
+		ContextVersion:      in.ContextVersion,
+		Version:             1,
 	}
 	f.created = &run
 	return run, nil
@@ -127,6 +132,15 @@ func (f *fakeRunStore) GetLatestForIncident(_ context.Context, incidentID string
 	if f.created == nil || f.created.IncidentID != incidentID ||
 		f.created.LifecycleGeneration != generation || f.created.DeployedCommit != deployedCommit {
 		return domain.RunAggregate{}, application.ErrNotFound
+	}
+	return f.Get(context.Background(), f.created.RunID)
+}
+
+func (f *fakeRunStore) GetLatestPlanningCheckpoint(_ context.Context, seriesID string, contextVersion int64, throughAttemptNumber int32) (domain.RunAggregate, error) {
+	if f.created == nil || f.created.SeriesID != seriesID || f.created.ContextVersion != contextVersion ||
+		f.created.AttemptNumber > throughAttemptNumber || len(f.decisions) == 0 ||
+		f.decisions[len(f.decisions)-1].Fixability != domain.FixabilityCodeFixable {
+		return domain.RunAggregate{}, domain.ErrPlanningCheckpointNotFound
 	}
 	return f.Get(context.Background(), f.created.RunID)
 }
@@ -389,6 +403,13 @@ func insufficientWithCollectEnvelope() string {
 		`"toolCalls":[{"toolName":"repository.read_file","parameters":{"path":"main.go"}}]}}}`
 }
 
+func insufficientWithoutCollectionEnvelope() string {
+	return `{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{` +
+		`"fixability":"insufficient_evidence","confidence":0.3,"causalReasoning":"no available evidence can close the gap",` +
+		`"contradictions":[],"missingEvidence":["runtime logs"],"evidenceCitations":[],` +
+		`"recommendedNextAction":"manual review"}}`
+}
+
 func planEnvelope() string {
 	return `{"schemaVersion":"v1","kind":"planCandidates","planCandidates":{` +
 		`"candidates":[{"planId":"p1","evidenceRefs":["ev-1"],"affectedFiles":["main.go"],` +
@@ -412,5 +433,5 @@ func requestSSHInspectEnvelope(command string) string {
 }
 
 func stopEnvelope() string {
-	return `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed"}}`
+	return `{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed","recommendedNextAction":"ask an operator to collect the missing runtime evidence"}}`
 }

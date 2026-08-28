@@ -205,6 +205,25 @@ describe("API contract boundary", () => {
       status: "diagnosis_ready_for_review",
       generation: 1,
       deployedCommit: "abc123",
+      attemptNumber: 1,
+      version: 2,
+      origin: "automatic",
+      terminalReason: "",
+      manualSuggestion: "",
+      retryable: false,
+      continuationAvailable: false,
+      attempts: [{
+        id: "run-1",
+        attemptNumber: 1,
+        status: "diagnosis_ready_for_review",
+        origin: "automatic",
+        contextVersion: 1,
+        terminalReason: "",
+        retryable: false,
+        version: 2,
+        createdAt: "2026-08-13T08:00:00Z",
+        updatedAt: "2026-08-13T08:01:00Z",
+      }],
       diagnosis: {
         fixability: "code_fixable",
         confidence: 0.9,
@@ -239,6 +258,76 @@ describe("API contract boundary", () => {
     }));
   });
 
+  it("defaults an omitted remediation manual suggestion", async () => {
+    const review = {
+      runId: "run-1",
+      seriesId: "series-1",
+      status: "blocked_manual_review",
+      generation: 1,
+      deployedCommit: "abc123",
+      attemptNumber: 1,
+      version: 2,
+      origin: "automatic",
+      terminalReason: "invalid_envelope",
+      retryable: false,
+      continuationAvailable: false,
+      attempts: [],
+      diagnosis: null,
+      plans: [],
+      suggestedDiff: "",
+      risk: "",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: review,
+      meta: { requestId: "request-11", durationMs: 1 },
+    }), { status: 200 })));
+
+    await expect(api.getRemediation("payments", "INC-2049")).resolves.toEqual({
+      ...review,
+      manualSuggestion: "",
+    });
+  });
+
+  it("posts a strict remediation retry request and validates the new attempt", async () => {
+    const action = {
+      runId: "run-2",
+      seriesId: "series-1",
+      status: "queued",
+      generation: 1,
+      attemptNumber: 2,
+      version: 1,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: action,
+      meta: { requestId: "request-10", durationMs: 2 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.retryRemediation("payments", "INC-2049", {
+      generation: 1,
+      runId: "run-1",
+      version: 2,
+    })).resolves.toEqual(action);
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/projects/payments/incidents/INC-2049/remediation/retry", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      body: JSON.stringify({ generation: 1, runId: "run-1", version: 2 }),
+    }));
+  });
+
+  it("rejects a remediation retry input that does not satisfy the request contract", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(api.retryRemediation("payments", "INC-2049", {
+      generation: 0,
+      runId: "",
+      version: 0,
+    })).rejects.toBeInstanceOf(ApiContractError);
+  });
+
   it("ignores unknown secret-like fields on a remediation payload", async () => {
     const review = {
       runId: "run-1",
@@ -246,6 +335,25 @@ describe("API contract boundary", () => {
       status: "queued",
       generation: 1,
       deployedCommit: "abc123",
+      attemptNumber: 1,
+      version: 1,
+      origin: "automatic",
+      terminalReason: "",
+      manualSuggestion: "",
+      retryable: false,
+      continuationAvailable: false,
+      attempts: [{
+        id: "run-1",
+        attemptNumber: 1,
+        status: "queued",
+        origin: "automatic",
+        contextVersion: 0,
+        terminalReason: "",
+        retryable: false,
+        version: 1,
+        createdAt: "2026-08-13T08:00:00Z",
+        updatedAt: "2026-08-13T08:00:00Z",
+      }],
       diagnosis: null,
       plans: [],
       suggestedDiff: "",

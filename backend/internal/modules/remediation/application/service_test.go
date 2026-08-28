@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	authdomain "fixthe/backend/internal/modules/auth/domain"
 	projectapplication "fixthe/backend/internal/modules/projects/application"
@@ -52,7 +53,11 @@ func (f *fakeIncidentLookup) GetByProjectNumber(_ context.Context, projectID str
 	if f.err != nil {
 		return application.IncidentIdentity{}, f.err
 	}
-	return f.identity, nil
+	identity := f.identity
+	if identity.ContextVersion == 0 {
+		identity.ContextVersion = 1
+	}
+	return identity, nil
 }
 
 func (f *fakeIncidentLookup) GetByID(context.Context, string) (application.IncidentIdentity, error) {
@@ -63,9 +68,12 @@ func (f *fakeIncidentLookup) GetByID(context.Context, string) (application.Incid
 }
 
 type fakeTriggerStarter struct {
-	request application.TriggerRequest
-	run     domain.Run
-	err     error
+	request     application.TriggerRequest
+	next        domain.NextAttempt
+	run         domain.Run
+	continueRun domain.Run
+	err         error
+	continueErr error
 }
 
 func (f *fakeTriggerStarter) Start(_ context.Context, request application.TriggerRequest) (domain.Run, error) {
@@ -83,6 +91,28 @@ func (f *fakeTriggerStarter) Start(_ context.Context, request application.Trigge
 	return f.run, nil
 }
 
+func (f *fakeTriggerStarter) Continue(_ context.Context, input domain.NextAttempt) (domain.Run, error) {
+	f.next = input
+	if f.continueErr != nil {
+		return domain.Run{}, f.continueErr
+	}
+	return f.continueRun, nil
+}
+
+type fakeBackgroundTrigger struct {
+	*fakeTriggerStarter
+	queueCalls int
+}
+
+func (f *fakeBackgroundTrigger) QueueContinuation(_ context.Context, input domain.NextAttempt) (domain.Run, error) {
+	f.queueCalls++
+	f.next = input
+	if f.continueErr != nil {
+		return domain.Run{}, f.continueErr
+	}
+	return f.continueRun, nil
+}
+
 func TestNewServiceRequiresDependencies(t *testing.T) {
 	if _, err := application.NewService(application.ServiceOptions{}); err == nil {
 		t.Fatal("NewService() error = nil")
@@ -93,10 +123,145 @@ func TestNewServiceRequiresDependencies(t *testing.T) {
 	}
 }
 
+func TestContinueRemediationCreatesTheNextAttemptWithOptimisticPredecessor(t *testing.T) {
+	lookup := &fakeIncidentLookup{identity: application.IncidentIdentity{
+		ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 9,
+	}}
+	trigger := &fakeTriggerStarter{continueRun: domain.Run{
+		RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+		LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 2, State: domain.RunStateQueued,
+	}}
+	reviews := &fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{
+		RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+		LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1,
+		State: domain.RunStateFailed, ContextVersion: 7, Version: 4,
+	}}}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		lookup, trigger, reviews,
+	)
+
+	run, err := service.ContinueRemediation(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4)
+	if err != nil {
+		t.Fatalf("ContinueRemediation() error = %v", err)
+	}
+	if run.RunID != "run-2" || run.AttemptNumber != 2 {
+		t.Fatalf("child run = %#v", run)
+	}
+	if trigger.next.ContinuationOfRunID != "run-1" || trigger.next.SeriesID != "series-1" ||
+		trigger.next.IncidentID != testIncidentUUID || trigger.next.ExpectedPreviousVersion != 4 ||
+		trigger.next.ContextVersion != 9 || trigger.next.TriggerReason != domain.TriggerOriginManualContinue ||
+		trigger.next.ContinuationReason != "operator requested continuation" {
+		t.Fatalf("continuation request = %#v", trigger.next)
+	}
+}
+
+func TestContinueRemediationUsesBackgroundQueueWhenAvailable(t *testing.T) {
+	lookup := &fakeIncidentLookup{identity: application.IncidentIdentity{
+		ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 7,
+	}}
+	trigger := &fakeBackgroundTrigger{fakeTriggerStarter: &fakeTriggerStarter{continueRun: domain.Run{
+		RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+		LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 2, State: domain.RunStateQueued,
+	}}}
+	reviews := &fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{
+		RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+		LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1,
+		State: domain.RunStateFailed, ContextVersion: 7, Version: 4,
+	}}}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		lookup, trigger, reviews,
+	)
+
+	if _, err := service.ContinueRemediation(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4); err != nil {
+		t.Fatalf("ContinueRemediation() error = %v", err)
+	}
+	if trigger.queueCalls != 1 || trigger.next.ContinuationOfRunID != "run-1" {
+		t.Fatalf("background continuation calls/input = %d/%#v", trigger.queueCalls, trigger.next)
+	}
+}
+
+func TestContinueRemediationEnforcesManualEligibilityAndConcurrency(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state domain.RunState
+		err   error
+	}{
+		{name: "failed", state: domain.RunStateFailed},
+		{name: "budget exhausted", state: domain.RunStateBudgetExhausted},
+		{name: "blocked manual review", state: domain.RunStateBlockedManualReview},
+		{name: "ready for review", state: domain.RunStateDiagnosisReadyForReview, err: application.ErrUnsupportedContinuation},
+		{name: "completed non code", state: domain.RunStateCompletedNonCode, err: application.ErrUnsupportedContinuation},
+		{name: "active", state: domain.RunStateDiagnosing, err: application.ErrActiveAttempt},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			trigger := &fakeTriggerStarter{continueRun: domain.Run{RunID: "run-2", SeriesID: "series-1", AttemptNumber: 2}}
+			service := newManualServiceWithReviews(t,
+				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+				&fakeIncidentLookup{identity: application.IncidentIdentity{
+					ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
+				}},
+				trigger,
+				&fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{
+					RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+					LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1,
+					State: test.state, Version: 4,
+				}}},
+			)
+			_, err := service.ContinueRemediation(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4)
+			if test.err != nil {
+				if !errors.Is(err, test.err) {
+					t.Fatalf("error = %v, want %v", err, test.err)
+				}
+				if trigger.next.ContinuationOfRunID != "" {
+					t.Fatal("ineligible continuation reached trigger")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ContinueRemediation() error = %v", err)
+			}
+		})
+	}
+
+	trigger := &fakeTriggerStarter{continueRun: domain.Run{RunID: "run-3", SeriesID: "series-1", AttemptNumber: 3}}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeIncidentLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
+		}},
+		trigger,
+		&fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{
+			RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+			LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 2,
+			State: domain.RunStateFailed, Version: 5,
+		}}},
+	)
+	if _, err := service.ContinueRemediation(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("stale predecessor error = %v", err)
+	}
+}
+
+func TestContinueRemediationRequiresWriteAccessBeforeIncidentOrRunLookup(t *testing.T) {
+	lookup := &fakeIncidentLookup{}
+	reviews := &fakeReviewQuery{}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{writeErr: projectapplication.ErrForbidden}, lookup,
+		&fakeTriggerStarter{}, reviews,
+	)
+	if _, err := service.ContinueRemediation(context.Background(), authdomain.User{ID: "viewer"}, "payments", "INC-2049", 1, "run-1", 1); !errors.Is(err, projectapplication.ErrForbidden) {
+		t.Fatalf("forbidden error = %v", err)
+	}
+	if lookup.projectID != "" || reviews.agg.Run.RunID != "" {
+		t.Fatal("continuation looked up incident or run before project authorization")
+	}
+}
+
 func TestStartRemediationUsesProjectScopedLookupAndManualTrigger(t *testing.T) {
 	lookup := &fakeIncidentLookup{identity: application.IncidentIdentity{
 		ID: testIncidentUUID, ProjectID: testProjectID, Priority: "Info",
-		LifecycleGeneration: 2, DeployedCommit: "abc123",
+		LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 3,
 	}}
 	trigger := &fakeTriggerStarter{}
 	service := newManualService(t, &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}}, lookup, trigger)
@@ -109,7 +274,8 @@ func TestStartRemediationUsesProjectScopedLookupAndManualTrigger(t *testing.T) {
 		t.Fatalf("lookup project=%q number=%d", lookup.projectID, lookup.number)
 	}
 	if trigger.request.IncidentID != testIncidentUUID || trigger.request.Priority != "Info" ||
-		trigger.request.Reason != application.TriggerReasonManual || trigger.request.LifecycleGeneration != 2 {
+		trigger.request.Reason != application.TriggerReasonManual || trigger.request.LifecycleGeneration != 2 ||
+		trigger.request.ContextVersion != 3 {
 		t.Fatalf("trigger request = %#v", trigger.request)
 	}
 	if run.RunID == "" || run.LifecycleGeneration != 2 {
@@ -194,7 +360,7 @@ func TestGetRemediationAllowsViewerAndStripsSecrets(t *testing.T) {
 			Rationale: "simplest fix", EvidenceRefs: []string{"ev-1"}, AffectedFiles: []string{"main.go"},
 			Recommended: true,
 		}},
-		SuggestedDiff: "diff --git a/auth/token.go b/auth/token.go\n+apiKey := os.Getenv(\"APP_TOKEN\")\n+Authorization: Bearer sk-secretvalue\n",
+		SuggestedDiff: "diff --git a/auth/token.go b/auth/token.go\n+apiKey := os.Getenv(\"APP_TOKEN\")\n+Authorization: Bearer sk-secretvalue\n+value: \"plain-secret\"\n+remote: https://alice:plain-secret@example.test/repo.git\n",
 	}}
 	projects := &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleViewer}}
 	service := newManualServiceWithReviews(t, projects,
@@ -211,17 +377,88 @@ func TestGetRemediationAllowsViewerAndStripsSecrets(t *testing.T) {
 	if review.Diagnosis == nil || review.Diagnosis.Fixability != domain.FixabilityCodeFixable {
 		t.Fatalf("review = %#v", review)
 	}
+	if review.ManualSuggestion != "apply the suggested patch" {
+		t.Fatalf("manual suggestion = %q", review.ManualSuggestion)
+	}
 	if !strings.Contains(review.Diagnosis.CausalReasoning, "token") {
 		t.Fatalf("safe diagnosis text was dropped: %#v", review.Diagnosis)
 	}
 	if !strings.Contains(review.SuggestedDiff, "auth/token.go") || !strings.Contains(review.SuggestedDiff, "[redacted]") {
 		t.Fatalf("suggested diff = %q", review.SuggestedDiff)
 	}
-	if strings.Contains(review.SuggestedDiff, "sk-secretvalue") || strings.Contains(fmt.Sprintf("%#v", review), "sk-secretvalue") {
+	if strings.Contains(review.SuggestedDiff, "sk-secretvalue") || strings.Contains(review.SuggestedDiff, "plain-secret") || strings.Contains(review.SuggestedDiff, "alice:plain-secret") || strings.Contains(fmt.Sprintf("%#v", review), "sk-secretvalue") {
 		t.Fatalf("review leaked secret-like value: %#v", review)
 	}
 	if len(review.Diagnosis.EvidenceRefs) != 1 || review.Diagnosis.EvidenceRefs[0] != "ev-1" {
 		t.Fatalf("evidence refs = %#v", review.Diagnosis.EvidenceRefs)
+	}
+}
+
+func TestGetRemediationComputesContinuationAvailabilityAndHistory(t *testing.T) {
+	now := time.Date(2026, 8, 27, 8, 0, 0, 0, time.UTC)
+	reviews := &fakeReviewQuery{agg: domain.RunAggregate{
+		Run: domain.Run{
+			RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+			LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 2,
+			State: domain.RunStateFailed, TerminalReason: "provider_timeout", Retryable: true, Origin: domain.TriggerOriginManualContinue, Version: 6,
+		},
+		AttemptSummaries: []domain.AttemptSummary{
+			{ID: "run-1", AttemptNumber: 1, Status: domain.RunStateFailed, Origin: domain.TriggerOriginAutomatic, ContextVersion: 1, TerminalReason: "provider_timeout", Retryable: true, Version: 4, CreatedAt: now, UpdatedAt: now},
+			{ID: "run-2", AttemptNumber: 2, Status: domain.RunStateFailed, Origin: domain.TriggerOriginManualContinue, ContextVersion: 2, TerminalReason: "provider_timeout", Retryable: true, Version: 6, CreatedAt: now, UpdatedAt: now},
+		},
+	}}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeIncidentLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
+		}},
+		&fakeTriggerStarter{}, reviews,
+	)
+
+	review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049")
+	if err != nil {
+		t.Fatalf("GetRemediation() error = %v", err)
+	}
+	if !review.ContinuationAvailable || review.AttemptNumber != 2 || review.Version != 6 ||
+		review.Origin != domain.TriggerOriginManualContinue || review.TerminalReason != "provider_timeout" || len(review.Attempts) != 2 {
+		t.Fatalf("review metadata = %#v", review)
+	}
+	if review.Attempts[0].ID != "run-1" || review.Attempts[1].Origin != domain.TriggerOriginManualContinue {
+		t.Fatalf("attempt history = %#v", review.Attempts)
+	}
+}
+
+func TestGetRemediationManualSuggestionIsEmptyWithoutDecisionOrAction(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		decisions []domain.Decision
+	}{
+		{name: "no decision"},
+		{name: "empty action", decisions: []domain.Decision{{RecommendedNextAction: "   "}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := newManualServiceWithReviews(t,
+				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleViewer}},
+				&fakeIncidentLookup{identity: application.IncidentIdentity{
+					ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
+				}},
+				&fakeTriggerStarter{},
+				&fakeReviewQuery{agg: domain.RunAggregate{
+					Run: domain.Run{
+						RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+						LifecycleGeneration: 2, DeployedCommit: "abc123", State: domain.RunStateBlockedManualReview,
+					},
+					Decisions: test.decisions,
+				}},
+			)
+			review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "viewer", Role: authdomain.RoleViewer}, "payments", "INC-2049")
+			if err != nil {
+				t.Fatalf("GetRemediation() error = %v", err)
+			}
+			if review.ManualSuggestion != "" {
+				t.Fatalf("manual suggestion = %q, want empty", review.ManualSuggestion)
+			}
+		})
 	}
 }
 

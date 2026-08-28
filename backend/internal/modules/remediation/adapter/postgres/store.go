@@ -36,13 +36,20 @@ type RunStore struct {
 	db transactor
 }
 
-const maxSuggestedDiffBytes = 64 * 1024
+const (
+	maxSuggestedDiffBytes     = 64 * 1024
+	maxAttemptSummaries       = 64
+	maxAutomaticContinuations = 3
+)
 
 // Compile-time assertion that the adapter satisfies the frozen port and review companions.
 var (
 	_ domain.RunStore                = (*RunStore)(nil)
+	_ domain.AttemptStore            = (*RunStore)(nil)
+	_ domain.PlanningCheckpointStore = (*RunStore)(nil)
 	_ domain.EvidencePersistencePort = (*RunStore)(nil)
 	_ domain.BootstrapEvidenceLoader = (*RunStore)(nil)
+	_ domain.CallbackEvidenceLoader  = (*RunStore)(nil)
 	_ domain.ToolPolicyResolver      = (*RunStore)(nil)
 	_ application.ReviewRecorder     = (*RunStore)(nil)
 	_ application.ReviewQuery        = (*RunStore)(nil)
@@ -121,6 +128,184 @@ func (s *RunStore) CreateSeriesAndRun(ctx context.Context, in domain.NewRun) (do
 	return run, nil
 }
 
+// CreateNextAttempt 在锁定所属 series row 后原子接纳新的 queued child。该锁使同一
+// series 的所有创建者看到同一个 latest predecessor，不能越过 active-attempt 或自动 ceiling。
+func (s *RunStore) CreateNextAttempt(ctx context.Context, in domain.NextAttempt) (domain.Run, error) {
+	if err := in.Validate(); err != nil {
+		return domain.Run{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+	}
+
+	predecessorID, err := parseRunID(in.ContinuationOfRunID)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	seriesID, err := parseScopedUUID(in.SeriesID, "series")
+	if err != nil {
+		return domain.Run{}, err
+	}
+	incidentID, err := parseScopedUUID(in.IncidentID, "incident")
+	if err != nil {
+		return domain.Run{}, err
+	}
+	origin := in.TriggerReason
+	if origin == "" {
+		origin = in.Origin
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	q := remediationdb.New(tx)
+	// incident row 先以 FOR SHARE 锁定，再锁 series；这与 lifecycle 写事务的
+	// incident→series 顺序一致，并阻止 context cursor 在 child commit 前推进。
+	currentContextVersion, err := q.LockRemediationIncidentContextVersion(ctx, incidentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("lock remediation incident context version: %w", err)
+	}
+	if currentContextVersion != in.ContextVersion {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+
+	series, err := q.LockRemediationSeriesForRun(ctx, predecessorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("lock remediation series: %w", err)
+	}
+	if !series.ID.Valid || !series.IncidentID.Valid ||
+		!sameUUID(series.ID, seriesID) || !sameUUID(series.IncidentID, incidentID) ||
+		series.LifecycleGeneration != in.LifecycleGeneration || series.DeployedCommit != in.DeployedCommit {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+
+	predecessor, err := q.GetRemediationRun(ctx, predecessorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("get remediation predecessor: %w", err)
+	}
+	if !predecessor.ID.Valid || !sameUUID(predecessor.ID, predecessorID) ||
+		!sameUUID(predecessor.SeriesID, series.ID) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+
+	runs, err := q.GetRemediationRunsBySeriesID(ctx, series.ID)
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("list remediation attempts: %w", err)
+	}
+	if len(runs) == 0 {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	latest := runs[len(runs)-1]
+	if !sameUUID(latest.ID, predecessorID) || latest.Version != in.ExpectedPreviousVersion {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+
+	for _, candidate := range runs {
+		if isActiveAttemptState(domain.RunState(candidate.State)) {
+			return domain.Run{}, domain.ErrActiveAttempt
+		}
+	}
+
+	automaticContinuations := 0
+	for _, candidate := range runs {
+		if candidate.TriggerReason == domain.TriggerReasonAutomaticContinue {
+			automaticContinuations++
+		}
+	}
+
+	switch origin {
+	case domain.TriggerReasonAutomaticContinue:
+		if automaticContinuations >= maxAutomaticContinuations {
+			return domain.Run{}, domain.ErrAutomaticCeiling
+		}
+		if latest.State != string(domain.RunStateFailed) || !latest.Retryable || in.ContextVersion <= latest.ContextVersion {
+			return domain.Run{}, domain.ErrAutomaticGateRejected
+		}
+	case domain.TriggerReasonManualContinue:
+		switch domain.RunState(latest.State) {
+		case domain.RunStateFailed, domain.RunStateBudgetExhausted, domain.RunStateBlockedManualReview:
+		default:
+			return domain.Run{}, domain.ErrUnsupportedState
+		}
+	default:
+		// Validate 已拒绝其他 origin；保留此 guard 以便 contract 扩展时仍在存储边界 fail closed。
+		return domain.Run{}, domain.ErrUnsupportedState
+	}
+
+	child, err := q.CreateRemediationNextRun(ctx, remediationdb.CreateRemediationNextRunParams{
+		SeriesID:            series.ID,
+		AttemptNumber:       latest.AttemptNumber + 1,
+		ContinuationOfRunID: predecessorID,
+		TriggerReason:       origin,
+		ContinuationReason:  strings.TrimSpace(in.ContinuationReason),
+		ContextVersion:      in.ContextVersion,
+	})
+	if uniqueViolation(err) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("create remediation continuation: %w", err)
+	}
+
+	run := mapRunRowToDomainRun(child)
+	run.IncidentID = uuidString(series.IncidentID)
+	run.LifecycleGeneration = series.LifecycleGeneration
+	run.DeployedCommit = series.DeployedCommit
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Run{}, fmt.Errorf("commit transaction: %w", err)
+	}
+	return run, nil
+}
+
+// GetLatestPlanningCheckpoint 返回同一 series/context 中、截至 expected predecessor
+// attempt 最近一次以 code_fixable durable decision 通过 evidence gate 的 aggregate。
+func (s *RunStore) GetLatestPlanningCheckpoint(
+	ctx context.Context,
+	seriesID string,
+	contextVersion int64,
+	throughAttemptNumber int32,
+) (domain.RunAggregate, error) {
+	seriesUUID, err := parseScopedUUID(seriesID, "series")
+	if err != nil {
+		return domain.RunAggregate{}, err
+	}
+	if contextVersion < 0 || throughAttemptNumber < 1 {
+		return domain.RunAggregate{}, fmt.Errorf("planning checkpoint bounds are invalid")
+	}
+	row, err := remediationdb.New(s.db).GetLatestRemediationPlanningCheckpoint(ctx, remediationdb.GetLatestRemediationPlanningCheckpointParams{
+		SeriesID:             seriesUUID,
+		ContextVersion:       contextVersion,
+		ThroughAttemptNumber: throughAttemptNumber,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.RunAggregate{}, domain.ErrPlanningCheckpointNotFound
+	}
+	if err != nil {
+		return domain.RunAggregate{}, fmt.Errorf("get remediation planning checkpoint: %w", err)
+	}
+	return s.Get(ctx, uuidString(row.ID))
+}
+
+func isActiveAttemptState(state domain.RunState) bool {
+	switch state {
+	case domain.RunStateQueued, domain.RunStatePreparingContext, domain.RunStateDiagnosing,
+		domain.RunStateCollectingMoreContext, domain.RunStatePlanning, domain.RunStateRunning,
+		domain.RunStatePatching, domain.RunStateValidating, domain.RunStatePublishing:
+		return true
+	default:
+		return false
+	}
+}
+
 func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain.NewRun) (domain.Run, error) {
 	incidentID, err := uuid.Parse(in.IncidentID)
 	if err != nil {
@@ -145,9 +330,11 @@ func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain
 	}
 
 	run, err := q.CreateRemediationRun(ctx, remediationdb.CreateRemediationRunParams{
-		SeriesID:      series.ID,
-		AttemptNumber: 1,
-		State:         string(domain.RunStateQueued),
+		SeriesID:       series.ID,
+		AttemptNumber:  1,
+		State:          string(domain.RunStateQueued),
+		ContextVersion: in.ContextVersion,
+		TriggerReason:  safeTriggerReason(in.TriggerReason),
 	})
 	if uniqueViolation(err) {
 		existing, loadErr := q.GetRemediationRunsBySeriesID(ctx, series.ID)
@@ -167,6 +354,7 @@ func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain
 }
 
 func mapCreatedRun(run remediationdb.RemediationRun, series remediationdb.RemediationSeries, incidentID string) domain.Run {
+	triggerReason := safeTriggerReason(run.TriggerReason)
 	return domain.Run{
 		RunID:               uuidString(run.ID),
 		SeriesID:            uuidString(series.ID),
@@ -175,6 +363,13 @@ func mapCreatedRun(run remediationdb.RemediationRun, series remediationdb.Remedi
 		DeployedCommit:      series.DeployedCommit,
 		AttemptNumber:       run.AttemptNumber,
 		State:               domain.RunState(run.State),
+		Origin:              triggerReason,
+		TriggerReason:       triggerReason,
+		ContinuationOfRunID: optionalUUIDString(run.ContinuationOfRunID),
+		ContinuationReason:  run.ContinuationReason,
+		ContextVersion:      run.ContextVersion,
+		TerminalReason:      run.TerminalReason,
+		Retryable:           run.Retryable,
 		Version:             run.Version,
 		CreatedAt:           run.StartedAt.Time,
 		UpdatedAt:           run.StartedAt.Time,
@@ -331,6 +526,37 @@ func (s *RunStore) LoadBootstrapEvidence(ctx context.Context, incidentID string)
 			IngestedAt: observation.IngestedAt.Time.UTC(),
 		},
 		Records: records, SourceCoverage: sourceCoverage(rows),
+	}, nil
+}
+
+// LoadTencentCLSCallbackSnapshot 返回受信任 detail retry 所需的已接收入站 callback。
+// raw payload 保留在 adapter 边界内，绝不进入 bootstrap model context。
+func (s *RunStore) LoadTencentCLSCallbackSnapshot(ctx context.Context, incidentID string) (domain.CallbackEvidenceSnapshot, error) {
+	id, err := parseScopedUUID(incidentID, "incident")
+	if err != nil {
+		return domain.CallbackEvidenceSnapshot{}, err
+	}
+	observation, err := remediationdb.New(s.db).GetLatestRemediationObservationForIncident(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.CallbackEvidenceSnapshot{}, fmt.Errorf("triggering callback is unavailable")
+	}
+	if err != nil {
+		return domain.CallbackEvidenceSnapshot{}, fmt.Errorf("get triggering callback: %w", err)
+	}
+	if !observation.ID.Valid || !observation.ProjectID.Valid || !observation.EnvironmentID.Valid ||
+		!observation.SourceID.Valid || !observation.OccurredAt.Valid || !observation.IngestedAt.Valid ||
+		strings.TrimSpace(observation.Message) == "" {
+		return domain.CallbackEvidenceSnapshot{}, fmt.Errorf("triggering callback row has invalid generated values")
+	}
+	return domain.CallbackEvidenceSnapshot{
+		IncidentID:    incidentID,
+		ProjectID:     uuidString(observation.ProjectID),
+		EnvironmentID: uuidString(observation.EnvironmentID),
+		SourceID:      uuidString(observation.SourceID),
+		ObservationID: uuidString(observation.ID),
+		Payload:       observation.Message,
+		OccurredAt:    observation.OccurredAt.Time.UTC(),
+		IngestedAt:    observation.IngestedAt.Time.UTC(),
 	}, nil
 }
 
@@ -517,10 +743,12 @@ func (s *RunStore) Transition(ctx context.Context, runID string, fromState, toSt
 	}
 
 	_, err = q.UpdateRemediationRunState(ctx, remediationdb.UpdateRemediationRunStateParams{
-		ID:      rid,
-		State:   string(toState),
-		Column3: isTerminalState(toState),
-		Version: run.Version,
+		ID:             rid,
+		State:          string(toState),
+		Column3:        isTerminalState(toState),
+		Version:        run.Version,
+		TerminalReason: safeModelIdentity(effect.TerminalReason),
+		Retryable:      effect.Retryable,
 	})
 	if err != nil {
 		return fmt.Errorf("update state: %w", err)
@@ -587,6 +815,18 @@ func (s *RunStore) Get(ctx context.Context, runID string) (domain.RunAggregate, 
 		return domain.RunAggregate{}, fmt.Errorf("get artifacts: %w", err)
 	}
 
+	series, err := q.GetRemediationSeriesByID(ctx, run.SeriesID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.RunAggregate{}, fmt.Errorf("run series not found: %w", err)
+		}
+		return domain.RunAggregate{}, fmt.Errorf("get run series: %w", err)
+	}
+	attempts, err := q.GetRemediationRunsBySeriesID(ctx, run.SeriesID)
+	if err != nil {
+		return domain.RunAggregate{}, fmt.Errorf("get attempt summaries: %w", err)
+	}
+
 	agg := domain.RunAggregate{
 		Run:                mapRunRowToDomainRun(run),
 		Decisions:          mapDecisions(decisions),
@@ -595,13 +835,11 @@ func (s *RunStore) Get(ctx context.Context, runID string) (domain.RunAggregate, 
 		ArtifactReferences: mapArtifacts(artifacts),
 		SuggestedDiff:      suggestedDiffFromArtifacts(artifacts),
 		RecommendedPlanID:  recommendedPlanID(plans),
+		AttemptSummaries:   mapAttemptSummaries(attempts),
 	}
-	series, err := q.GetRemediationSeriesByID(ctx, run.SeriesID)
-	if err == nil {
-		agg.Run.IncidentID = uuidString(series.IncidentID)
-		agg.Run.LifecycleGeneration = series.LifecycleGeneration
-		agg.Run.DeployedCommit = series.DeployedCommit
-	}
+	agg.Run.IncidentID = uuidString(series.IncidentID)
+	agg.Run.LifecycleGeneration = series.LifecycleGeneration
+	agg.Run.DeployedCommit = series.DeployedCommit
 	return agg, nil
 }
 
@@ -873,8 +1111,26 @@ func parseScopedUUID(value, label string) (pgtype.UUID, error) {
 	return pgtype.UUID{Bytes: u, Valid: true}, nil
 }
 
+func sameUUID(left, right pgtype.UUID) bool {
+	return left.Valid && right.Valid && left.Bytes == right.Bytes
+}
+
 func uuidString(u pgtype.UUID) string {
 	return uuid.UUID(u.Bytes).String()
+}
+
+func optionalUUIDString(u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return uuidString(u)
+}
+
+func safeTriggerReason(value string) string {
+	if domain.TriggerOrigin(value).IsKnown() {
+		return value
+	}
+	return ""
 }
 
 func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
@@ -882,11 +1138,19 @@ func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
 	if row.ElapsedMs != nil {
 		elapsedSeconds = *row.ElapsedMs / 1000
 	}
+	triggerReason := safeTriggerReason(row.TriggerReason)
 	return domain.Run{
-		RunID:         uuidString(row.ID),
-		SeriesID:      uuidString(row.SeriesID),
-		AttemptNumber: row.AttemptNumber,
-		State:         domain.RunState(row.State),
+		RunID:               uuidString(row.ID),
+		SeriesID:            uuidString(row.SeriesID),
+		AttemptNumber:       row.AttemptNumber,
+		State:               domain.RunState(row.State),
+		Origin:              triggerReason,
+		TriggerReason:       triggerReason,
+		ContinuationOfRunID: optionalUUIDString(row.ContinuationOfRunID),
+		ContinuationReason:  row.ContinuationReason,
+		ContextVersion:      row.ContextVersion,
+		TerminalReason:      row.TerminalReason,
+		Retryable:           row.Retryable,
 		Budget: domain.BudgetCounters{
 			ElapsedSeconds:  elapsedSeconds,
 			ModelCalls:      int64(row.ModelCalls),
@@ -902,6 +1166,32 @@ func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
 		CreatedAt:     row.StartedAt.Time,
 		UpdatedAt:     row.StartedAt.Time,
 	}
+}
+
+func mapAttemptSummaries(rows []remediationdb.RemediationRun) []domain.AttemptSummary {
+	if len(rows) > maxAttemptSummaries {
+		rows = rows[len(rows)-maxAttemptSummaries:]
+	}
+	out := make([]domain.AttemptSummary, 0, len(rows))
+	for _, row := range rows {
+		triggerReason := safeTriggerReason(row.TriggerReason)
+		out = append(out, domain.AttemptSummary{
+			ID:                  uuidString(row.ID),
+			RunID:               uuidString(row.ID),
+			AttemptNumber:       row.AttemptNumber,
+			Status:              domain.RunState(row.State),
+			Origin:              triggerReason,
+			ContinuationOfRunID: optionalUUIDString(row.ContinuationOfRunID),
+			ContinuationReason:  row.ContinuationReason,
+			ContextVersion:      row.ContextVersion,
+			TerminalReason:      row.TerminalReason,
+			Retryable:           row.Retryable,
+			Version:             row.Version,
+			CreatedAt:           row.StartedAt.Time,
+			UpdatedAt:           row.StartedAt.Time,
+		})
+	}
+	return out
 }
 
 func mapDecisions(rows []remediationdb.RemediationDecision) []domain.Decision {
@@ -981,23 +1271,30 @@ func mapRunRowToAttempt(row remediationdb.RemediationRun) *domain.Attempt {
 	}
 
 	return &domain.Attempt{
-		ID:              uuid.UUID(row.ID.Bytes),
-		SeriesID:        uuid.UUID(row.SeriesID.Bytes),
-		AttemptNumber:   int(row.AttemptNumber),
-		State:           domain.RunState(row.State),
-		StartedAt:       row.StartedAt.Time,
-		EndedAt:         endedAt,
-		ElapsedMS:       row.ElapsedMs,
-		ModelCalls:      int(row.ModelCalls),
-		ModelTokensIn:   row.ModelTokensIn,
-		ModelTokensOut:  row.ModelTokensOut,
-		ModelCostCents:  row.ModelCostCents,
-		ModelProvider:   row.ModelProvider,
-		ModelName:       row.ModelName,
-		ToolCalls:       int(row.ToolCalls),
-		EvidenceBytes:   row.EvidenceBytes,
-		RepositoryBytes: row.RepositoryBytes,
-		Version:         row.Version,
+		ID:                  uuid.UUID(row.ID.Bytes),
+		SeriesID:            uuid.UUID(row.SeriesID.Bytes),
+		AttemptNumber:       int(row.AttemptNumber),
+		State:               domain.RunState(row.State),
+		StartedAt:           row.StartedAt.Time,
+		EndedAt:             endedAt,
+		ElapsedMS:           row.ElapsedMs,
+		ModelCalls:          int(row.ModelCalls),
+		ModelTokensIn:       row.ModelTokensIn,
+		ModelTokensOut:      row.ModelTokensOut,
+		ModelCostCents:      row.ModelCostCents,
+		ModelProvider:       row.ModelProvider,
+		ModelName:           row.ModelName,
+		ToolCalls:           int(row.ToolCalls),
+		EvidenceBytes:       row.EvidenceBytes,
+		RepositoryBytes:     row.RepositoryBytes,
+		Origin:              safeTriggerReason(row.TriggerReason),
+		TriggerReason:       safeTriggerReason(row.TriggerReason),
+		ContinuationOfRunID: uuid.UUID(row.ContinuationOfRunID.Bytes),
+		ContinuationReason:  row.ContinuationReason,
+		ContextVersion:      row.ContextVersion,
+		TerminalReason:      row.TerminalReason,
+		Retryable:           row.Retryable,
+		Version:             row.Version,
 	}
 }
 

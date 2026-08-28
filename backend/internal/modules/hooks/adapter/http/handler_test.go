@@ -15,28 +15,34 @@ import (
 )
 
 type fakeService struct {
-	token, raw string
-	result     application.Result
-	err        error
+	token, raw, contentType string
+	withContentType         bool
+	err                     error
 }
 
-func (f *fakeService) Ingest(_ context.Context, token, raw string) (application.Result, error) {
+func (f *fakeService) Ingest(_ context.Context, token, raw string) error {
 	f.token, f.raw = token, raw
-	return f.result, f.err
+	return f.err
+}
+
+func (f *fakeService) IngestWithContentType(_ context.Context, token, raw, contentType string) error {
+	f.token, f.raw, f.contentType = token, raw, contentType
+	f.withContentType = true
+	return f.err
 }
 
 func TestIngestAcceptsUnauthenticatedPlaintext(t *testing.T) {
-	service := &fakeService{result: application.Result{IncidentID: "INC-2049", Created: true}}
+	service := &fakeService{}
 	handler := newHandler(t, service)
 	request := httptest.NewRequest(nethttp.MethodPost, "/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", strings.NewReader("【告警】测试信息\n触发时间：2026-08-10"))
 	request.Header.Set("Content-Type", "text/plain")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != nethttp.StatusAccepted || !strings.Contains(response.Body.String(), `"incidentId":"INC-2049"`) || !strings.Contains(response.Body.String(), `"created":true`) {
+	if response.Code != nethttp.StatusAccepted || !strings.Contains(response.Body.String(), `"accepted":true`) || strings.Contains(response.Body.String(), "incidentId") {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
-	if service.token != "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" || !strings.Contains(service.raw, "【告警】测试信息") {
-		t.Fatalf("service input token=%q raw=%q", service.token, service.raw)
+	if service.token != "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" || !strings.Contains(service.raw, "【告警】测试信息") || service.contentType != "text/plain" || !service.withContentType {
+		t.Fatalf("service input token=%q raw=%q contentType=%q typed=%t", service.token, service.raw, service.contentType, service.withContentType)
 	}
 }
 
@@ -59,9 +65,21 @@ func TestIngestRejectsEmptyBodyAndUnknownToken(t *testing.T) {
 	}
 }
 
+func TestIngestMapsInvalidTencentCallback(t *testing.T) {
+	service := &fakeService{err: application.ErrInvalidTencentCallback}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPost, "/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", strings.NewReader(`{"TopicId":"topic","DetailUrl":"https://console.cloud.tencent.com/cls"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"invalid_tencent_cls_callback"`) {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestIngestAccessLogUsesRoutePatternNotRawToken(t *testing.T) {
 	var output strings.Builder
-	service := &fakeService{result: application.Result{IncidentID: "INC-2049", Created: true}}
+	service := &fakeService{}
 	handler, err := hookhttp.NewHandler(hookhttp.HandlerOptions{Service: service})
 	if err != nil {
 		t.Fatal(err)

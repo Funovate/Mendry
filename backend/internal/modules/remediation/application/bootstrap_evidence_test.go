@@ -100,7 +100,74 @@ func TestPrepareBootstrapEvidencePrefersExplicitOffsetAndRecordsConflict(t *test
 	}
 }
 
-func TestInitialContextIncludesTriggeringEvidenceButOmitsDetailURL(t *testing.T) {
+func TestPrepareBootstrapEvidencePrioritizesOnlyTrustedTencentCLSDirectDetail(t *testing.T) {
+	records := []domain.StoredEvidence{
+		{EvidenceID: "alert", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindNormalizedAlert, Classification: domain.EvidenceContextual, Outcome: "success", Available: true, Payload: json.RawMessage(`{"title":"aggregate alert"}`)},
+		{EvidenceID: "generic-lookalike", Provider: "generic", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceDirectFault, Outcome: "success", Available: true, Payload: json.RawMessage(`{"matchedLog":"generic detail"}`)},
+		{EvidenceID: "tencent-context", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceContextual, Outcome: "success", Available: true, Payload: json.RawMessage(`{"matchedLog":"context only"}`)},
+		{EvidenceID: "tencent-contradictory", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceContradictory, Outcome: "success", Available: true, Payload: json.RawMessage(`{"matchedLog":"topic mismatch"}`)},
+		{EvidenceID: "preferred", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceDirectFault, Outcome: "success", Available: true, Primary: true, Payload: json.RawMessage(`{"matchedLog":"panic: nil pointer","DetailUrl":"https://alarm.cls.tencentcs.com/secret"}`), Provenance: json.RawMessage(`{"adapter":"tencent_cls","detail_capability_validated":true,"detail_resolution":"validated_provider_detail_get_alert_detail","contradictions":[]}`)},
+		{EvidenceID: "tencent-unverified", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceDirectFault, Outcome: "success", Available: true, Payload: json.RawMessage(`{"matchedLog":"unverified detail"}`), Provenance: json.RawMessage(`{"adapter":"tencent_cls"}`)},
+		{EvidenceID: "tencent-unavailable", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceDirectFault, Outcome: "success", Available: false, Payload: json.RawMessage(`{"matchedLog":"not available"}`)},
+	}
+	value := prepareBootstrapEvidence(domain.BootstrapEvidence{Records: records})
+	if value.Records[0].EvidenceID != "preferred" {
+		t.Fatalf("records = %#v, want trusted Tencent direct detail first", value.Records)
+	}
+	for index, want := range []string{"alert", "generic-lookalike", "tencent-context", "tencent-contradictory", "tencent-unverified", "tencent-unavailable"} {
+		if value.Records[index+1].EvidenceID != want {
+			t.Fatalf("non-preferred ordering at %d = %s, want %s", index+1, value.Records[index+1].EvidenceID, want)
+		}
+	}
+
+	var builder strings.Builder
+	renderBootstrapEvidence(&builder, value)
+	text := builder.String()
+	if strings.Index(text, "evidence_ref=preferred") > strings.Index(text, "evidence_ref=alert") {
+		t.Fatalf("preferred evidence rendered after alert evidence: %s", text)
+	}
+	if count := strings.Count(text, "preferred_tencent_cls_direct_evidence=true"); count != 1 {
+		t.Fatalf("preferred label count = %d in %s", count, text)
+	}
+	for _, want := range []string{"source=validated_provider_detail_resolution", "cite this evidence_ref when causal", "priority does not satisfy citation resolution or the evidence gate", "panic: nil pointer"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("preferred context missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "provider_detail_provenance") {
+		t.Fatalf("context exposed provenance metadata: %s", text)
+	}
+	for _, want := range []string{"DetailUrl", "https://alarm.cls.tencentcs.com/secret"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("context changed persisted evidence field %q: %s", want, text)
+		}
+	}
+}
+
+func TestPrepareBootstrapEvidenceRejectsInvalidTencentDetailProvenance(t *testing.T) {
+	cases := []struct {
+		name       string
+		provenance json.RawMessage
+	}{
+		{name: "empty", provenance: nil},
+		{name: "malformed", provenance: json.RawMessage(`{"adapter":`)},
+		{name: "incomplete", provenance: json.RawMessage(`{"adapter":"tencent_cls"}`)},
+		{name: "contradictory", provenance: json.RawMessage(`{"adapter":"tencent_cls","detail_capability_validated":true,"detail_resolution":"validated_provider_detail_get_alert_detail","contradictions":["topic mismatch"]}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			value := prepareBootstrapEvidence(domain.BootstrapEvidence{Records: []domain.StoredEvidence{
+				{EvidenceID: "alert", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindNormalizedAlert, Outcome: "success", Available: true, Payload: json.RawMessage(`{"title":"alert"}`)},
+				{EvidenceID: "detail", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, Classification: domain.EvidenceDirectFault, Outcome: "success", Available: true, Primary: true, Payload: json.RawMessage(`{"matchedLog":"fault"}`), Provenance: tc.provenance},
+			}})
+			if value.Records[0].EvidenceID != "alert" {
+				t.Fatalf("records = %#v, invalid provenance was preferred", value.Records)
+			}
+		})
+	}
+}
+
+func TestInitialContextIncludesPersistedEvidenceWithoutRedaction(t *testing.T) {
 	service := "checkout"
 	assembler := NewContextAssembler(nil, nil)
 	text, effect, err := assembler.AssembleInitialContextWithEvidenceObserved(
@@ -115,7 +182,7 @@ func TestInitialContextIncludesTriggeringEvidenceButOmitsDetailURL(t *testing.T)
 			},
 			Records: []domain.StoredEvidence{
 				{EvidenceID: "evidence-alert", Provider: "generic", EvidenceKind: domain.EvidenceKindNormalizedAlert, SourceID: "source-1", Outcome: "success", Payload: json.RawMessage(`{"alertQuality":"sparse","originalSummary":"nil pointer","DetailUrl":"https://alarm.cls.tencentcs.com/secret"}`)},
-				{EvidenceID: "evidence-runtime", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, SourceID: "source-1", Outcome: "success", Payload: json.RawMessage(`{"matchedLog":"panic: nil pointer","DetailUrl":"https://alarm.cls.tencentcs.com/secret"}`)},
+				{EvidenceID: "evidence-runtime", Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail, SourceID: "source-1", Outcome: "success", Payload: json.RawMessage(`{"matchedLog":"panic: nil pointer","DetailUrl":"https://alarm.cls.tencentcs.com/secret","password":"keep-me","token":"sk-evidence12345"}`)},
 			},
 		},
 	)
@@ -127,8 +194,10 @@ func TestInitialContextIncludesTriggeringEvidenceButOmitsDetailURL(t *testing.T)
 		!strings.Contains(text, "evidence_ref=evidence-runtime") {
 		t.Fatalf("context omitted trigger evidence: effect=%#v text=%s", effect, text)
 	}
-	if strings.Contains(text, "DetailUrl") || strings.Contains(text, "alarm.cls.tencentcs.com/secret") {
-		t.Fatalf("context leaked detail URL: %s", text)
+	for _, want := range []string{"DetailUrl", "https://alarm.cls.tencentcs.com/secret", `"password":"keep-me"`, `"token":"sk-evidence12345"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("context changed persisted evidence value %q: %s", want, text)
+		}
 	}
 }
 

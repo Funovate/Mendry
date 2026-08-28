@@ -18,6 +18,9 @@ const EnvelopeVersion = "v1"
 // 提供商/基础设施错误不得包装成该哨兵。
 var ErrInvalidEnvelope = errors.New("invalid agent envelope")
 
+// errStopRecommendationRequired 标记 stop 缺失人工交接建议的可纠正合同错误。
+var errStopRecommendationRequired = errors.New("stop: recommendedNextAction is required")
+
 // errInvalidDiagnosisTimeAssessment 标记可安全映射的 timeAssessment 合同错误；
 // 具体模型值只留在 operator 诊断中，不得进入 protocol correction。
 var errInvalidDiagnosisTimeAssessment = errors.New("invalid diagnosis time assessment")
@@ -36,6 +39,15 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			"kind": map[string]interface{}{
 				"type": "string",
 				"enum": []string{"requestTool", "diagnosis", "planCandidates", "stop"},
+			},
+			"stop": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"reason":                map[string]interface{}{"type": "string"},
+					"recommendedNextAction": map[string]interface{}{"type": "string", "minLength": 1},
+				},
+				"required":             []string{"reason", "recommendedNextAction"},
+				"additionalProperties": false,
 			},
 		},
 		"required": []string{"schemaVersion", "kind"},
@@ -137,7 +149,8 @@ type PlanCandidate struct {
 
 // StopOutput 表示模型主动停止。
 type StopOutput struct {
-	Reason string `json:"reason"`
+	Reason                string `json:"reason"`
+	RecommendedNextAction string `json:"recommendedNextAction"`
 }
 
 // PatchCompleteOutput 是补丁完成的信封（本 slice 未使用）。
@@ -166,6 +179,11 @@ func DecodeEnvelope(raw string) (*AgentEnvelope, error) {
 
 	if env.SchemaVersion != EnvelopeVersion {
 		return nil, fmt.Errorf("envelope schema version %q not supported", env.SchemaVersion)
+	}
+	if env.Kind == "stop" && env.Stop == nil {
+		// 声明 stop 但缺少 payload 时也回到专用协议修正，确保 nil stop 不会
+		// 绕过人工交接建议合同。
+		return nil, errStopRecommendationRequired
 	}
 
 	// 严格校验：恰好一个 kind 字段非空
@@ -357,6 +375,9 @@ func validatePlanCandidates(pc *PlanCandidatesOutput) error {
 func validateStop(s *StopOutput) error {
 	if s.Reason == "" {
 		return fmt.Errorf("stop: reason is required")
+	}
+	if strings.TrimSpace(s.RecommendedNextAction) == "" {
+		return errStopRecommendationRequired
 	}
 	return nil
 }

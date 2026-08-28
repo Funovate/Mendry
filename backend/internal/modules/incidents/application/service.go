@@ -64,10 +64,11 @@ type RemediationRequest struct {
 	DeployedCommit      string
 	Priority            string
 	Reason              string
+	ContextVersion      int64
 }
 
-// RemediationTrigger 是同步 remediation 触发 seam。
-// 后续 outbox slice 替换 Emit 实现，不改变 series/run 身份规则。
+// RemediationTrigger 是 remediation 触发 seam。
+// IngestInbound 会在入库事务提交后异步调用；已认证的 Create / UpdateStatus 仍同步调用。
 type RemediationTrigger interface {
 	Emit(ctx context.Context, req RemediationRequest) error
 }
@@ -221,7 +222,7 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 	if reopened {
 		remediation = automaticRequest(domain.Incident{
 			InternalID: current.InternalID, LifecycleGeneration: generation,
-			DeployedCommit: commit, Priority: current.Priority,
+			DeployedCommit: commit, Priority: current.Priority, Version: current.Version + 1,
 		})
 	}
 	updated, err := s.repository.UpdateStatus(ctx, project.ID, number, status, generation, commit, principal.ID, auditID, remediation)
@@ -236,8 +237,19 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 	return updated, nil
 }
 
-// IngestInbound 按 fingerprint 打开或更新事故；Closed / Recovered 不重开。
+// IngestInbound 按 fingerprint 打开或更新事故；新建事故提交后异步触发 remediation，Closed / Recovered 不重开。
 func (s *Service) IngestInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time) (domain.Incident, bool, error) {
+	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, nil)
+}
+
+// IngestInboundWithEvidence 在事故写入后、remediation 异步启动前运行一次
+// evidenceWriter。这个窄回调保持事故模块不依赖 remediation；失败仍保留已提交
+// 的事故并返回错误，避免在证据不完整时触发 remediation。
+func (s *Service) IngestInboundWithEvidence(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
+	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, evidenceWriter)
+}
+
+func (s *Service) ingestInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
 	current, err := s.repository.GetByFingerprint(ctx, projectID, fingerprint)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return domain.Incident{}, false, fmt.Errorf("get incident by fingerprint: %w", err)
@@ -245,6 +257,12 @@ func (s *Service) IngestInbound(ctx context.Context, projectID, sourceID, title,
 	if errors.Is(err, ErrNotFound) {
 		created, createErr := s.createInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt)
 		if createErr == nil {
+			if evidenceWriter != nil {
+				if evidenceErr := evidenceWriter(ctx, created); evidenceErr != nil {
+					return created, true, fmt.Errorf("persist inbound evidence: %w", evidenceErr)
+				}
+			}
+			s.emitAutomaticAsync(ctx, created)
 			return created, true, nil
 		}
 		if !errors.Is(createErr, ErrConflict) {
@@ -265,6 +283,14 @@ func (s *Service) IngestInbound(ctx context.Context, projectID, sourceID, title,
 	updated, err := s.repository.RecordOccurrence(ctx, projectID, fingerprint, occurredAt.UTC(), auditID)
 	if err != nil {
 		return domain.Incident{}, false, fmt.Errorf("record incident occurrence: %w", err)
+	}
+	if evidenceWriter != nil {
+		if evidenceErr := evidenceWriter(ctx, updated); evidenceErr != nil {
+			return updated, false, fmt.Errorf("persist inbound evidence: %w", evidenceErr)
+		}
+		// Repeated open observations can only enter the automatic continuation gate
+		// after their occurrence and evidence are both committed successfully.
+		s.emitAutomaticAsync(ctx, updated)
 	}
 	return updated, false, nil
 }
@@ -291,11 +317,6 @@ func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title,
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("create incident: %w", err)
 	}
-	if remediation != nil {
-		if err := s.emitAutomatic(ctx, created); err != nil {
-			return domain.Incident{}, err
-		}
-	}
 	return created, nil
 }
 
@@ -310,9 +331,28 @@ func (s *Service) emitAutomatic(ctx context.Context, incident domain.Incident) e
 	return nil
 }
 
+func (s *Service) emitAutomaticAsync(ctx context.Context, incident domain.Incident) {
+	if automaticRequest(incident) == nil {
+		return
+	}
+	// 事故与 remediation root 已在入库事务中提交；脱离 HTTP request context，
+	// 避免响应返回或客户端断开取消尚未开始的 remediation。
+	background := context.WithoutCancel(ctx)
+	go func() {
+		// remediation coordinator 会把启动后的失败写回 run 状态；Webhook 不等待该结果。
+		_ = s.emitAutomatic(background, incident)
+	}()
+}
+
 func automaticRequest(incident domain.Incident) *RemediationRequest {
 	if incident.Priority != domain.PriorityP1 && incident.Priority != domain.PriorityP2 {
 		return nil
+	}
+	contextVersion := incident.Version
+	if contextVersion < 1 {
+		// Create transactions assign the first durable incident version while
+		// assembling the root remediation row.
+		contextVersion = 1
 	}
 	return &RemediationRequest{
 		IncidentID:          incident.InternalID,
@@ -320,6 +360,7 @@ func automaticRequest(incident domain.Incident) *RemediationRequest {
 		DeployedCommit:      incident.DeployedCommit,
 		Priority:            string(incident.Priority),
 		Reason:              RemediationReasonAutomatic,
+		ContextVersion:      contextVersion,
 	}
 }
 

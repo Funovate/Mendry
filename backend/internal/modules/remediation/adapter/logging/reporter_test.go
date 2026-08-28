@@ -47,3 +47,32 @@ func TestFailureReporterLogsCauseAndStackWithoutPayload(t *testing.T) {
 		t.Fatalf("failure log contains payload-like content: %s", output.String())
 	}
 }
+
+func TestFailureReporterLogsSafeContinuationGateDecision(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := observability.NewLogger(observability.LoggerOptions{
+		Writer: &output, Level: "info", Format: "json", Service: "fixthe-test", Environment: "test",
+	})
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+	reporter, err := logging.NewFailureReporter(logger)
+	if err != nil {
+		t.Fatalf("NewFailureReporter() error = %v", err)
+	}
+	reporter.ReportGate(context.Background(), remediationapplication.TriggerRequest{
+		IncidentID: "incident-1", LifecycleGeneration: 3, Priority: "P2", Reason: "automatic", ContextVersion: 4,
+	}, remediationapplication.GateObservation{Outcome: "skipped", Reason: "unchanged_context"})
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("log JSON error = %v; output = %q", err, output.String())
+	}
+	if record[observability.FieldEvent] != observability.EventRemediationContinuationGate ||
+		record[observability.FieldGateOutcome] != "skipped" || record[observability.FieldGateReason] != "unchanged_context" ||
+		record[observability.FieldContextVersion] != float64(4) {
+		t.Fatalf("gate record = %#v", record)
+	}
+	if strings.Contains(output.String(), "payload") || strings.Contains(output.String(), "secret") {
+		t.Fatalf("gate record contains unsafe metadata: %s", output.String())
+	}
+}

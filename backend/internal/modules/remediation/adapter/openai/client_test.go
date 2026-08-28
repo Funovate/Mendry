@@ -777,6 +777,52 @@ func TestCompleteOutputRetrySharesLogicalTurnDeadline(t *testing.T) {
 	}
 }
 
+func TestCompleteFinalTransientStatusCarriesProviderClassification(t *testing.T) {
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":"temporary"}`)),
+				Request:    request,
+			}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID})
+	var providerFailure *domain.ProviderRuntimeError
+	if err == nil || !errors.As(err, &providerFailure) || providerFailure.Code != "provider_http_5xx" || !providerFailure.Retryable {
+		t.Fatalf("error = %v, provider failure = %#v", err, providerFailure)
+	}
+}
+
+func TestCompleteFinalNonTransientStatusIsNonRetryableProviderClassification(t *testing.T) {
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":"invalid"}`)),
+				Request:    request,
+			}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	_, err = client.Complete(context.Background(), domain.ModelTurn{ProjectID: testProjectID})
+	var providerFailure *domain.ProviderRuntimeError
+	if err == nil || !errors.As(err, &providerFailure) || providerFailure.Code != "provider_http_4xx" || providerFailure.Retryable {
+		t.Fatalf("error = %v, provider failure = %#v", err, providerFailure)
+	}
+}
+
 func mapsWithoutKey(source map[string]interface{}, key string) map[string]interface{} {
 	result := make(map[string]interface{}, len(source)-1)
 	for name, value := range source {

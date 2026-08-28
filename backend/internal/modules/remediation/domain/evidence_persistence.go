@@ -64,6 +64,48 @@ type TriggeringObservation struct {
 	IngestedAt    time.Time
 }
 
+// CallbackEvidenceSnapshot 是受信任 adapter 重试 provider detail 所需的入站快照。
+// Payload 只在 server-side callback loader 与 provider adapter 之间流转，不进入
+// AgentConversation 或模型工具参数。
+type CallbackEvidenceSnapshot struct {
+	IncidentID    string
+	ProjectID     string
+	EnvironmentID string
+	SourceID      string
+	ObservationID string
+	Payload       string
+	OccurredAt    time.Time
+	IngestedAt    time.Time
+}
+
+// TencentCLSDetailRequest 标识一次由当前 remediation run 发起的详情重试。
+// 请求不携带 URL；trusted adapter 根据 IncidentID 找回已接收的 callback。
+type TencentCLSDetailRequest struct {
+	RunID         string
+	IncidentID    string
+	ProjectID     string
+	EnvironmentID string
+	SourceID      string
+}
+
+// TencentCLSDetailResult 是成功详情读取后的有界证据结果。
+type TencentCLSDetailResult struct {
+	Evidence       StoredEvidence
+	BytesRetrieved int64
+}
+
+// CallbackEvidenceLoader 只向 trusted provider adapter 提供受范围约束的 callback
+// 快照；实现不得把 Payload 传入模型上下文。
+type CallbackEvidenceLoader interface {
+	LoadTencentCLSCallbackSnapshot(context.Context, string) (CallbackEvidenceSnapshot, error)
+}
+
+// TencentCLSDetailPort 是 remediation 的受信任 Tencent CLS detail 读取边界。
+// 模型只能通过无参数逻辑工具间接调用它，不能提交 URL 或 HTTP 选项。
+type TencentCLSDetailPort interface {
+	ResolveTencentCLSDetail(context.Context, TencentCLSDetailRequest) (TencentCLSDetailResult, error)
+}
+
 // BootstrapEvidence is the pre-run evidence snapshot used to build the first
 // diagnosis turn. Records are limited to the triggering Observation, while
 // runtime evidence remains run-scoped and is collected through tools.

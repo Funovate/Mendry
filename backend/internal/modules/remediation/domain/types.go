@@ -72,6 +72,33 @@ func ParseRunState(s string) (RunState, error) {
 	}
 }
 
+// TriggerOrigin 标识 remediation attempt 如何进入 series。continuation 使用独立值，
+// 使 review 和 audit 能区分 webhook gate 与 operator 操作。
+type TriggerOrigin string
+
+const (
+	TriggerOriginAutomatic         = "automatic"
+	TriggerOriginManual            = "manual"
+	TriggerOriginAutomaticContinue = "automatic_continue"
+	TriggerOriginManualContinue    = "manual_continue"
+	// 使用 persisted column 术语的调用方可继续使用这些兼容名称。
+	TriggerReasonAutomatic         = TriggerOriginAutomatic
+	TriggerReasonManual            = TriggerOriginManual
+	TriggerReasonAutomaticContinue = TriggerOriginAutomaticContinue
+	TriggerReasonManualContinue    = TriggerOriginManualContinue
+)
+
+// IsKnown 检查值是否属于安全的 persisted trigger origin。
+func (o TriggerOrigin) IsKnown() bool {
+	switch string(o) {
+	case TriggerOriginAutomatic, TriggerOriginManual,
+		TriggerOriginAutomaticContinue, TriggerOriginManualContinue:
+		return true
+	default:
+		return false
+	}
+}
+
 // FixabilityClass 分类事故的可自动修复性。
 type FixabilityClass string
 
@@ -330,6 +357,25 @@ type NewRun struct {
 	DeployedCommit      string
 	Priority            string
 	TriggerReason       string
+	ContextVersion      int64
+}
+
+// AttemptSummary 是随 requested run 暴露的有界安全 history projection；不含 prompt、
+// provider payload、credential 或无界 connector output。
+type AttemptSummary struct {
+	ID                  string
+	RunID               string
+	AttemptNumber       int32
+	Status              RunState
+	Origin              string
+	ContinuationOfRunID string
+	ContinuationReason  string
+	ContextVersion      int64
+	TerminalReason      string
+	Retryable           bool
+	Version             int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // Run 是一个 remediation run 的聚合。
@@ -341,6 +387,13 @@ type Run struct {
 	DeployedCommit      string
 	AttemptNumber       int32
 	State               RunState
+	Origin              string
+	TriggerReason       string
+	ContinuationOfRunID string
+	ContinuationReason  string
+	ContextVersion      int64
+	TerminalReason      string
+	Retryable           bool
 	Budget              BudgetCounters
 	ModelProvider       string
 	ModelName           string
@@ -358,4 +411,5 @@ type RunAggregate struct {
 	ArtifactReferences []string
 	SuggestedDiff      string
 	RecommendedPlanID  string
+	AttemptSummaries   []AttemptSummary
 }

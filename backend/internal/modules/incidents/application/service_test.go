@@ -69,6 +69,7 @@ func (f *fakeRepository) RecordOccurrence(_ context.Context, projectID, fingerpr
 	incident := f.incidents[0]
 	incident.LastSeen = lastSeen
 	incident.OccurrenceCount++
+	incident.Version++
 	return incident, nil
 }
 func (f *fakeRepository) List(_ context.Context, projectID string, _ int32) (ListResult, error) {
@@ -120,12 +121,20 @@ func (f *fakeBaseline) DeployedCommit(context.Context, string) (string, error) {
 }
 
 type fakeTrigger struct {
-	calls []RemediationRequest
-	err   error
+	calls   []RemediationRequest
+	err     error
+	started chan struct{}
+	release chan struct{}
 }
 
 func (f *fakeTrigger) Emit(_ context.Context, req RemediationRequest) error {
 	f.calls = append(f.calls, req)
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.release != nil {
+		<-f.release
+	}
 	return f.err
 }
 
@@ -363,17 +372,61 @@ func newTestService(t *testing.T, repository Repository, projects ProjectAccess,
 	return service
 }
 
-func TestIngestInboundCreatesP2AndEmits(t *testing.T) {
+func TestIngestInboundPersistsBeforeAsyncRemediation(t *testing.T) {
+	now := time.Date(2026, 8, 19, 11, 41, 44, 0, time.UTC)
+	repository := &fakeRepository{lookupErr: ErrNotFound}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	trigger := &fakeTrigger{started: started, release: release}
+	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+
+	type ingestResult struct {
+		incident domain.Incident
+		inserted bool
+		err      error
+	}
+	done := make(chan ingestResult, 1)
+	go func() {
+		incident, inserted, err := service.IngestInbound(context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c", "【告警】测试信息", "【告警】测试信息", now)
+		done <- ingestResult{incident: incident, inserted: inserted, err: err}
+	}()
+
+	var result ingestResult
+	select {
+	case result = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("IngestInbound waited for asynchronous remediation")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous remediation did not start")
+	}
+	if result.err != nil || !result.inserted || result.incident.Priority != domain.PriorityP2 || result.incident.Status != domain.StatusOpen {
+		t.Fatalf("IngestInbound() = %#v", result)
+	}
+	if repository.actorID != "" || repository.remediation == nil || len(trigger.calls) != 1 || trigger.calls[0].Reason != RemediationReasonAutomatic {
+		t.Fatalf("actor=%q remediation=%#v emits=%#v", repository.actorID, repository.remediation, trigger.calls)
+	}
+}
+
+func TestIngestInboundEvidenceFailurePreservesIncidentWithoutRemediation(t *testing.T) {
 	now := time.Date(2026, 8, 19, 11, 41, 44, 0, time.UTC)
 	repository := &fakeRepository{lookupErr: ErrNotFound}
 	trigger := &fakeTrigger{}
 	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
-	created, inserted, err := service.IngestInbound(context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c", "【告警】测试信息", "【告警】测试信息", now)
-	if err != nil || !inserted || created.Priority != domain.PriorityP2 || created.Status != domain.StatusOpen {
-		t.Fatalf("IngestInbound() = %#v inserted=%t err=%v", created, inserted, err)
+	evidenceErr := errors.New("evidence writer unavailable")
+	created, inserted, err := service.IngestInboundWithEvidence(
+		context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
+		"【告警】测试信息", "【告警】测试信息", now,
+		func(context.Context, domain.Incident) error { return evidenceErr },
+	)
+	if !errors.Is(err, evidenceErr) || !inserted || created.InternalID == "" || len(trigger.calls) != 0 {
+		t.Fatalf("incident=%#v inserted=%t err=%v emits=%d", created, inserted, err, len(trigger.calls))
 	}
-	if repository.actorID != "" || len(trigger.calls) != 1 || trigger.calls[0].Reason != RemediationReasonAutomatic {
-		t.Fatalf("actor=%q emits=%#v", repository.actorID, trigger.calls)
+	if repository.remediation == nil {
+		t.Fatal("incident was not committed with its automatic remediation metadata")
 	}
 }
 
@@ -388,6 +441,44 @@ func TestIngestInboundBumpsOpenWithoutSecondEmit(t *testing.T) {
 	updated, inserted, err := service.IngestInbound(context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c", "【告警】测试信息", "【告警】测试信息", now)
 	if err != nil || inserted || updated.OccurrenceCount != 2 || len(trigger.calls) != 0 {
 		t.Fatalf("bump = %#v inserted=%t emits=%d err=%v", updated, inserted, len(trigger.calls), err)
+	}
+}
+
+func TestIngestInboundWithEvidenceGatesRepeatedOpenAfterEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{incidents: []domain.Incident{{
+		InternalID: testIncidentID, Number: 2049, Status: domain.StatusOpen, Priority: domain.PriorityP2,
+		OccurrenceCount: 1, Version: 1, LastSeen: now.Add(-time.Hour),
+	}}}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	trigger := &fakeTrigger{started: started, release: release}
+	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	evidenceDone := make(chan struct{})
+	updated, inserted, err := service.IngestInboundWithEvidence(
+		context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
+		"alert", "fingerprint", now,
+		func(context.Context, domain.Incident) error {
+			close(evidenceDone)
+			return nil
+		},
+	)
+	if err != nil || inserted || updated.OccurrenceCount != 2 || updated.Version != 2 {
+		t.Fatalf("updated=%#v inserted=%t err=%v", updated, inserted, err)
+	}
+	select {
+	case <-evidenceDone:
+	case <-time.After(time.Second):
+		t.Fatal("evidence writer did not run")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("automatic gate did not run after evidence")
+	}
+	if len(trigger.calls) != 1 || trigger.calls[0].ContextVersion != 2 || trigger.calls[0].Reason != RemediationReasonAutomatic {
+		t.Fatalf("automatic gate calls = %#v", trigger.calls)
 	}
 }
 

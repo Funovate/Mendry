@@ -371,7 +371,9 @@ func safeRuntimeCode(code string) string {
 	case "canceled", "connector_timeout", "transport", "rate_limit", "remote_execution",
 		"authentication", "authorization", "not_found", "invalid_response", "invalid_configuration",
 		"capability_unavailable", "policy_unconfigured", "invalid_arguments", "tool_unavailable",
-		"connector_authorization", "connector_not_found", "connector_failure":
+		"connector_authorization", "connector_not_found", "connector_failure",
+		"provider_detail_unavailable", "provider_detail_invalid", "provider_detail_redirect_rejected",
+		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence":
 		return code
 	default:
 		return "connector_failure"
@@ -383,7 +385,7 @@ func safeRuntimeRetryable(code string, requested bool) bool {
 		return false
 	}
 	switch code {
-	case "connector_timeout", "transport", "rate_limit", "remote_execution", "connector_failure":
+	case "connector_timeout", "transport", "rate_limit", "remote_execution", "connector_failure", "provider_detail_unavailable", "provider_detail_timeout":
 		return true
 	default:
 		return false
@@ -420,6 +422,18 @@ func safeRuntimeMessage(code string) string {
 		return "tool arguments are invalid"
 	case "tool_unavailable":
 		return "tool is unavailable"
+	case "provider_detail_unavailable":
+		return "Tencent CLS detail is unavailable"
+	case "provider_detail_invalid":
+		return "Tencent CLS detail response is invalid"
+	case "provider_detail_redirect_rejected":
+		return "Tencent CLS detail redirect was rejected"
+	case "provider_detail_oversized":
+		return "Tencent CLS detail response exceeded its size bound"
+	case "provider_detail_timeout":
+		return "Tencent CLS detail request timed out"
+	case "provider_detail_persistence":
+		return "Tencent CLS detail could not be persisted"
 	default:
 		return "connector request failed"
 	}
@@ -465,6 +479,9 @@ func normalizeConversationValue(value any) any {
 			"stderr":         redactConversationText(current.Stderr),
 			"truncated":      current.Truncated,
 			"bytesRetrieved": current.BytesRetrieved,
+			"window_lines":   current.WindowLines,
+			"returned_lines": countDockerOutputLines(current.Stdout),
+			"filtered":       current.FilteredLines,
 		}
 	default:
 		return redactConversationValue(value)

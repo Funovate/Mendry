@@ -28,7 +28,10 @@ func prepareBootstrapEvidence(input domain.BootstrapEvidence) domain.BootstrapEv
 	prepared := input
 	if len(prepared.Records) > maxBootstrapEvidenceRecords {
 		prepared.Records = append([]domain.StoredEvidence(nil), prepared.Records[:maxBootstrapEvidenceRecords]...)
+	} else if len(prepared.Records) > 0 {
+		prepared.Records = append([]domain.StoredEvidence(nil), prepared.Records...)
 	}
+	sortBootstrapEvidenceRecords(prepared.Records)
 	if prepared.AlertQuality == "" {
 		prepared.AlertQuality = alertQualityFromRecords(prepared.Records)
 	}
@@ -50,6 +53,21 @@ func prepareBootstrapEvidence(input domain.BootstrapEvidence) domain.BootstrapEv
 	prepared.Contradictions = appendUniqueStrings(prepared.Contradictions, bootstrapTimeContradictions(candidates)...)
 	prepared.MissingEvidence = appendUniqueStrings(prepared.MissingEvidence, bootstrapMissingEvidence(prepared)...)
 	return prepared
+}
+
+func sortBootstrapEvidenceRecords(records []domain.StoredEvidence) {
+	sort.SliceStable(records, func(i, j int) bool {
+		left := isPreferredTencentCLSDirectEvidence(records[i])
+		right := isPreferredTencentCLSDirectEvidence(records[j])
+		if left != right {
+			return left
+		}
+		return false
+	})
+}
+
+func isPreferredTencentCLSDirectEvidence(record domain.StoredEvidence) bool {
+	return trustedTencentDetailEvidence(record)
 }
 
 type bootstrapTimeCandidate struct {
@@ -514,6 +532,9 @@ func renderBootstrapEvidence(builder *strings.Builder, value domain.BootstrapEvi
 			break
 		}
 		fmt.Fprintf(builder, "  evidence_ref=%s provider=%s kind=%s classification=%s outcome=%s available=%t occurred_at=%s\n", record.EvidenceID, record.Provider, record.EvidenceKind, record.Classification, record.Outcome, record.Available, formatOptionalTime(record.OccurredAt))
+		if isPreferredTencentCLSDirectEvidence(record) {
+			fmt.Fprintln(builder, "  preferred_tencent_cls_direct_evidence=true source=validated_provider_detail_resolution instruction=analyze this trusted Tencent CLS operational evidence before normalized alert/context records and cite this evidence_ref when causal; priority does not satisfy citation resolution or the evidence gate")
+		}
 		payloadLimit := maxBootstrapPayloadBytes
 		if remaining < payloadLimit {
 			payloadLimit = remaining
@@ -530,7 +551,6 @@ func boundedJSONForBootstrap(raw []byte, limit int) string {
 	}
 	var value any
 	if json.Unmarshal(raw, &value) == nil {
-		removeDetailURL(value)
 		encoded, err := json.Marshal(value)
 		if err == nil {
 			if len(encoded) <= limit {
@@ -543,23 +563,6 @@ func boundedJSONForBootstrap(raw []byte, limit int) string {
 		return string(raw)
 	}
 	return fmt.Sprintf("{\"truncated\":true,\"bytes\":%d,\"preview\":%q}", len(raw), string(raw[:limit]))
-}
-
-func removeDetailURL(value any) {
-	switch current := value.(type) {
-	case map[string]any:
-		for key, child := range current {
-			if normalizeTimeKey(key) == "detailurl" {
-				delete(current, key)
-				continue
-			}
-			removeDetailURL(child)
-		}
-	case []any:
-		for _, child := range current {
-			removeDetailURL(child)
-		}
-	}
 }
 
 func formatOptionalTime(value *time.Time) string {
