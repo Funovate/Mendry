@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
-- **Last Active**: 2026-08-27
+- **Total Sessions**: 15
+- **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~473 | Active |
+| `journal-1.md` | ~506 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-08-28 | blocked_manual_review manual fix suggestion + stop handoff contract | `01f0544` | `main` |
 | 14 | 2026-08-27 | Archive docker.logs pattern filtering | `f8c6194` | `main` |
 | 13 | 2026-08-25 | Archive remediation protocol correction | `de41e83` | `main` |
 | 12 | 2026-08-24 | Adjust remediation timeout model | `ea85854` | `main` |

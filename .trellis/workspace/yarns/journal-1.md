@@ -471,3 +471,36 @@ Committed docker.logs pattern filtering and coverage awareness (f8c6194): option
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: blocked_manual_review manual fix suggestion + stop handoff contract
+
+**Date**: 2026-08-28
+**Task**: blocked_manual_review manual fix suggestion + stop handoff contract
+**Branch**: `main`
+
+### Summary
+
+Investigated why INC-2267 concludes blocked_manual_review: model diagnosis insufficient_evidence (nil-pointer panic in common.go:64 from fault-injection endpoint, but no trace/auth/host linkage), persisted terminal reason, retryable=false so the 11:20 repeated webhook did not auto-continue. Implemented: review top-level manualSuggestion (latest decision recommendedNextAction via sanitizeReviewText); prominent '人工修复建议 / Manual fix suggestion' block with missingEvidence list in RemediationPanel for blocked_manual_review; stop envelopes now require non-empty recommendedNextAction (schema minLength 1 + validateStop + required_stop_suggestion bounded correction, never direct terminalize), legal stop persists unsafe_to_automate decision before blocked_manual_review. Full backend suite + race, frontend lint/typecheck/unit/build, 22 Playwright E2E green. Committed whole remediation-continue-retry task (91 files, migrations 000005-000015) as feat(remediation); unrelated worktree changes left uncommitted. Spec updated (remediation-adapter-guidelines: stop handoff protocol, manualSuggestion contract, error matrix rows).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `01f0544` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
