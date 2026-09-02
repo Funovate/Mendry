@@ -1,11 +1,10 @@
-import { Check, FileSearch, LoaderCircle } from "lucide-react";
-import { messageFromError, type ProjectSecret, type SourceKind } from "../../../api";
+import { Check, FileSearch, LoaderCircle, RefreshCw } from "lucide-react";
+import { messageFromError, type DockerContainer, type ProjectSecret, type SourceKind } from "../../../api";
 import { CredentialField } from "./CredentialField";
 
 const SOURCE_CREDENTIAL_KINDS: Record<SourceKind, { value: ProjectSecret["kind"]; label: string }[]> = {
   ssh: [
     { value: "ssh_private_key", label: "SSH private key" },
-    { value: "ssh_password", label: "SSH password" },
   ],
   mcp: [
     { value: "http_bearer", label: "HTTP bearer token" },
@@ -23,7 +22,9 @@ export function SourceStep({
   mcpHeaders, setMcpHeaders, evidenceProfile, setEvidenceProfile, queryScope, setQueryScope,
   sourceHost, setSourceHost, sshPort, setSshPort, sshUser, setSshUser, projectFolder, setProjectFolder,
   logPath, setLogPath, readMode, setReadMode, cloudProvider, setCloudProvider, cloudRegion, setCloudRegion,
-  sourceResource, setSourceResource, knownSecrets, createCredential, creatingCredential, createCredentialError,
+  sourceResource, setSourceResource, sshDeploymentKind, setSshDeploymentKind, sshContainerName, setSshContainerName,
+  dockerContainers, onRefreshDockerContainers, refreshingDockerContainers, dockerContainerError,
+  knownSecrets, createCredential, creatingCredential, createCredentialError,
   updateCredential, updatingCredential = false, updateCredentialError,
   onSave, saving = false, canSave = false, saveError,
 }: {
@@ -61,6 +62,14 @@ export function SourceStep({
   setCloudRegion: (value: string) => void;
   sourceResource: string;
   setSourceResource: (value: string) => void;
+  sshDeploymentKind: "host" | "docker";
+  setSshDeploymentKind: (value: "host" | "docker") => void;
+  sshContainerName: string;
+  setSshContainerName: (value: string) => void;
+  dockerContainers: DockerContainer[];
+  onRefreshDockerContainers: () => void;
+  refreshingDockerContainers?: boolean;
+  dockerContainerError?: unknown;
   knownSecrets: ProjectSecret[];
   createCredential: (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => Promise<ProjectSecret>;
   creatingCredential: boolean;
@@ -113,6 +122,26 @@ export function SourceStep({
           <option value="snapshot">Snapshot</option>
         </select></label>
       </div>
+      <label>Deployment<select aria-label="SSH deployment" value={sshDeploymentKind} onChange={(event) => { setSshDeploymentKind(event.target.value as "host" | "docker"); if (event.target.value === "host") setSshContainerName(""); }}>
+        <option value="host">Host process</option>
+        <option value="docker">Docker</option>
+      </select></label>
+      {sshDeploymentKind === "docker" && <div className="docker-container-picker">
+        <div className="setup-section-actions">
+          <button className="secondary-button" type="button" onClick={onRefreshDockerContainers} disabled={refreshingDockerContainers} title="Refresh Docker containers">
+            {refreshingDockerContainers ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+            Refresh containers
+          </button>
+        </div>
+        <label>Docker container<select aria-label="Docker container" value={sshContainerName} onChange={(event) => setSshContainerName(event.target.value)} disabled={refreshingDockerContainers}>
+          <option value="">Select a returned container</option>
+          {dockerContainers.map((container) => <option key={container.name} value={container.name}>
+            {container.name} · {container.image} · {container.state} · {container.status}
+          </option>)}
+        </select></label>
+        {dockerContainerError !== undefined && dockerContainerError !== null && <p className="credential-field-error" role="alert">{messageFromError(dockerContainerError)}</p>}
+        {dockerContainers.length === 0 && !refreshingDockerContainers && <p className="field-hint">Refresh the inventory to choose a running, restarting, or stopped container.</p>}
+      </div>}
       <label>Project folder<input aria-label="Project folder" value={projectFolder} onChange={(event) => setProjectFolder(event.target.value)} /></label>
       <label>Log path<input aria-label="Log path" value={logPath} onChange={(event) => setLogPath(event.target.value)} /></label>
     </>}

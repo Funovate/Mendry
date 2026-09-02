@@ -2,13 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { api, messageFromError, type ListResult, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
+import { api, messageFromError, type DockerContainer, type ListResult, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { LoadingState, PageError } from "../../shared/ui";
 import {
   buildSourceConfig, buildTriggerConfig, defaultSourceCapabilities,
-  readConfigNumber, readConfigString, readStringRecord,
+  readConfigNumber, readConfigObject, readConfigString, readStringRecord,
 } from "./configuration";
 import { LLMStep } from "./wizard/LLMStep";
 import { RepositoryStep } from "./wizard/RepositoryStep";
@@ -75,12 +75,17 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [projectFolder, setProjectFolder] = useState(readConfigString(current.source?.config, "projectFolder", "/srv/app"));
   const [logPath, setLogPath] = useState(readConfigString(current.source?.config, "logPath", "/var/log/app.log"));
   const [readMode, setReadMode] = useState(readConfigString(current.source?.config, "mode", "tail"));
+  const sourceDeployment = readConfigObject(current.source?.config, "deployment");
+  const [sshDeploymentKind, setSshDeploymentKind] = useState<"host" | "docker">(readConfigString(sourceDeployment, "kind", "host") === "docker" ? "docker" : "host");
+  const [sshContainerName, setSshContainerName] = useState(readConfigString(sourceDeployment, "containerName", ""));
+  const [dockerContainers, setDockerContainers] = useState<DockerContainer[]>([]);
   const [cloudProvider, setCloudProvider] = useState(readConfigString(current.source?.config, "provider", "generic"));
   const [cloudRegion, setCloudRegion] = useState(readConfigString(current.source?.config, "region", "default"));
   const [sourceResource, setSourceResource] = useState(readConfigString(current.source?.config, "resource", "service-logs"));
   const [triggerKind, setTriggerKind] = useState<TriggerKind>(current.trigger?.kind ?? "custom_rule");
   const [savedTriggerKind, setSavedTriggerKind] = useState<TriggerKind | null>(current.trigger?.kind ?? null);
   const [inboundUrl, setInboundUrl] = useState(current.trigger?.inboundUrl ?? "");
+  const [webhookProvider, setWebhookProvider] = useState<"generic" | "tencent_cls">(readConfigString(current.trigger?.config, "provider", "generic") === "tencent_cls" ? "tencent_cls" : "generic");
   const [groupingWindowSeconds, setGroupingWindowSeconds] = useState(readConfigNumber(current.trigger?.config, "groupingWindowSeconds", 900));
   const [matchExpression, setMatchExpression] = useState(readConfigString(current.trigger?.config, "matchExpression", "level=ERROR"));
   const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? "https://api.openai.com");
@@ -108,12 +113,12 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   });
   const buildSourcePayload = () => ({
     kind: sourceKind, credentialSecretId: sourceCredentialId || null,
-    config: buildSourceConfig(sourceKind, { endpoint: sourceEndpoint, mcpTransport, mcpHeaders, evidenceProfile, queryScope, host: sourceHost, port: sshPort, user: sshUser, projectFolder, logPath, readMode, cloudProvider, cloudRegion, resource: sourceResource }),
+    config: buildSourceConfig(sourceKind, { endpoint: sourceEndpoint, mcpTransport, mcpHeaders, evidenceProfile, queryScope, host: sourceHost, port: sshPort, user: sshUser, projectFolder, logPath, readMode, cloudProvider, cloudRegion, resource: sourceResource, sshDeploymentKind, sshContainerName }),
     capabilities: sourceCapabilities, enabled: current.source?.enabled ?? true,
   });
   const buildTriggerPayload = () => ({
     kind: triggerKind, signingSecretId: null,
-    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression }),
+    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression, webhookProvider }),
     enabled: current.trigger?.enabled ?? true,
   });
   const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
@@ -151,6 +156,13 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const probeRepository = useMutation({
     mutationFn: (input: { remoteUrl: string; transport: "https" | "ssh"; credentialSecretId: string }) => api.probeRepositoryRefs(project.key, input),
     onSuccess: applyRepositoryRefs,
+  });
+  const probeDockerContainers = useMutation({
+    mutationFn: (input: { host: string; port: number; user: string; credentialSecretId: string }) => api.probeSSHContainers(project.key, input),
+    onSuccess: (result) => {
+      setDockerContainers(result.containers);
+      setSshContainerName((selected) => result.containers.some((container) => container.name === selected) ? selected : "");
+    },
   });
   const probeLLMModels = useMutation({
     mutationFn: (input: { baseUrl: string; credentialSecretId: string }) => api.probeLLMModels(project.key, input),
@@ -196,10 +208,16 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const createCredential = (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => createSecret.mutateAsync(input);
   const updateCredential = (input: { secretId: string; name: string; value?: string }) => updateSecret.mutateAsync(input);
   const knownSecrets = queryClient.getQueryData<ListResult<ProjectSecret>>(queryKeys.secrets(project.key))?.items ?? secrets;
+  const clearDockerDiscovery = () => {
+    setDockerContainers([]);
+    setSshContainerName("");
+    probeDockerContainers.reset();
+  };
   const toggleCapability = (capability: string) => setSourceCapabilities((values) => values.includes(capability) ? values.filter((value) => value !== capability) : [...values, capability]);
   const onSourceKindChange = (kind: SourceKind) => {
     setSourceKind(kind);
     setSourceCapabilities(defaultSourceCapabilities(kind));
+    clearDockerDiscovery();
   };
 
   return <section className="setup-view">
@@ -232,21 +250,29 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
       />}
       {activeStep === "source" && <SourceStep
         sourceKind={sourceKind} onSourceKindChange={onSourceKindChange}
-        sourceCredentialId={sourceCredentialId} setSourceCredentialId={setSourceCredentialId}
+        sourceCredentialId={sourceCredentialId} setSourceCredentialId={(value) => { setSourceCredentialId(value); clearDockerDiscovery(); }}
         sourceCapabilities={sourceCapabilities} toggleCapability={toggleCapability}
         sourceEndpoint={sourceEndpoint} setSourceEndpoint={setSourceEndpoint} mcpTransport={mcpTransport} setMcpTransport={setMcpTransport}
         mcpHeaders={mcpHeaders} setMcpHeaders={setMcpHeaders} evidenceProfile={evidenceProfile} setEvidenceProfile={setEvidenceProfile}
-        queryScope={queryScope} setQueryScope={setQueryScope} sourceHost={sourceHost} setSourceHost={setSourceHost}
-        sshPort={sshPort} setSshPort={setSshPort} sshUser={sshUser} setSshUser={setSshUser}
+        queryScope={queryScope} setQueryScope={setQueryScope} sourceHost={sourceHost} setSourceHost={(value) => { setSourceHost(value); clearDockerDiscovery(); }}
+        sshPort={sshPort} setSshPort={(value) => { setSshPort(value); clearDockerDiscovery(); }} sshUser={sshUser} setSshUser={(value) => { setSshUser(value); clearDockerDiscovery(); }}
         projectFolder={projectFolder} setProjectFolder={setProjectFolder} logPath={logPath} setLogPath={setLogPath}
         readMode={readMode} setReadMode={setReadMode} cloudProvider={cloudProvider} setCloudProvider={setCloudProvider}
         cloudRegion={cloudRegion} setCloudRegion={setCloudRegion} sourceResource={sourceResource} setSourceResource={setSourceResource}
-        onSave={() => saveSource.mutate()} saving={saveSource.isPending} canSave={sourceCapabilities.length > 0} saveError={saveSource.error}
+        sshDeploymentKind={sshDeploymentKind} setSshDeploymentKind={(value) => { setSshDeploymentKind(value); clearDockerDiscovery(); }}
+        sshContainerName={sshContainerName} setSshContainerName={setSshContainerName}
+        dockerContainers={dockerContainers}
+        onRefreshDockerContainers={() => { if (sourceCredentialId) probeDockerContainers.mutate({ host: sourceHost.trim(), port: sshPort, user: sshUser.trim(), credentialSecretId: sourceCredentialId }); }}
+        refreshingDockerContainers={probeDockerContainers.isPending} dockerContainerError={probeDockerContainers.error}
+        onSave={() => saveSource.mutate()} saving={saveSource.isPending}
+        canSave={sourceCapabilities.length > 0 && (sourceKind !== "ssh" || sshDeploymentKind !== "docker" || dockerContainers.some((container) => container.name === sshContainerName))}
+        saveError={saveSource.error}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}
         updateCredential={updateCredential} updatingCredential={updateSecret.isPending} updateCredentialError={updateSecret.error}
       />}
       {activeStep === "trigger" && <TriggerStep
         triggerKind={triggerKind} setTriggerKind={setTriggerKind}
+        webhookProvider={webhookProvider} setWebhookProvider={setWebhookProvider}
         groupingWindowSeconds={groupingWindowSeconds} setGroupingWindowSeconds={setGroupingWindowSeconds}
         matchExpression={matchExpression} setMatchExpression={setMatchExpression}
         inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}

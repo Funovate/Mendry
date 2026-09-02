@@ -35,9 +35,13 @@ describe("configuration projections", () => {
   });
 
   it("builds source-specific and trigger-specific payloads", () => {
-    expect(buildSourceConfig("ssh", input)).toEqual(expect.objectContaining({ schemaVersion: 1, host: "host.internal", port: 22, mode: "tail" }));
+    expect(buildSourceConfig("ssh", input)).toEqual(expect.objectContaining({ schemaVersion: 2, host: "host.internal", port: 22, mode: "tail", deployment: { kind: "host" } }));
     expect(buildSourceConfig("cloud", input)).toEqual({ schemaVersion: 1, provider: "tencent-cls", region: "ap-guangzhou", resource: "server-log" });
-    expect(buildTriggerConfig("signed_webhook", { eventTypes: "", deduplicationKey: "", groupingWindowSeconds: 900, matchExpression: "" })).toEqual({ schemaVersion: 1, eventTypes: ["alarm"], deduplicationKey: "title" });
+    expect(buildTriggerConfig("signed_webhook", { eventTypes: "", deduplicationKey: "", groupingWindowSeconds: 900, matchExpression: "" })).toEqual({ schemaVersion: 2, provider: "generic", eventTypes: ["alarm"], deduplicationKey: "title" });
+    expect(buildSourceConfig("ssh", { ...input, sshDeploymentKind: "docker", sshContainerName: "checkout-api" })).toEqual(expect.objectContaining({
+      schemaVersion: 2,
+      deployment: { kind: "docker", containerName: "checkout-api" },
+    }));
   });
 });
 

@@ -4,6 +4,7 @@ import { messageFromError, type TriggerKind } from "../../../api";
 
 export function TriggerStep({
   triggerKind, setTriggerKind,
+  webhookProvider, setWebhookProvider,
   groupingWindowSeconds, setGroupingWindowSeconds, matchExpression, setMatchExpression,
   inboundUrl, onGenerateInboundUrl, generatingInboundUrl = false, generateInboundUrlError,
   canGenerateInboundUrl = false,
@@ -11,6 +12,8 @@ export function TriggerStep({
 }: {
   triggerKind: TriggerKind;
   setTriggerKind: (value: TriggerKind) => void;
+  webhookProvider: "generic" | "tencent_cls";
+  setWebhookProvider: (value: "generic" | "tencent_cls") => void;
   groupingWindowSeconds: number;
   setGroupingWindowSeconds: (value: number) => void;
   matchExpression: string;
@@ -40,7 +43,12 @@ export function TriggerStep({
         <option value="signed_webhook">Signed webhook</option>
       </select></label>
     </div>
-    {triggerKind === "signed_webhook" ? <div className="inbound-url-field">
+    {triggerKind === "signed_webhook" ? <>
+      <label>Webhook provider<select aria-label="Webhook provider" value={webhookProvider} onChange={(event) => setWebhookProvider(event.target.value as "generic" | "tencent_cls")}>
+        <option value="generic">Generic webhook</option>
+        <option value="tencent_cls">Tencent Cloud CLS alert</option>
+      </select></label>
+      <div className="inbound-url-field">
       <label>Inbound webhook URL<input aria-label="Inbound webhook URL" value={inboundUrl ?? ""} readOnly placeholder="Generate an inbound URL after the project is saved." /></label>
       <div className="inbound-url-actions">
         <button className="secondary-button" type="button" disabled={!inboundUrl} onClick={() => void copyUrl()}>
@@ -52,7 +60,8 @@ export function TriggerStep({
       </div>
       {!canGenerateInboundUrl && <p className="inbound-url-hint">Save the signed webhook configuration first. The first save creates the inbound URL.</p>}
       {generateInboundUrlError instanceof Error && <p role="alert">{generateInboundUrlError.message}</p>}
-    </div> : <>
+      </div>
+    </> : <>
       <label>Grouping window seconds<input aria-label="Grouping window seconds" type="number" min="1" max="86400" value={groupingWindowSeconds} onChange={(event) => setGroupingWindowSeconds(Number(event.target.value))} /></label>
       <label>Match expression<textarea aria-label="Match expression" value={matchExpression} onChange={(event) => setMatchExpression(event.target.value)} /></label>
     </>}

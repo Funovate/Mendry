@@ -15,10 +15,14 @@ export function readConfigStrings(config: Record<string, unknown> | undefined, k
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : fallback;
 }
 
-export function readStringRecord(config: Record<string, unknown> | undefined, key: string): Record<string, string> {
+export function readConfigObject(config: Record<string, unknown> | undefined, key: string): Record<string, unknown> {
   const value = config?.[key];
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  return value as Record<string, unknown>;
+}
+
+export function readStringRecord(config: Record<string, unknown> | undefined, key: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(readConfigObject(config, key)).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
 export function defaultSourceCapabilities(kind: SourceKind): string[] {
@@ -41,6 +45,8 @@ export type SourceConfigInput = {
   cloudProvider: string;
   cloudRegion: string;
   resource: string;
+  sshDeploymentKind?: "host" | "docker";
+  sshContainerName?: string;
 };
 
 export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): Record<string, unknown> {
@@ -59,14 +65,18 @@ export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): R
     };
   }
   if (kind === "ssh") {
+    const deploymentKind = input.sshDeploymentKind ?? "host";
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       host: input.host.trim(),
       port: input.port,
       user: input.user.trim(),
       projectFolder: input.projectFolder.trim(),
       logPath: input.logPath.trim(),
       mode: input.readMode,
+      deployment: deploymentKind === "docker"
+        ? { kind: deploymentKind, containerName: (input.sshContainerName ?? "").trim() }
+        : { kind: "host" },
     };
   }
   return {
@@ -77,11 +87,12 @@ export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): R
   };
 }
 
-export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string }): Record<string, unknown> {
+export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string; webhookProvider?: "generic" | "tencent_cls" }): Record<string, unknown> {
   if (kind === "signed_webhook") {
     const eventTypes = input.eventTypes.split(",").map((value) => value.trim()).filter(Boolean);
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      provider: input.webhookProvider ?? "generic",
       eventTypes: eventTypes.length > 0 ? eventTypes : ["alarm"],
       deduplicationKey: input.deduplicationKey.trim() || "title",
     };
