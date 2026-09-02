@@ -2,6 +2,9 @@ package postgres_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -897,4 +900,293 @@ func TestRunStore_NotifyWritesAllowlistedAuditMetadata(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("notify error = %v", err)
 	}
+}
+
+// fixtureScopeIDs 从 incident 行读取 project/environment/source 的 UUID，供证据写入。
+func fixtureScopeIDs(t *testing.T, pool *pgxpool.Pool, incidentID string) (projectID, environmentID, sourceID string) {
+	t.Helper()
+	var project, environment, source uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT project_id, environment_id, source_id FROM incidents WHERE id = $1`, incidentID,
+	).Scan(&project, &environment, &source); err != nil {
+		t.Fatalf("load incident scope ids: %v", err)
+	}
+	return project.String(), environment.String(), source.String()
+}
+
+// runtimeEvidenceInput 构造一条 run 归属的 canonical runtime evidence。
+func runtimeEvidenceInput(run domain.Run, projectID, environmentID, sourceID string, output string) domain.StoredEvidence {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"command": "'hostname' '-I'", "stdout": output, "stderr": "", "truncated": false,
+	})
+	sum := sha256.Sum256(payload)
+	return domain.StoredEvidence{
+		ProjectID: projectID, EnvironmentID: environmentID, SourceID: sourceID,
+		IncidentID: run.IncidentID, RunID: run.RunID,
+		Provider: "ssh", EvidenceKind: domain.EvidenceKindRuntime,
+		DeduplicationKey: "ssh.inspect:" + hex.EncodeToString(sum[:]),
+		Classification:   domain.EvidenceCorrelatedSupport,
+		Outcome:          "success", Available: true, Primary: true,
+		OperationalCorrelation: true,
+		ContentHash:            hex.EncodeToString(sum[:]),
+		ByteCount:              int64(len(payload)),
+		Provenance:             json.RawMessage(`{"tool":"ssh.inspect","phase":"diagnosing","projectionVersion":1}`),
+		Payload:                payload,
+	}
+}
+
+// TestRunStore_ContinuationEvidenceSameSeriesReuse 覆盖 implement.md 第 6 步：
+// child attempt 可引用同 series 早期 attempt 的 runtime evidence，证据 ID 不变、
+// 行不重新归属；未来 attempt、跨 series/incident 的证据不可解析。
+func TestRunStore_ContinuationEvidenceSameSeriesReuse(t *testing.T) {
+	pool := setupTestDB(t)
+	t.Cleanup(pool.Close)
+
+	store := mustStore(t, pool)
+	ctx := context.Background()
+
+	// 根 attempt 收集 SSH inspect runtime evidence 后失败。
+	root := makeTerminalRun(t, pool, store, domain.RunStateFailed, 1, true)
+	projectID, environmentID, sourceID := fixtureScopeIDs(t, pool, root.IncidentID)
+	evidence, err := store.AppendEvidence(ctx, runtimeEvidenceInput(root, projectID, environmentID, sourceID, "10.16.6.17 43.131.29.186"))
+	if err != nil {
+		t.Fatalf("AppendEvidence: %v", err)
+	}
+	if evidence.RunID != root.RunID {
+		t.Fatalf("evidence run ownership = %s, want %s", evidence.RunID, root.RunID)
+	}
+
+	// child attempt 在同一 series 中创建。
+	child, err := store.CreateNextAttempt(ctx, nextAttemptInput(root, domain.TriggerReasonManualContinue, 2))
+	if err != nil {
+		t.Fatalf("CreateNextAttempt: %v", err)
+	}
+	if child.AttemptNumber != root.AttemptNumber+1 {
+		t.Fatalf("child attempt = %d, want %d", child.AttemptNumber, root.AttemptNumber+1)
+	}
+
+	// child 可以解析早期 attempt 的证据（GetRemediationEvidenceForRun 放宽到同 series）。
+	resolution, err := store.ResolveEvidence(ctx, child.RunID, []domain.EvidenceCitation{{EvidenceID: evidence.EvidenceID}})
+	if err != nil {
+		t.Fatalf("ResolveEvidence: %v", err)
+	}
+	if len(resolution.Records) != 1 || resolution.Records[0].EvidenceID != evidence.EvidenceID ||
+		resolution.Records[0].Classification != domain.EvidenceCorrelatedSupport {
+		t.Fatalf("child resolution = %#v", resolution.Records)
+	}
+
+	// 同 series 早期证据通过 continuation loader 读到，且证据 ID 不变、行未重新归属。
+	records, err := store.ListContinuationRuntimeEvidence(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 16,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationRuntimeEvidence: %v", err)
+	}
+	if len(records) != 1 || records[0].EvidenceID != evidence.EvidenceID || records[0].RunID != root.RunID {
+		t.Fatalf("continuation records = %#v", records)
+	}
+	after, err := store.Get(ctx, root.RunID)
+	if err != nil {
+		t.Fatalf("Get root after child: %v", err)
+	}
+	if len(after.AttemptSummaries) != 2 {
+		t.Fatalf("attempt summaries = %#v", after.AttemptSummaries)
+	}
+
+	// 另一 incident（不同 series）的证据不能被本 series 解析，也不会被 loader 返回。
+	otherIncident := mustIncident(t, pool)
+	otherProject, otherEnv, otherSource := fixtureScopeIDs(t, pool, otherIncident.String())
+	otherRun := makeTerminalRunForIncident(t, pool, store, otherIncident, domain.RunStateFailed, 1, false)
+	otherEvidence, err := store.AppendEvidence(ctx, runtimeEvidenceInput(otherRun, otherProject, otherEnv, otherSource, "other-host"))
+	if err != nil {
+		t.Fatalf("AppendEvidence other: %v", err)
+	}
+	otherResolution, err := store.ResolveEvidence(ctx, child.RunID, []domain.EvidenceCitation{{EvidenceID: otherEvidence.EvidenceID}})
+	if err != nil {
+		t.Fatalf("ResolveEvidence other: %v", err)
+	}
+	if len(otherResolution.Records) != 0 {
+		t.Fatalf("cross-incident evidence must be unresolved: %#v", otherResolution.Records)
+	}
+	records, err = store.ListContinuationRuntimeEvidence(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 16,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationRuntimeEvidence after other incident: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("cross-incident evidence leaked into loader: %#v", records)
+	}
+
+	// 未来 attempt 的证据不能被 loader 读回（attempt 单调）。
+	futureEvidence, err := store.AppendEvidence(ctx, runtimeEvidenceInput(child, projectID, environmentID, sourceID, "future-output"))
+	if err != nil {
+		t.Fatalf("AppendEvidence future: %v", err)
+	}
+	records, err = store.ListContinuationRuntimeEvidence(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 16,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationRuntimeEvidence future: %v", err)
+	}
+	for _, record := range records {
+		if record.EvidenceID == futureEvidence.EvidenceID {
+			t.Fatalf("future-attempt evidence must not be readable through attempt %d", root.AttemptNumber)
+		}
+	}
+}
+
+// providerDetailEvidenceInput 构造一条 run 归属的 provider_detail 证据（供索引测试）。
+func providerDetailEvidenceInput(run domain.Run, projectID, environmentID, sourceID string) domain.StoredEvidence {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"recordId": "record-uuid", "message": "trusted provider detail", "sourcePath": "internal/app/main.go", "line": 42,
+	})
+	sum := sha256.Sum256(payload)
+	return domain.StoredEvidence{
+		ProjectID: projectID, EnvironmentID: environmentID, SourceID: sourceID,
+		IncidentID: run.IncidentID, RunID: run.RunID,
+		Provider: "tencent_cls", EvidenceKind: domain.EvidenceKindProviderDetail,
+		DeduplicationKey: "tencent_cls.detail:" + hex.EncodeToString(sum[:]),
+		Classification:   domain.EvidenceDirectFault,
+		Outcome:          "success", Available: true, Primary: true,
+		TemporalCorrelation: true, OperationalCorrelation: true,
+		ContentHash: hex.EncodeToString(sum[:]),
+		ByteCount:   int64(len(payload)),
+		Provenance:  json.RawMessage(`{"adapter":"tencent_cls","detail_resolution":"validated_provider_detail_get_alert_detail","contradictions":[]}`),
+		Payload:     payload,
+	}
+}
+
+// TestRunStore_ContinuationEvidenceIndexSameSeries 覆盖 implement.md slice 3：
+// child attempt 可读取同 series 早期 attempt 的非 runtime 证据紧凑索引
+// （provider_detail 等），pre-run 证据（run_id IS NULL）始终可见且
+// sourceAttempt=0；runtime 行不进入索引（由全量 payload 查询提供）；未来
+// attempt 与跨 series/incident 的证据不可见。索引条目不含 payload。
+func TestRunStore_ContinuationEvidenceIndexSameSeries(t *testing.T) {
+	pool := setupTestDB(t)
+	t.Cleanup(pool.Close)
+
+	store := mustStore(t, pool)
+	ctx := context.Background()
+
+	// 根 attempt 收集 provider_detail 与 runtime evidence 后失败。
+	root := makeTerminalRun(t, pool, store, domain.RunStateFailed, 1, true)
+	projectID, environmentID, sourceID := fixtureScopeIDs(t, pool, root.IncidentID)
+	detail, err := store.AppendEvidence(ctx, providerDetailEvidenceInput(root, projectID, environmentID, sourceID))
+	if err != nil {
+		t.Fatalf("AppendEvidence provider detail: %v", err)
+	}
+	if detail.RunID != root.RunID {
+		t.Fatalf("provider detail run ownership = %s, want %s", detail.RunID, root.RunID)
+	}
+	runtimeEvidence, err := store.AppendEvidence(ctx, runtimeEvidenceInput(root, projectID, environmentID, sourceID, "10.16.6.17"))
+	if err != nil {
+		t.Fatalf("AppendEvidence runtime: %v", err)
+	}
+
+	// pre-run normalized_alert 证据（run_id IS NULL）同样进入索引。
+	preRun := runtimeEvidenceInput(root, projectID, environmentID, sourceID, "pre-run alert")
+	preRun.RunID = ""
+	preRun.Provider = "webhook"
+	preRun.EvidenceKind = domain.EvidenceKindNormalizedAlert
+	preRun.Classification = domain.EvidenceContextual
+	preRun.DeduplicationKey = "webhook.normalized_alert:pre-run-fixed"
+	preRun, err = store.AppendEvidence(ctx, preRun)
+	if err != nil {
+		t.Fatalf("AppendEvidence pre-run: %v", err)
+	}
+	if preRun.RunID != "" {
+		t.Fatalf("pre-run evidence run ownership = %s, want empty", preRun.RunID)
+	}
+
+	// child attempt 在同一 series 中创建。
+	child, err := store.CreateNextAttempt(ctx, nextAttemptInput(root, domain.TriggerReasonManualContinue, 2))
+	if err != nil {
+		t.Fatalf("CreateNextAttempt: %v", err)
+	}
+
+	entries, err := store.ListContinuationEvidenceIndex(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 32,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationEvidenceIndex: %v", err)
+	}
+	byID := make(map[string]domain.EvidenceIndexEntry, len(entries))
+	for _, entry := range entries {
+		byID[entry.EvidenceID] = entry
+	}
+	// provider_detail 与 pre-run 证据都进入索引；runtime 行被排除。
+	detailEntry, ok := byID[detail.EvidenceID]
+	if !ok || detailEntry.Kind != domain.EvidenceKindProviderDetail ||
+		detailEntry.Provider != "tencent_cls" || detailEntry.Classification != domain.EvidenceDirectFault ||
+		detailEntry.SourceAttempt != 1 || detailEntry.ContentHash != detail.ContentHash {
+		t.Fatalf("index detail entry = %#v, want provider detail with source attempt 1", detailEntry)
+	}
+	preRunEntry, ok := byID[preRun.EvidenceID]
+	if !ok || preRunEntry.Kind != domain.EvidenceKindNormalizedAlert || preRunEntry.SourceAttempt != 0 {
+		t.Fatalf("index pre-run entry = %#v, want normalized alert with source attempt 0", preRunEntry)
+	}
+	if _, ok := byID[runtimeEvidence.EvidenceID]; ok {
+		t.Fatalf("runtime evidence leaked into the compact index: %#v", byID[runtimeEvidence.EvidenceID])
+	}
+
+	// 另一 incident（不同 series）的证据不能进入本 series 索引。
+	otherIncident := mustIncident(t, pool)
+	otherProject, otherEnv, otherSource := fixtureScopeIDs(t, pool, otherIncident.String())
+	otherRun := makeTerminalRunForIncident(t, pool, store, otherIncident, domain.RunStateFailed, 1, false)
+	otherDetail, err := store.AppendEvidence(ctx, providerDetailEvidenceInput(otherRun, otherProject, otherEnv, otherSource))
+	if err != nil {
+		t.Fatalf("AppendEvidence other: %v", err)
+	}
+	entries, err = store.ListContinuationEvidenceIndex(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 32,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationEvidenceIndex after other incident: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.EvidenceID == otherDetail.EvidenceID {
+			t.Fatalf("cross-incident evidence leaked into the index: %#v", entry)
+		}
+	}
+
+	// 未来 attempt 的证据不能通过 attempt 单调边界读回。
+	futureDetail, err := store.AppendEvidence(ctx, providerDetailEvidenceInput(child, projectID, environmentID, sourceID))
+	if err != nil {
+		t.Fatalf("AppendEvidence future: %v", err)
+	}
+	entries, err = store.ListContinuationEvidenceIndex(ctx, domain.ContinuationEvidenceQuery{
+		SeriesID: root.SeriesID, ThroughAttemptNumber: root.AttemptNumber, Limit: 32,
+	})
+	if err != nil {
+		t.Fatalf("ListContinuationEvidenceIndex future: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.EvidenceID == futureDetail.EvidenceID {
+			t.Fatalf("future-attempt evidence must not be readable through attempt %d", root.AttemptNumber)
+		}
+	}
+}
+
+// makeTerminalRunForIncident 在指定 incident 上创建 terminal run（供跨 incident 隔离断言）。
+func makeTerminalRunForIncident(t *testing.T, pool *pgxpool.Pool, store *postgres.RunStore, incidentID uuid.UUID, state domain.RunState, contextVersion int64, retryable bool) domain.Run {
+	t.Helper()
+	input := newRun(incidentID, 1, "abc123")
+	input.ContextVersion = contextVersion
+	if contextVersion > 0 {
+		input.TriggerReason = domain.TriggerReasonAutomatic
+	}
+	run, err := store.CreateSeriesAndRun(context.Background(), input)
+	if err != nil {
+		t.Fatalf("CreateSeriesAndRun: %v", err)
+	}
+	if state != domain.RunStateQueued {
+		if err := store.Transition(context.Background(), run.RunID, domain.RunStateQueued, state, domain.Effect{
+			TerminalReason: "transient_provider",
+			Retryable:      retryable,
+		}); err != nil {
+			t.Fatalf("Transition to %s: %v", state, err)
+		}
+	}
+	return run
 }

@@ -96,6 +96,49 @@ func (q *Queries) CreateRemediationAuditEvent(ctx context.Context, arg CreateRem
 	return result.RowsAffected(), nil
 }
 
+const createRemediationCheckpointEvent = `-- name: CreateRemediationCheckpointEvent :one
+INSERT INTO remediation_checkpoint_event (
+    run_id,
+    sequence,
+    trigger_reason,
+    payload,
+    content_hash
+) VALUES (
+    $1, $2, $3,
+    $4, $5
+)
+RETURNING id, run_id, sequence, trigger_reason, payload, content_hash, created_at
+`
+
+type CreateRemediationCheckpointEventParams struct {
+	RunID         pgtype.UUID
+	Sequence      int64
+	TriggerReason string
+	Payload       []byte
+	ContentHash   string
+}
+
+func (q *Queries) CreateRemediationCheckpointEvent(ctx context.Context, arg CreateRemediationCheckpointEventParams) (RemediationCheckpointEvent, error) {
+	row := q.db.QueryRow(ctx, createRemediationCheckpointEvent,
+		arg.RunID,
+		arg.Sequence,
+		arg.TriggerReason,
+		arg.Payload,
+		arg.ContentHash,
+	)
+	var i RemediationCheckpointEvent
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Sequence,
+		&i.TriggerReason,
+		&i.Payload,
+		&i.ContentHash,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createRemediationDecision = `-- name: CreateRemediationDecision :one
 INSERT INTO remediation_decision (
     run_id,
@@ -157,21 +200,32 @@ INSERT INTO remediation_evidence (
     project_id, environment_id, source_id, incident_id, run_id, observation_id,
     provider, evidence_kind, deduplication_key, classification, outcome,
     available, primary_evidence, temporal_correlation, operational_correlation,
-    occurred_at, content_hash, byte_count, provenance, payload
-) VALUES (
+    occurred_at, content_hash, byte_count, provenance, payload,
+    baseline_lifecycle_generation, baseline_deployed_commit
+)
+SELECT
     $1, $2, $3, $4,
     $5, $6, $7, $8,
     $9, $10, $11,
     $12, $13, $14,
     $15, $16, $17,
-    $18, $19, $20
+    $18, $19, $20,
+    COALESCE(series.lifecycle_generation, incident.lifecycle_generation),
+    COALESCE(series.deployed_commit, incident.deployed_commit)
+FROM incidents AS incident
+LEFT JOIN remediation_run AS owning_run ON owning_run.id = $5
+LEFT JOIN remediation_series AS series ON series.id = owning_run.series_id
+WHERE incident.id = $4
+  AND incident.project_id = $1
+ON CONFLICT (
+    project_id, incident_id, run_id, baseline_lifecycle_generation,
+    baseline_deployed_commit, deduplication_key
 )
-ON CONFLICT (project_id, incident_id, run_id, deduplication_key)
 DO UPDATE SET
     run_id = COALESCE(EXCLUDED.run_id, remediation_evidence.run_id),
     observation_id = COALESCE(EXCLUDED.observation_id, remediation_evidence.observation_id),
     updated_at = clock_timestamp()
-RETURNING id, project_id, environment_id, source_id, incident_id, run_id, observation_id, provider, evidence_kind, deduplication_key, classification, outcome, available, primary_evidence, temporal_correlation, operational_correlation, occurred_at, ingested_at, content_hash, byte_count, provenance, payload, created_at, updated_at
+RETURNING id, project_id, environment_id, source_id, incident_id, run_id, observation_id, provider, evidence_kind, deduplication_key, classification, outcome, available, primary_evidence, temporal_correlation, operational_correlation, occurred_at, ingested_at, content_hash, byte_count, provenance, payload, created_at, updated_at, baseline_lifecycle_generation, baseline_deployed_commit
 `
 
 type CreateRemediationEvidenceParams struct {
@@ -246,8 +300,40 @@ func (q *Queries) CreateRemediationEvidence(ctx context.Context, arg CreateRemed
 		&i.Payload,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BaselineLifecycleGeneration,
+		&i.BaselineDeployedCommit,
 	)
 	return i, err
+}
+
+const createRemediationEvidenceReadCursor = `-- name: CreateRemediationEvidenceReadCursor :exec
+INSERT INTO remediation_evidence_read_cursor (
+    token_hash, run_id, evidence_id, content_hash, byte_offset, expires_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5, $6
+)
+`
+
+type CreateRemediationEvidenceReadCursorParams struct {
+	TokenHash   []byte
+	RunID       pgtype.UUID
+	EvidenceID  pgtype.UUID
+	ContentHash string
+	ByteOffset  int64
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CreateRemediationEvidenceReadCursor(ctx context.Context, arg CreateRemediationEvidenceReadCursorParams) error {
+	_, err := q.db.Exec(ctx, createRemediationEvidenceReadCursor,
+		arg.TokenHash,
+		arg.RunID,
+		arg.EvidenceID,
+		arg.ContentHash,
+		arg.ByteOffset,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const createRemediationNextRun = `-- name: CreateRemediationNextRun :one
@@ -258,13 +344,17 @@ INSERT INTO remediation_run (
     continuation_of_run_id,
     trigger_reason,
     continuation_reason,
-    context_version
+    context_version,
+    agent_loop_mode,
+    agent_loop_policy_version
 ) VALUES (
     $1, $2, 'queued',
     $3, $4,
-    $5, $6
+    $5, $6,
+    (SELECT agent_loop_mode FROM remediation_run WHERE id = $3),
+    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = $3)
 )
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version
 `
 
 type CreateRemediationNextRunParams struct {
@@ -310,6 +400,8 @@ func (q *Queries) CreateRemediationNextRun(ctx context.Context, arg CreateRemedi
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
@@ -380,9 +472,18 @@ INSERT INTO remediation_run (
     attempt_number,
     state,
     context_version,
-    trigger_reason
-) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable
+    trigger_reason,
+    agent_loop_mode,
+    agent_loop_policy_version
+)
+SELECT $1, $2, $3,
+       $4, $5,
+       project.agent_loop_mode, project.agent_loop_policy_version
+FROM remediation_series AS series
+JOIN incidents AS incident ON incident.id = series.incident_id
+JOIN projects AS project ON project.id = incident.project_id
+WHERE series.id = $1
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version
 `
 
 type CreateRemediationRunParams struct {
@@ -426,6 +527,8 @@ func (q *Queries) CreateRemediationRun(ctx context.Context, arg CreateRemediatio
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
@@ -504,6 +607,16 @@ func (q *Queries) CreateRemediationToolInvocation(ctx context.Context, arg Creat
 	return i, err
 }
 
+const deleteExpiredRemediationEvidenceReadCursors = `-- name: DeleteExpiredRemediationEvidenceReadCursors :exec
+DELETE FROM remediation_evidence_read_cursor
+WHERE expires_at < clock_timestamp()
+`
+
+func (q *Queries) DeleteExpiredRemediationEvidenceReadCursors(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredRemediationEvidenceReadCursors)
+	return err
+}
+
 const getLatestRemediationObservationForIncident = `-- name: GetLatestRemediationObservationForIncident :one
 SELECT observations.id, observations.project_id, observations.environment_id, observations.source_id, observations.service, observations.occurred_at, observations.level, observations.message, observations.host, observations.request_id, observations.fingerprint, observations.attributes, observations.ingested_at
 FROM remediation_evidence AS evidence
@@ -514,6 +627,8 @@ JOIN observations
    AND observations.project_id = evidence.project_id
 WHERE evidence.incident_id = $1
   AND evidence.run_id IS NULL
+  AND evidence.baseline_lifecycle_generation = incident.lifecycle_generation
+  AND evidence.baseline_deployed_commit = incident.deployed_commit
   AND evidence.evidence_kind = 'normalized_alert'
 ORDER BY evidence.created_at DESC, evidence.id DESC
 LIMIT 1
@@ -541,7 +656,7 @@ func (q *Queries) GetLatestRemediationObservationForIncident(ctx context.Context
 }
 
 const getLatestRemediationPlanningCheckpoint = `-- name: GetLatestRemediationPlanningCheckpoint :one
-SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable
+SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable, run.agent_loop_mode, run.agent_loop_policy_version
 FROM remediation_run AS run
 WHERE run.series_id = $1
   AND run.context_version = $2
@@ -590,6 +705,8 @@ func (q *Queries) GetLatestRemediationPlanningCheckpoint(ctx context.Context, ar
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
@@ -627,6 +744,44 @@ func (q *Queries) GetRemediationArtifactsByRunID(ctx context.Context, runID pgty
 		return nil, err
 	}
 	return items, nil
+}
+
+const getRemediationCheckpointEvent = `-- name: GetRemediationCheckpointEvent :one
+SELECT id, run_id, sequence, trigger_reason, payload, content_hash, created_at FROM remediation_checkpoint_event
+WHERE run_id = $1 AND sequence = $2
+`
+
+type GetRemediationCheckpointEventParams struct {
+	RunID    pgtype.UUID
+	Sequence int64
+}
+
+func (q *Queries) GetRemediationCheckpointEvent(ctx context.Context, arg GetRemediationCheckpointEventParams) (RemediationCheckpointEvent, error) {
+	row := q.db.QueryRow(ctx, getRemediationCheckpointEvent, arg.RunID, arg.Sequence)
+	var i RemediationCheckpointEvent
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Sequence,
+		&i.TriggerReason,
+		&i.Payload,
+		&i.ContentHash,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRemediationCheckpointLatestSequence = `-- name: GetRemediationCheckpointLatestSequence :one
+SELECT COALESCE(MAX(sequence), 0)::bigint AS sequence
+FROM remediation_checkpoint_event
+WHERE run_id = $1
+`
+
+func (q *Queries) GetRemediationCheckpointLatestSequence(ctx context.Context, runID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getRemediationCheckpointLatestSequence, runID)
+	var sequence int64
+	err := row.Scan(&sequence)
+	return sequence, err
 }
 
 const getRemediationDecisionsByRunID = `-- name: GetRemediationDecisionsByRunID :many
@@ -668,7 +823,7 @@ func (q *Queries) GetRemediationDecisionsByRunID(ctx context.Context, runID pgty
 }
 
 const getRemediationEvidenceForRun = `-- name: GetRemediationEvidenceForRun :one
-SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at
+SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at, evidence.baseline_lifecycle_generation, evidence.baseline_deployed_commit
 FROM remediation_evidence AS evidence
 JOIN incidents AS incident
     ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
@@ -677,7 +832,15 @@ JOIN remediation_run AS run
 JOIN remediation_series AS series
     ON series.id = run.series_id AND series.incident_id = incident.id
 WHERE evidence.id = $2
-  AND (evidence.run_id IS NULL OR evidence.run_id = run.id)
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS evidence_run
+           WHERE evidence_run.id = evidence.run_id
+             AND evidence_run.series_id = series.id
+             AND evidence_run.attempt_number <= run.attempt_number
+       ))
 `
 
 type GetRemediationEvidenceForRunParams struct {
@@ -713,6 +876,136 @@ func (q *Queries) GetRemediationEvidenceForRun(ctx context.Context, arg GetRemed
 		&i.Payload,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BaselineLifecycleGeneration,
+		&i.BaselineDeployedCommit,
+	)
+	return i, err
+}
+
+const getRemediationEvidencePage = `-- name: GetRemediationEvidencePage :one
+SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at, evidence.baseline_lifecycle_generation, evidence.baseline_deployed_commit, COALESCE(evidence_run.attempt_number, 0) AS source_attempt
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_run AS run
+    ON run.id = $1
+JOIN remediation_series AS series
+    ON series.id = run.series_id AND series.incident_id = incident.id
+LEFT JOIN remediation_run AS evidence_run
+    ON evidence_run.id = evidence.run_id
+WHERE evidence.id = $2
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS series_run
+           WHERE series_run.id = evidence.run_id
+             AND series_run.series_id = series.id
+             AND series_run.attempt_number <= run.attempt_number
+       ))
+`
+
+type GetRemediationEvidencePageParams struct {
+	RunID      pgtype.UUID
+	EvidenceID pgtype.UUID
+}
+
+type GetRemediationEvidencePageRow struct {
+	ID                          pgtype.UUID
+	ProjectID                   pgtype.UUID
+	EnvironmentID               pgtype.UUID
+	SourceID                    pgtype.UUID
+	IncidentID                  pgtype.UUID
+	RunID                       pgtype.UUID
+	ObservationID               pgtype.UUID
+	Provider                    string
+	EvidenceKind                string
+	DeduplicationKey            string
+	Classification              string
+	Outcome                     string
+	Available                   bool
+	PrimaryEvidence             bool
+	TemporalCorrelation         bool
+	OperationalCorrelation      bool
+	OccurredAt                  pgtype.Timestamptz
+	IngestedAt                  pgtype.Timestamptz
+	ContentHash                 string
+	ByteCount                   int64
+	Provenance                  []byte
+	Payload                     []byte
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	BaselineLifecycleGeneration *int64
+	BaselineDeployedCommit      *string
+	SourceAttempt               int32
+}
+
+func (q *Queries) GetRemediationEvidencePage(ctx context.Context, arg GetRemediationEvidencePageParams) (GetRemediationEvidencePageRow, error) {
+	row := q.db.QueryRow(ctx, getRemediationEvidencePage, arg.RunID, arg.EvidenceID)
+	var i GetRemediationEvidencePageRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.SourceID,
+		&i.IncidentID,
+		&i.RunID,
+		&i.ObservationID,
+		&i.Provider,
+		&i.EvidenceKind,
+		&i.DeduplicationKey,
+		&i.Classification,
+		&i.Outcome,
+		&i.Available,
+		&i.PrimaryEvidence,
+		&i.TemporalCorrelation,
+		&i.OperationalCorrelation,
+		&i.OccurredAt,
+		&i.IngestedAt,
+		&i.ContentHash,
+		&i.ByteCount,
+		&i.Provenance,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BaselineLifecycleGeneration,
+		&i.BaselineDeployedCommit,
+		&i.SourceAttempt,
+	)
+	return i, err
+}
+
+const getRemediationEvidenceReadCursor = `-- name: GetRemediationEvidenceReadCursor :one
+SELECT token_hash, run_id, evidence_id, content_hash, byte_offset, expires_at, created_at FROM remediation_evidence_read_cursor
+WHERE token_hash = $1
+  AND run_id = $2
+  AND evidence_id = $3
+  AND content_hash = $4
+`
+
+type GetRemediationEvidenceReadCursorParams struct {
+	TokenHash   []byte
+	RunID       pgtype.UUID
+	EvidenceID  pgtype.UUID
+	ContentHash string
+}
+
+func (q *Queries) GetRemediationEvidenceReadCursor(ctx context.Context, arg GetRemediationEvidenceReadCursorParams) (RemediationEvidenceReadCursor, error) {
+	row := q.db.QueryRow(ctx, getRemediationEvidenceReadCursor,
+		arg.TokenHash,
+		arg.RunID,
+		arg.EvidenceID,
+		arg.ContentHash,
+	)
+	var i RemediationEvidenceReadCursor
+	err := row.Scan(
+		&i.TokenHash,
+		&i.RunID,
+		&i.EvidenceID,
+		&i.ContentHash,
+		&i.ByteOffset,
+		&i.ExpiresAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -757,7 +1050,7 @@ func (q *Queries) GetRemediationPlansByRunID(ctx context.Context, runID pgtype.U
 }
 
 const getRemediationRun = `-- name: GetRemediationRun :one
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable FROM remediation_run WHERE id = $1
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version FROM remediation_run WHERE id = $1
 `
 
 func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (RemediationRun, error) {
@@ -787,6 +1080,8 @@ func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (Remedi
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
@@ -807,7 +1102,7 @@ func (q *Queries) GetRemediationRunProject(ctx context.Context, runID pgtype.UUI
 }
 
 const getRemediationRunsBySeriesID = `-- name: GetRemediationRunsBySeriesID :many
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable FROM remediation_run
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version FROM remediation_run
 WHERE series_id = $1
 ORDER BY attempt_number ASC
 `
@@ -845,6 +1140,8 @@ func (q *Queries) GetRemediationRunsBySeriesID(ctx context.Context, seriesID pgt
 			&i.ContextVersion,
 			&i.TerminalReason,
 			&i.Retryable,
+			&i.AgentLoopMode,
+			&i.AgentLoopPolicyVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -964,6 +1261,25 @@ func (q *Queries) GetRemediationToolPolicy(ctx context.Context, arg GetRemediati
 	return i, err
 }
 
+const getRemediationWorkingMemory = `-- name: GetRemediationWorkingMemory :one
+SELECT run_id, sequence, context_version, observed_run_version, phase, content_hash, updated_at FROM remediation_working_memory WHERE run_id = $1
+`
+
+func (q *Queries) GetRemediationWorkingMemory(ctx context.Context, runID pgtype.UUID) (RemediationWorkingMemory, error) {
+	row := q.db.QueryRow(ctx, getRemediationWorkingMemory, runID)
+	var i RemediationWorkingMemory
+	err := row.Scan(
+		&i.RunID,
+		&i.Sequence,
+		&i.ContextVersion,
+		&i.ObservedRunVersion,
+		&i.Phase,
+		&i.ContentHash,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const incrementRunCounters = `-- name: IncrementRunCounters :one
 UPDATE remediation_run
 SET model_calls = model_calls + $2,
@@ -983,7 +1299,7 @@ SET model_calls = model_calls + $2,
     repository_bytes = repository_bytes + $10,
     version = version + 1
 WHERE id = $1
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version
 `
 
 type IncrementRunCountersParams struct {
@@ -1037,12 +1353,192 @@ func (q *Queries) IncrementRunCounters(ctx context.Context, arg IncrementRunCoun
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
 
+const listContinuationEvidenceIndex = `-- name: ListContinuationEvidenceIndex :many
+SELECT evidence.id, evidence.evidence_kind, evidence.provider, evidence.classification,
+       evidence.content_hash, COALESCE(evidence_run.attempt_number, 0) AS source_attempt
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_series AS series
+    ON series.id = $1 AND series.incident_id = incident.id
+LEFT JOIN remediation_run AS evidence_run
+    ON evidence_run.id = evidence.run_id
+WHERE evidence.evidence_kind <> 'runtime'
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS series_run
+           WHERE series_run.id = evidence.run_id
+             AND series_run.series_id = series.id
+             AND series_run.attempt_number <= $2
+       ))
+ORDER BY evidence.created_at ASC, evidence.id ASC
+LIMIT $3
+`
+
+type ListContinuationEvidenceIndexParams struct {
+	SeriesID             pgtype.UUID
+	ThroughAttemptNumber int32
+	ResultLimit          int32
+}
+
+type ListContinuationEvidenceIndexRow struct {
+	ID             pgtype.UUID
+	EvidenceKind   string
+	Provider       string
+	Classification string
+	ContentHash    string
+	SourceAttempt  int32
+}
+
+func (q *Queries) ListContinuationEvidenceIndex(ctx context.Context, arg ListContinuationEvidenceIndexParams) ([]ListContinuationEvidenceIndexRow, error) {
+	rows, err := q.db.Query(ctx, listContinuationEvidenceIndex, arg.SeriesID, arg.ThroughAttemptNumber, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListContinuationEvidenceIndexRow
+	for rows.Next() {
+		var i ListContinuationEvidenceIndexRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EvidenceKind,
+			&i.Provider,
+			&i.Classification,
+			&i.ContentHash,
+			&i.SourceAttempt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listContinuationRuntimeEvidence = `-- name: ListContinuationRuntimeEvidence :many
+SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at, evidence.baseline_lifecycle_generation, evidence.baseline_deployed_commit
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_series AS series
+    ON series.id = $1 AND series.incident_id = incident.id
+WHERE evidence.evidence_kind = 'runtime'
+  AND evidence.run_id IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM remediation_run AS evidence_run
+      WHERE evidence_run.id = evidence.run_id
+        AND evidence_run.series_id = series.id
+        AND evidence_run.attempt_number <= $2
+  )
+ORDER BY evidence.created_at ASC, evidence.id ASC
+LIMIT $3
+`
+
+type ListContinuationRuntimeEvidenceParams struct {
+	SeriesID             pgtype.UUID
+	ThroughAttemptNumber int32
+	ResultLimit          int32
+}
+
+func (q *Queries) ListContinuationRuntimeEvidence(ctx context.Context, arg ListContinuationRuntimeEvidenceParams) ([]RemediationEvidence, error) {
+	rows, err := q.db.Query(ctx, listContinuationRuntimeEvidence, arg.SeriesID, arg.ThroughAttemptNumber, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RemediationEvidence
+	for rows.Next() {
+		var i RemediationEvidence
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.SourceID,
+			&i.IncidentID,
+			&i.RunID,
+			&i.ObservationID,
+			&i.Provider,
+			&i.EvidenceKind,
+			&i.DeduplicationKey,
+			&i.Classification,
+			&i.Outcome,
+			&i.Available,
+			&i.PrimaryEvidence,
+			&i.TemporalCorrelation,
+			&i.OperationalCorrelation,
+			&i.OccurredAt,
+			&i.IngestedAt,
+			&i.ContentHash,
+			&i.ByteCount,
+			&i.Provenance,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BaselineLifecycleGeneration,
+			&i.BaselineDeployedCommit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRemediationCheckpointEvents = `-- name: ListRemediationCheckpointEvents :many
+SELECT id, run_id, sequence, trigger_reason, payload, content_hash, created_at FROM remediation_checkpoint_event
+WHERE run_id = $1
+ORDER BY sequence DESC
+LIMIT $2
+`
+
+type ListRemediationCheckpointEventsParams struct {
+	RunID       pgtype.UUID
+	ResultLimit int32
+}
+
+func (q *Queries) ListRemediationCheckpointEvents(ctx context.Context, arg ListRemediationCheckpointEventsParams) ([]RemediationCheckpointEvent, error) {
+	rows, err := q.db.Query(ctx, listRemediationCheckpointEvents, arg.RunID, arg.ResultLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RemediationCheckpointEvent
+	for rows.Next() {
+		var i RemediationCheckpointEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Sequence,
+			&i.TriggerReason,
+			&i.Payload,
+			&i.ContentHash,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRemediationEvidenceForObservation = `-- name: ListRemediationEvidenceForObservation :many
-SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at
+SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at, evidence.baseline_lifecycle_generation, evidence.baseline_deployed_commit
 FROM remediation_evidence AS evidence
 JOIN incidents AS incident
     ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
@@ -1103,6 +1599,8 @@ func (q *Queries) ListRemediationEvidenceForObservation(ctx context.Context, arg
 			&i.Payload,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BaselineLifecycleGeneration,
+			&i.BaselineDeployedCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -1115,7 +1613,7 @@ func (q *Queries) ListRemediationEvidenceForObservation(ctx context.Context, arg
 }
 
 const listRemediationEvidenceForRun = `-- name: ListRemediationEvidenceForRun :many
-SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at
+SELECT evidence.id, evidence.project_id, evidence.environment_id, evidence.source_id, evidence.incident_id, evidence.run_id, evidence.observation_id, evidence.provider, evidence.evidence_kind, evidence.deduplication_key, evidence.classification, evidence.outcome, evidence.available, evidence.primary_evidence, evidence.temporal_correlation, evidence.operational_correlation, evidence.occurred_at, evidence.ingested_at, evidence.content_hash, evidence.byte_count, evidence.provenance, evidence.payload, evidence.created_at, evidence.updated_at, evidence.baseline_lifecycle_generation, evidence.baseline_deployed_commit
 FROM remediation_evidence AS evidence
 JOIN incidents AS incident
     ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
@@ -1123,7 +1621,15 @@ JOIN remediation_run AS run
     ON run.id = $1
 JOIN remediation_series AS series
     ON series.id = run.series_id AND series.incident_id = incident.id
-WHERE evidence.run_id IS NULL OR evidence.run_id = run.id
+WHERE ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS evidence_run
+           WHERE evidence_run.id = evidence.run_id
+             AND evidence_run.series_id = series.id
+             AND evidence_run.attempt_number <= run.attempt_number
+       ))
 ORDER BY evidence.created_at ASC, evidence.id ASC
 LIMIT $2
 `
@@ -1167,6 +1673,8 @@ func (q *Queries) ListRemediationEvidenceForRun(ctx context.Context, arg ListRem
 			&i.Payload,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.BaselineLifecycleGeneration,
+			&i.BaselineDeployedCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -1219,7 +1727,7 @@ SET state = $2,
     retryable = CASE WHEN $3::boolean THEN $6::boolean ELSE retryable END,
     version = version + 1
 WHERE id = $1 AND version = $4
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version
 `
 
 type UpdateRemediationRunStateParams struct {
@@ -1265,6 +1773,8 @@ func (q *Queries) UpdateRemediationRunState(ctx context.Context, arg UpdateRemed
 		&i.ContextVersion,
 		&i.TerminalReason,
 		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
 	)
 	return i, err
 }
@@ -1336,6 +1846,61 @@ func (q *Queries) UpsertRemediationEvidenceAssessment(ctx context.Context, arg U
 		&i.Contradictions,
 		&i.DirectEvidenceIds,
 		&i.AssessedAt,
+	)
+	return i, err
+}
+
+const upsertRemediationWorkingMemory = `-- name: UpsertRemediationWorkingMemory :one
+INSERT INTO remediation_working_memory (
+    run_id,
+    sequence,
+    context_version,
+    observed_run_version,
+    phase,
+    content_hash
+) VALUES (
+    $1, $2, $3,
+    $4,
+    $5, $6
+)
+ON CONFLICT (run_id)
+DO UPDATE SET
+    sequence = EXCLUDED.sequence,
+    context_version = EXCLUDED.context_version,
+    observed_run_version = EXCLUDED.observed_run_version,
+    phase = EXCLUDED.phase,
+    content_hash = EXCLUDED.content_hash,
+    updated_at = clock_timestamp()
+RETURNING run_id, sequence, context_version, observed_run_version, phase, content_hash, updated_at
+`
+
+type UpsertRemediationWorkingMemoryParams struct {
+	RunID              pgtype.UUID
+	Sequence           int64
+	ContextVersion     int64
+	ObservedRunVersion int64
+	Phase              string
+	ContentHash        string
+}
+
+func (q *Queries) UpsertRemediationWorkingMemory(ctx context.Context, arg UpsertRemediationWorkingMemoryParams) (RemediationWorkingMemory, error) {
+	row := q.db.QueryRow(ctx, upsertRemediationWorkingMemory,
+		arg.RunID,
+		arg.Sequence,
+		arg.ContextVersion,
+		arg.ObservedRunVersion,
+		arg.Phase,
+		arg.ContentHash,
+	)
+	var i RemediationWorkingMemory
+	err := row.Scan(
+		&i.RunID,
+		&i.Sequence,
+		&i.ContextVersion,
+		&i.ObservedRunVersion,
+		&i.Phase,
+		&i.ContentHash,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

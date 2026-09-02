@@ -134,6 +134,27 @@ func (b *runBudget) elapsed() time.Duration {
 	return b.now().Sub(b.startedAt)
 }
 
+// remaining 返回相对 hard ceiling 的剩余预算投影（D5 remainingBudget），
+// key 与 domain.BudgetAmount.AsMap 一致；负值维度的语义是不再可消耗，
+// 钳制为 0 避免 recovery challenge 的 Validate 拒绝。只含数值，供 challenge
+// 与 checkpoint 使用；hard ceiling 判定不受影响。
+func (b *runBudget) remaining() map[string]int64 {
+	clamp := func(value int64) int64 {
+		if value < 0 {
+			return 0
+		}
+		return value
+	}
+	return map[string]int64{
+		"elapsed_seconds":  clamp(int64(b.limits.MaxElapsed/time.Second) - b.used.ElapsedSeconds),
+		"model_calls":      clamp(b.limits.MaxModelCalls - b.used.ModelCalls),
+		"model_cost_cents": clamp(b.limits.MaxModelCostCents - b.used.ModelCostCents),
+		"tool_calls":       clamp(b.limits.MaxToolCalls - b.used.ToolCalls),
+		"evidence_bytes":   clamp(b.limits.MaxEvidenceBytes - b.used.EvidenceBytes),
+		"repository_bytes": clamp(b.limits.MaxRepositoryBytes - b.used.RepositoryBytes),
+	}
+}
+
 func toolResultEffect(result ToolResult) domain.Effect {
 	effect := domain.Effect{ToolCalls: 1}
 	switch {

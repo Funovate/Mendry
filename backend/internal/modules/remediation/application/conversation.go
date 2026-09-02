@@ -249,6 +249,36 @@ func (c *AgentConversation) AppendProtocolError(phase domain.RunState, correctio
 	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
 }
 
+// AppendRecoveryChallenge 把一次 recoverable recovery challenge（D5）作为
+// 下一轮可见的 protocol observation 回喂。envelope 已经过 NewRecoveryChallenge
+// 的 sanitize 与边界校验，这里只做有界 JSON 编码，不携带 provider/connector
+// 细节或模型输出。
+func (c *AgentConversation) AppendRecoveryChallenge(challenge domain.RecoveryChallengeV1) {
+	if c == nil {
+		return
+	}
+	observation := map[string]interface{}{
+		"status": "recoverable",
+		"challenge": map[string]interface{}{
+			"schemaVersion":            challenge.SchemaVersion,
+			"kind":                     challenge.Kind,
+			"severity":                 challenge.Severity,
+			"reasonCode":               challenge.ReasonCode,
+			"failedActionRef":          challenge.FailedActionRef,
+			"availableCapabilities":    append([]string(nil), challenge.AvailableCapabilities...),
+			"suggestedRecoveryClasses": append([]string(nil), challenge.SuggestedRecoveryClasses...),
+			"attempt":                  challenge.Attempt,
+			"remainingBudget":          copyBudget(challenge.RemainingBudget),
+			"message":                  challenge.Message,
+		},
+	}
+	encoded, encodeErr := json.Marshal(observation)
+	if encodeErr != nil {
+		encoded = []byte(`{"status":"recoverable","challenge":{"reasonCode":"encode_failed","message":"recovery challenge could not be encoded"}}`)
+	}
+	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
+}
+
 // AppendToolResult 将工具成功、拒绝或 adapter 失败变成下一轮可见的观察。
 func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult, err error) {
 	if c == nil {

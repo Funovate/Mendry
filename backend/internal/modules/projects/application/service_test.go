@@ -145,6 +145,13 @@ func (f *fakeRepository) UpsertLLMProvider(_ context.Context, projectID string, 
 	f.configuration.LLM = &provider
 	return provider, f.error
 }
+
+func (f *fakeRepository) UpsertRemediationPolicy(_ context.Context, projectID string, policy domain.RemediationPolicy, _, _ string) (domain.RemediationPolicy, error) {
+	f.projectID = projectID
+	policy.Version++
+	f.configuration.Remediation = policy
+	return policy, f.error
+}
 func (f *fakeRepository) UpsertConfiguration(_ context.Context, projectID string, configuration domain.Configuration, _, _ string) (domain.Configuration, error) {
 	f.projectID, f.configuration = projectID, configuration
 	return configuration, f.error
@@ -333,6 +340,22 @@ func TestConfigurationWriteRequiresProjectAdminAndAssignsOwnedIDs(t *testing.T) 
 	repository.project.Role = domain.RoleOperator
 	if _, err := service.PutConfiguration(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", configuration); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("operator PutConfiguration() error = %v", err)
+	}
+}
+
+func TestPutConfigurationRemediationPolicyRequiresAdmin(t *testing.T) {
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments", Role: domain.RoleAdmin}}
+	service := newService(t, repository, &fakeCipher{})
+	saved, err := service.PutConfigurationRemediationPolicy(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopModeResilientV1})
+	if err != nil {
+		t.Fatalf("PutConfigurationRemediationPolicy() error = %v", err)
+	}
+	if saved.AgentLoopMode != domain.AgentLoopModeResilientV1 || saved.Version != 1 || repository.projectID != projectID {
+		t.Fatalf("saved policy = %+v project=%q", saved, repository.projectID)
+	}
+	repository.project.Role = domain.RoleOperator
+	if _, err := service.PutConfigurationRemediationPolicy(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopModeLegacy}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("operator policy update error = %v, want forbidden", err)
 	}
 }
 

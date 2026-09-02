@@ -394,12 +394,18 @@ type Run struct {
 	ContextVersion      int64
 	TerminalReason      string
 	Retryable           bool
-	Budget              BudgetCounters
-	ModelProvider       string
-	ModelName           string
-	Version             int64
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// AgentLoopMode 是 run 创建时快照的项目 remediation 政策模式；
+	// 中途修改配置不能改变已快照的语义，默认 legacy。
+	AgentLoopMode AgentLoopMode
+	// AgentLoopPolicyVersion records the project policy version captured by the
+	// root run; continuations inherit it unchanged from their predecessor.
+	AgentLoopPolicyVersion int64
+	Budget                 BudgetCounters
+	ModelProvider          string
+	ModelName              string
+	Version                int64
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 // RunAggregate 是完整的 run 聚合，包括决策、计划和工具调用。

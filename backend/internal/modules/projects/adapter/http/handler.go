@@ -37,6 +37,7 @@ type service interface {
 	PutConfigurationSource(context.Context, authdomain.User, string, domain.Source) (domain.Source, error)
 	PutConfigurationTrigger(context.Context, authdomain.User, string, domain.Trigger) (domain.Trigger, error)
 	PutConfigurationLLMProvider(context.Context, authdomain.User, string, domain.LLMProvider) (domain.LLMProvider, error)
+	PutConfigurationRemediationPolicy(context.Context, authdomain.User, string, domain.RemediationPolicy) (domain.RemediationPolicy, error)
 	RotateWebhookToken(context.Context, authdomain.User, string) (string, error)
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
 	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
@@ -120,6 +121,10 @@ type configurationRequest struct {
 	Source      sourceRequest      `json:"source"`
 	Trigger     triggerRequest     `json:"trigger"`
 	LLM         *llmRequest        `json:"llm"`
+}
+
+type remediationPolicyRequest struct {
+	AgentLoopMode domain.AgentLoopMode `json:"agentLoopMode"`
 }
 
 type llmRequest struct {
@@ -220,19 +225,26 @@ type secretResponse struct {
 }
 
 type configurationResponse struct {
-	Environment environmentResponse `json:"environment"`
-	Repository  repositoryResponse  `json:"repository"`
-	Source      sourceResponse      `json:"source"`
-	Trigger     triggerResponse     `json:"trigger"`
-	LLM         *llmResponse        `json:"llm"`
+	Environment environmentResponse       `json:"environment"`
+	Repository  repositoryResponse        `json:"repository"`
+	Source      sourceResponse            `json:"source"`
+	Trigger     triggerResponse           `json:"trigger"`
+	LLM         *llmResponse              `json:"llm"`
+	Remediation remediationPolicyResponse `json:"remediation"`
 }
 
 type configurationDraftResponse struct {
-	Environment *environmentResponse `json:"environment"`
-	Repository  *repositoryResponse  `json:"repository"`
-	Source      *sourceResponse      `json:"source"`
-	Trigger     *triggerResponse     `json:"trigger"`
-	LLM         *llmResponse         `json:"llm"`
+	Environment *environmentResponse       `json:"environment"`
+	Repository  *repositoryResponse        `json:"repository"`
+	Source      *sourceResponse            `json:"source"`
+	Trigger     *triggerResponse           `json:"trigger"`
+	LLM         *llmResponse               `json:"llm"`
+	Remediation *remediationPolicyResponse `json:"remediation"`
+}
+
+type remediationPolicyResponse struct {
+	AgentLoopMode domain.AgentLoopMode `json:"agentLoopMode"`
+	Version       int64                `json:"version"`
 }
 
 type llmResponse struct {
@@ -617,6 +629,14 @@ func (h *Handler) putConfigurationComponent(writer nethttp.ResponseWriter, reque
 		var saved domain.LLMProvider
 		saved, err = h.service.PutConfigurationLLMProvider(request.Context(), principal, projectKey, *provider)
 		response = mapLLM(saved)
+	case "remediation-policy":
+		var payload remediationPolicyRequest
+		if !decodeJSON(writer, request, &payload) {
+			return
+		}
+		var saved domain.RemediationPolicy
+		saved, err = h.service.PutConfigurationRemediationPolicy(request.Context(), principal, projectKey, domain.RemediationPolicy{AgentLoopMode: payload.AgentLoopMode})
+		response = mapRemediationPolicy(saved)
 	default:
 		writeApplicationError(writer, request, application.ErrInvalidInput)
 		return
@@ -723,11 +743,15 @@ func mapSecret(secret domain.Secret) secretResponse {
 }
 
 func mapConfiguration(configuration domain.Configuration) configurationResponse {
-	return configurationResponse{Environment: mapEnvironment(configuration.Environment), Repository: mapRepository(configuration.Repository), Source: mapSource(configuration.Source), Trigger: mapTrigger(configuration.Trigger), LLM: mapLLMResponse(configuration.LLM)}
+	return configurationResponse{Environment: mapEnvironment(configuration.Environment), Repository: mapRepository(configuration.Repository), Source: mapSource(configuration.Source), Trigger: mapTrigger(configuration.Trigger), LLM: mapLLMResponse(configuration.LLM), Remediation: mapRemediationPolicy(configuration.Remediation)}
 }
 
 func mapConfigurationDraft(draft domain.ConfigurationDraft) configurationDraftResponse {
 	response := configurationDraftResponse{LLM: mapLLMResponse(draft.LLM)}
+	if draft.Remediation != nil {
+		value := mapRemediationPolicy(*draft.Remediation)
+		response.Remediation = &value
+	}
 	if draft.Environment != nil {
 		value := mapEnvironment(*draft.Environment)
 		response.Environment = &value
@@ -745,6 +769,10 @@ func mapConfigurationDraft(draft domain.ConfigurationDraft) configurationDraftRe
 		response.Trigger = &value
 	}
 	return response
+}
+
+func mapRemediationPolicy(policy domain.RemediationPolicy) remediationPolicyResponse {
+	return remediationPolicyResponse{AgentLoopMode: policy.AgentLoopMode, Version: policy.Version}
 }
 
 func mapEnvironment(environment domain.Environment) environmentResponse {

@@ -46,6 +46,10 @@ type RemediationCoordinator struct {
 	observer        RunObserver
 	evidenceGate    *EvidenceGate
 	bootstrapLoader domain.BootstrapEvidenceLoader
+	// checkpointStore 是可选注入的 durable working-memory checkpoint store
+	// （D2）。nil（默认）或 run 快照模式为 legacy 时，coordinator 完全走既有
+	// 路径；只有 resilient_v1 run 才 append/load checkpoint。
+	checkpointStore domain.CheckpointStore
 }
 
 // IncidentIdentity 是 remediation 需要的事故身份，不含凭据或客户端。
@@ -215,11 +219,25 @@ func (c *RemediationCoordinator) SetBootstrapEvidenceLoader(loader domain.Bootst
 	c.bootstrapLoader = loader
 }
 
+// SetCheckpointStore 注入 durable working-memory checkpoint store（D2）。
+// 该端口可选：未注入时 resilient_v1 run 也不启用 checkpoint/recovery 路径
+// （fail closed 到 legacy 行为），组合根可以在项目启用 resilient_v1 后随时
+// 补齐而不改变 run 语义。
+func (c *RemediationCoordinator) SetCheckpointStore(store domain.CheckpointStore) {
+	c.checkpointStore = store
+}
+
 // SetDockerEvidencePort wires the credential-free Docker log port at the
 // composition root; ordinary application callers cannot provide a container ID
 // or a remote command.
 func (c *RemediationCoordinator) SetDockerEvidencePort(port domain.DockerEvidencePort) {
 	c.toolGateway.SetDockerEvidencePort(port)
+}
+
+// SetEvidenceReadPort 注入同 series 持久化证据的按 ID 分页读取端口（R9）。
+// 没有该端口时 evidence.read 在 gateway 边界 fail closed。
+func (c *RemediationCoordinator) SetEvidenceReadPort(port domain.EvidenceReadPort) {
+	c.toolGateway.SetEvidenceReadPort(port)
 }
 
 // SetTencentCLSDetailPort 将受信任、incident-bound 的 Tencent CLS detail reader 接到
@@ -263,18 +281,32 @@ func (c *RemediationCoordinator) Start(ctx context.Context, in domain.NewRun) (d
 	if run.State != domain.RunStateQueued {
 		return run, nil
 	}
-	return c.runQueued(ctx, run, "", domain.RunStateDiagnosing, in.TriggerReason, in.Priority, nil)
+	return c.runQueued(ctx, run, "", "", "", domain.RunStateDiagnosing, in.TriggerReason, in.Priority, nil)
 }
 
 // Continue 创建并驱动一个新的 linked attempt。已通过 evidence gate 的 durable
 // code_fixable diagnosis 可直接恢复 planning；其余前置结果仍从 diagnosis 重新验证。
 // AttemptStore 在事务内再次执行 predecessor/version 检查。
 func (c *RemediationCoordinator) Continue(ctx context.Context, in domain.NextAttempt) (domain.Run, error) {
-	child, brief, resumePhase, priorInvocations, err := c.prepareContinuation(ctx, in)
+	prepared, err := c.prepareContinuation(ctx, in)
 	if err != nil {
 		return domain.Run{}, err
 	}
-	return c.runQueued(ctx, child, brief, resumePhase, child.TriggerReason, "", priorInvocations)
+	return c.runQueued(ctx, prepared.child, prepared.brief, prepared.priorEvidence, prepared.reconstruction,
+		prepared.resumePhase, prepared.child.TriggerReason, "", prepared.priorInvocations)
+}
+
+// preparedContinuation 是 prepareContinuation 的只读结果：queued child 及其
+// bounded continuation 输入。brief 只含 predecessor 元数据；priorEvidence 是
+// 同 series 的 runtime evidence/index 渲染；reconstruction 是 resilient_v1
+// 下从 durable checkpoint 重建的工作记忆块（存在时取代 priorEvidence）。
+type preparedContinuation struct {
+	child            domain.Run
+	brief            string
+	priorEvidence    string
+	reconstruction   string
+	resumePhase      domain.RunState
+	priorInvocations []domain.ToolInvocation
 }
 
 // prepareContinuation 只执行 continuation 的读取、校验和 queued child 持久化。
@@ -283,26 +315,26 @@ func (c *RemediationCoordinator) Continue(ctx context.Context, in domain.NextAtt
 func (c *RemediationCoordinator) prepareContinuation(
 	ctx context.Context,
 	in domain.NextAttempt,
-) (domain.Run, string, domain.RunState, []domain.ToolInvocation, error) {
+) (preparedContinuation, error) {
 	if err := in.Validate(); err != nil {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+		return preparedContinuation{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
 	}
 	attempts, ok := c.store.(domain.AttemptStore)
 	if !ok {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation attempt store is required")
+		return preparedContinuation{}, fmt.Errorf("continuation attempt store is required")
 	}
 	predecessor, err := c.store.Get(ctx, in.ContinuationOfRunID)
 	if err != nil {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("load continuation predecessor: %w", err)
+		return preparedContinuation{}, fmt.Errorf("load continuation predecessor: %w", err)
 	}
 	if err := validateContinuationPredecessor(predecessor.Run, in); err != nil {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, err
+		return preparedContinuation{}, err
 	}
 	var planningCheckpoint *domain.RunAggregate
 	if predecessor.Run.ContextVersion == in.ContextVersion {
 		checkpoints, ok := c.store.(domain.PlanningCheckpointStore)
 		if !ok {
-			return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation planning checkpoint store is required")
+			return preparedContinuation{}, fmt.Errorf("continuation planning checkpoint store is required")
 		}
 		checkpoint, checkpointErr := checkpoints.GetLatestPlanningCheckpoint(
 			ctx, in.SeriesID, in.ContextVersion, predecessor.Run.AttemptNumber,
@@ -310,28 +342,85 @@ func (c *RemediationCoordinator) prepareContinuation(
 		switch {
 		case checkpointErr == nil:
 			if !validContinuationPlanningCheckpoint(checkpoint, predecessor.Run, in) {
-				return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("continuation planning checkpoint is invalid")
+				return preparedContinuation{}, fmt.Errorf("continuation planning checkpoint is invalid")
 			}
 			planningCheckpoint = &checkpoint
 		case errors.Is(checkpointErr, domain.ErrPlanningCheckpointNotFound):
 			// 同一 context 没有 durable code_fixable checkpoint 时按正常 diagnosis 路径继续。
 		default:
-			return domain.Run{}, "", domain.RunStateDiagnosing, nil, fmt.Errorf("load continuation planning checkpoint: %w", checkpointErr)
+			return preparedContinuation{}, fmt.Errorf("load continuation planning checkpoint: %w", checkpointErr)
 		}
 	}
 	brief := buildContinuationBrief(predecessor, planningCheckpoint, in)
 	resumePhase := continuationResumePhase(planningCheckpoint)
+	priorEvidence := ""
+	var priorRuntimeEvidence []domain.StoredEvidence
+	var priorEvidenceIndex []domain.EvidenceIndexEntry
+	if resumePhase == domain.RunStateDiagnosing {
+		// diagnosis continuation 引用同 series 早期 attempt 的证据：runtime 记录以
+		// sanitized 全量形式渲染并保留原始证据 ID（供引用与 evidence gate 解析），
+		// 其余证据种类（provider_detail、normalized_alert 等）以紧凑索引进入 brief，
+		// 模型凭索引条目通过 evidence.read 重新读取原始内容。
+		// planning checkpoint 继续使用紧凑 brief，不加载任何证据记录。
+		if loader, ok := c.store.(domain.ContinuationEvidenceStore); ok {
+			var loadErr error
+			priorRuntimeEvidence, loadErr = loader.ListContinuationRuntimeEvidence(ctx, domain.ContinuationEvidenceQuery{
+				SeriesID: in.SeriesID, ThroughAttemptNumber: predecessor.Run.AttemptNumber, Limit: maxContinuationEvidence,
+			})
+			if loadErr != nil {
+				return preparedContinuation{}, fmt.Errorf("load continuation runtime evidence: %w", loadErr)
+			}
+			if rendered := renderContinuationRuntimeEvidence(priorRuntimeEvidence); rendered != "" {
+				priorEvidence += rendered
+			}
+			var indexErr error
+			priorEvidenceIndex, indexErr = loader.ListContinuationEvidenceIndex(ctx, domain.ContinuationEvidenceQuery{
+				SeriesID: in.SeriesID, ThroughAttemptNumber: predecessor.Run.AttemptNumber, Limit: maxContinuationEvidenceIndex,
+			})
+			if indexErr != nil {
+				return preparedContinuation{}, fmt.Errorf("load continuation evidence index: %w", indexErr)
+			}
+			if rendered := renderContinuationEvidenceIndex(priorEvidenceIndex); rendered != "" {
+				if priorEvidence != "" {
+					priorEvidence += "\n\n"
+				}
+				priorEvidence += rendered
+			}
+		}
+	}
 	child, err := attempts.CreateNextAttempt(ctx, in)
 	if err != nil {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, err
+		return preparedContinuation{}, err
 	}
 	if child.State != domain.RunStateQueued || child.RunID == "" || child.SeriesID != in.SeriesID ||
 		child.IncidentID != in.IncidentID || child.LifecycleGeneration != in.LifecycleGeneration ||
 		child.DeployedCommit != in.DeployedCommit || child.ContinuationOfRunID != in.ContinuationOfRunID ||
 		child.AttemptNumber != predecessor.Run.AttemptNumber+1 {
-		return domain.Run{}, "", domain.RunStateDiagnosing, nil, domain.ErrStalePredecessor
+		return preparedContinuation{}, domain.ErrStalePredecessor
 	}
-	return child, brief, resumePhase, predecessor.ToolInvocations, nil
+	// resilient_v1：从 predecessor 的 durable working-memory checkpoint 重建
+	// 诊断上下文（D2/AC7）。只有 diagnosis 续跑才重建；planning 续跑沿用紧凑
+	// brief。加载失败（无 checkpoint / 损坏 / 身份不一致）保持既有 brief 路径，
+	// 不阻断 continuation。
+	reconstruction := ""
+	if resumePhase == domain.RunStateDiagnosing && c.checkpointStore != nil &&
+		domain.ParseAgentLoopMode(string(child.AgentLoopMode)) == domain.AgentLoopModeResilientV1 {
+		snapshot, loadErr := c.checkpointStore.LoadLatestCheckpoint(ctx, in.ContinuationOfRunID)
+		switch {
+		case loadErr == nil:
+			if snapshot.Checkpoint.SeriesID == in.SeriesID && snapshot.ContextVersion == in.ContextVersion {
+				reconstruction = renderCheckpointReconstruction(snapshot, priorRuntimeEvidence, priorEvidenceIndex)
+			}
+		case errors.Is(loadErr, domain.ErrCheckpointNotFound):
+			// 前驱没有 durable checkpoint：保持既有 brief 路径。
+		default:
+			// 损坏或身份不一致的 checkpoint 不阻断 continuation（best-effort）。
+		}
+	}
+	return preparedContinuation{
+		child: child, brief: brief, priorEvidence: priorEvidence, reconstruction: reconstruction,
+		resumePhase: resumePhase, priorInvocations: predecessor.ToolInvocations,
+	}, nil
 }
 
 func continuationResumePhase(checkpoint *domain.RunAggregate) domain.RunState {
@@ -367,6 +456,8 @@ func (c *RemediationCoordinator) runQueued(
 	ctx context.Context,
 	run domain.Run,
 	continuationBrief string,
+	priorEvidenceBlock string,
+	reconstruction string,
 	resumePhase domain.RunState,
 	triggerReason string,
 	priority string,
@@ -384,6 +475,18 @@ func (c *RemediationCoordinator) runQueued(
 	if !claimed {
 		return claimedRun, nil
 	}
+	analysisOnly := triggerReason == domain.TriggerOriginManualContinue
+	// resilient_v1 feature gate：只有 run 快照模式为 resilient_v1 且注入了
+	// checkpoint store 时才挂载 per-run resilient 状态；legacy 或 nil store
+	// 完全走既有路径（所有 checkpoint/recovery 辅助都是 no-op）。allocator 必须
+	// 在任何可能触发 terminal checkpoint 的操作前 admit，覆盖 resolveRefs 等
+	// pre-drive failure 路径。
+	if c.checkpointStore != nil && domain.ParseAgentLoopMode(string(run.AgentLoopMode)) == domain.AgentLoopModeResilientV1 {
+		tracker := newResilientRunState(c.checkpointStore, run, reconstruction)
+		tracker.analysisOnly = analysisOnly
+		tracker.admitSoftBudget(c.budgetLimits, resumePhase)
+		ctx = withResilientRunState(ctx, tracker)
+	}
 	c.observer.RunStarted(ctx, RunStartedObservation{
 		Run: runIdentity(run), Phase: run.State, TriggerReason: triggerReason, Priority: priority,
 	})
@@ -397,8 +500,7 @@ func (c *RemediationCoordinator) runQueued(
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, failure
 	}
-	analysisOnly := triggerReason == domain.TriggerOriginManualContinue
-	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, resumePhase, priorInvocations, analysisOnly); err != nil {
+	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, priorEvidenceBlock, resumePhase, priorInvocations, analysisOnly); err != nil {
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, err
 	}
@@ -555,11 +657,14 @@ func (c *RemediationCoordinator) drive(
 	ref domain.RepoRef,
 	scope domain.EvidenceScope,
 	continuationBrief string,
+	priorEvidenceBlock string,
 	resumePhase domain.RunState,
 	priorInvocations []domain.ToolInvocation,
 	analysisOnly bool,
 ) error {
 	budget := newRunBudget(c.budgetLimits)
+	// resilient_v1 的 per-run 状态：nil（legacy / 无 store）时所有新增路径 no-op。
+	tracker := resilientStateFrom(ctx)
 
 	// runQueued 已经以 optimistic transition claim queued；此处从
 	// preparing_context 继续，避免重复推进或并发驱动同一 root。
@@ -607,6 +712,9 @@ func (c *RemediationCoordinator) drive(
 	if err != nil {
 		return c.fail(ctx, runID, domain.RunStatePreparingContext, markConfigurationFailure(err))
 	}
+	if tracker != nil {
+		tracker.analysisOnly = analysisOnly
+	}
 	if c.dynamicRuntime != nil && !analysisOnly {
 		defer func() { _ = c.dynamicRuntime.CloseRun(context.Background(), runID) }()
 	}
@@ -625,12 +733,31 @@ func (c *RemediationCoordinator) drive(
 	if analysisOnly {
 		initialContext += "\nManual continuation analysis mode: analyze the persisted operational evidence above without refreshing it. External evidence, source, SSH, Docker, Tencent detail, and dynamic runtime tools are unavailable; repository read-only tools may be used for code analysis."
 	}
-	if continuationBrief != "" {
-		// brief 只是 predecessor 的 hypothesis；fresh incident/evidence bootstrap
-		// 保留在同一 model context 中并具有更高权威。
-		initialContext = continuationBrief + "\n\n" + initialContext
+	if continuationBrief != "" || priorEvidenceBlock != "" || (tracker != nil && tracker.reconstruction != "") {
+		// continuation 输入组装：主 brief（predecessor 元数据）、可选
+		// runtime-only evidence 块、可选 durable checkpoint 重建块。
+		// 重建块存在时取代 runtime-only evidence 块（D2/AC7），但保留主
+		// brief；两者都不存在时保持既有拼接顺序不变（legacy 字节一致）。
+		parts := make([]string, 0, 3)
+		if tracker != nil && tracker.reconstruction != "" {
+			parts = append(parts, tracker.reconstruction)
+			if continuationBrief != "" {
+				parts = append(parts, continuationBrief)
+			}
+		} else {
+			if continuationBrief != "" {
+				parts = append(parts, continuationBrief)
+			}
+			if priorEvidenceBlock != "" {
+				parts = append(parts, priorEvidenceBlock)
+			}
+		}
+		initialContext = strings.Join(parts, "\n\n") + "\n\n" + initialContext
 	}
 	conversation := NewAgentConversation(initialContext)
+	if tracker != nil {
+		tracker.conversation = conversation
+	}
 	if resumePhase == domain.RunStatePlanning {
 		return c.planFrom(ctx, budget, runID, ref, scope, catalog, domain.RunStatePreparingContext, contextEffect, conversation)
 	}
@@ -639,6 +766,10 @@ func (c *RemediationCoordinator) drive(
 	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStatePreparingContext, domain.RunStateDiagnosing, contextEffect)
 	if err != nil || exhausted {
 		return err
+	}
+	// (a) D2 forced set：preparing_context → diagnosing 边界后的强制 checkpoint。
+	if checkpointErr := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
 	}
 
 	collectLoops := 0
@@ -825,6 +956,10 @@ func (c *RemediationCoordinator) routeDiagnosis(
 		return done, err
 
 	case domain.FixabilityCodeFixable:
+		// (c) D2 forced set：进入 planning 边界前的强制 checkpoint。
+		if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+			return true, c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
+		}
 		return true, c.plan(ctx, budget, runID, ref, scope, catalog, usage, conversation)
 
 	default:
@@ -1061,6 +1196,14 @@ func (c *RemediationCoordinator) runTool(
 	if conversation != nil {
 		conversation.AppendToolResult(*req, res, err)
 	}
+	// (5) resilient_v1：成功的 evidence.read 把证据 ID 记入进程内 checkpoint
+	// evidence index，随下一次强制 AppendCheckpoint 持久化（D3/R15）；不解码
+	// payload 或凭据。legacy 下 resilientStateFrom 为 nil，本调用是 no-op。
+	if tracker := resilientStateFrom(ctx); tracker != nil && err == nil && req.ToolName == ToolEvidenceRead {
+		if page, ok := res.Payload.(domain.EvidenceReadPage); ok {
+			tracker.recordEvidenceRead(page)
+		}
+	}
 	// Best-effort audit record; a storage error here does not change the model's
 	// decision path and is surfaced on the next transition instead.
 	_ = c.store.RecordToolInvocation(ctx, runID, inv)
@@ -1168,7 +1311,21 @@ func (c *RemediationCoordinator) transitionBudgeted(
 	if reason := budget.consume(effect); reason != "" && to != domain.RunStateBudgetExhausted {
 		return true, c.transitionWithReason(ctx, runID, from, domain.RunStateBudgetExhausted, effect, reason)
 	}
-	return false, c.transition(ctx, runID, from, to, effect)
+	if err := c.transition(ctx, runID, from, to, effect); err != nil {
+		return false, err
+	}
+	// resilient_v1：把本次已持久化的消耗镜像记入 soft-budget allocator。
+	// same-state recovery 可以追加 checkpoint；跨 phase 时只记账，随后关闭旧
+	// phase 并接纳新 phase，避免在 durable state 已改变后写旧 phase checkpoint。
+	if err := c.softBudgetRecovery(ctx, budget, from, effect, from == to); err != nil {
+		return false, c.fail(ctx, runID, to, markPersistenceFailure(err))
+	}
+	if tracker := resilientStateFrom(ctx); tracker != nil {
+		if err := tracker.advanceSoftBudget(from, to); err != nil {
+			return false, c.fail(ctx, runID, to, markPersistenceFailure(err))
+		}
+	}
+	return false, nil
 }
 
 // recordSameStateBudget 在不改变 phase 的模型/tool 消耗后持久化预算计数。
@@ -1213,19 +1370,35 @@ func (c *RemediationCoordinator) transition(ctx context.Context, runID string, f
 }
 
 func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID string, from, to domain.RunState, effect domain.Effect, reason budgetExhaustionReason) error {
-	effect = terminalEffectForState(to, effect, reason)
 	transitionContext := ctx
+	var checkpointErr error
 	if isTerminalStateForApplication(to) {
 		// Terminal persistence must survive a caller/run operation deadline; the
 		// run budget and database transaction still bound the actual write.
 		transitionContext = context.WithoutCancel(ctx)
+		// required terminal checkpoint 失败本身就是 persistence/consistency
+		// terminal blocker。直接把本次 transition 改为 failed，不能继续原终态，
+		// 也不能递归重试已经标记 unavailable 的 checkpoint store。
+		tracker := resilientStateFrom(ctx)
+		if tracker == nil || !tracker.checkpointUnavailable {
+			checkpointErr = c.checkpointRun(transitionContext, tracker, from, domain.CheckpointReasonPhaseBoundary)
+		}
+		if checkpointErr != nil {
+			to = domain.RunStateFailed
+			reason = ""
+			effect = domain.Effect{TerminalReason: "persistence_failure", Retryable: false}
+		}
 	}
+	effect = terminalEffectForState(to, effect, reason)
 	if err := c.store.Transition(transitionContext, runID, from, to, effect); err != nil {
 		return fmt.Errorf("transition %s→%s: %w", from, to, err)
 	}
 	c.observer.StateTransitioned(ctx, StateTransitionObservation{
 		Run: observationRun(ctx), From: from, To: to, Effect: effect, BudgetExhaustedReason: string(reason),
 	})
+	if checkpointErr != nil {
+		return fmt.Errorf("persist required checkpoint before terminal transition: %w", checkpointErr)
+	}
 	return nil
 }
 

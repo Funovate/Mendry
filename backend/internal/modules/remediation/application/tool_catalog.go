@@ -374,10 +374,12 @@ func (g *ToolGateway) baseDefinitions(
 		} else {
 			names = append(names, ToolSSHInspect)
 		}
+		// Persisted evidence reads are connector-independent and remain diagnosis-only.
+		names = append(names, ToolEvidenceRead)
 	case phase != domain.RunStatePlanning && ((source.Kind == "legacy" && scope.SourceID != "") || (source.Enabled && source.Supported &&
 		source.Kind == "cloud" &&
 		(source.Allows("pull_collection") || source.Allows("context_collection")))):
-		names = append(names, ToolEvidenceSearch, ToolEvidenceContext)
+		names = append(names, ToolEvidenceSearch, ToolEvidenceContext, ToolEvidenceRead)
 	}
 	return g.advertisedToolDefinitionsForNames(names)
 }
@@ -484,7 +486,7 @@ func (c *ToolCatalog) definitionsForPhase(phase domain.RunState) []domain.ToolDe
 	}
 	definitions := make([]domain.ToolDefinition, 0, len(c.base)+len(c.activated)+1)
 	for _, definition := range c.base {
-		if phase == domain.RunStatePlanning && (definition.Name == ToolEvidenceSearch || definition.Name == ToolEvidenceContext || definition.Name == ToolSSHInspect) {
+		if phase == domain.RunStatePlanning && (definition.Name == ToolEvidenceSearch || definition.Name == ToolEvidenceContext || definition.Name == ToolEvidenceRead || definition.Name == ToolSSHInspect) {
 			continue
 		}
 		if definition.Name == ToolSourceSearchTools && c.status.Code != "" {

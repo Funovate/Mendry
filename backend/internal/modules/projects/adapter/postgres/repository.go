@@ -324,7 +324,7 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 	if err != nil {
 		return domain.Configuration{}, newRepositoryError("query project configuration", err)
 	}
-	return mapConfiguration(configurationRow{
+	configuration, err := mapConfiguration(configurationRow{
 		environmentID: row.EnvironmentID, environmentKey: row.EnvironmentKey, environmentName: row.EnvironmentName,
 		service: row.Service, environmentVersion: row.EnvironmentVersion, repositoryID: row.RepositoryID,
 		remoteURL: row.RemoteUrl, scmProvider: row.ScmProvider, transport: row.Transport,
@@ -340,6 +340,15 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		llmID:             row.LlmID, llmProvider: row.LlmProvider, llmBaseURL: row.LlmBaseUrl,
 		llmSecretID: row.LlmCredentialSecretID, llmModel: row.LlmModel, llmVersion: row.LlmVersion,
 	})
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	policy, err := r.getRemediationPolicy(ctx, projectUUID)
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	configuration.Remediation = policy
+	return configuration, nil
 }
 
 func (r *Repository) GetConfigurationDraft(ctx context.Context, projectID string) (domain.ConfigurationDraft, error) {
@@ -348,6 +357,11 @@ func (r *Repository) GetConfigurationDraft(ctx context.Context, projectID string
 		return domain.ConfigurationDraft{}, err
 	}
 	draft := domain.ConfigurationDraft{}
+	policy, err := r.getRemediationPolicy(ctx, projectUUID)
+	if err != nil {
+		return domain.ConfigurationDraft{}, err
+	}
+	draft.Remediation = &policy
 
 	environmentRow, err := r.queries.GetProjectEnvironment(platformpostgres.WithOperation(ctx, "project.configuration.environment.get"), projectUUID)
 	if err == nil {
@@ -405,6 +419,32 @@ func (r *Repository) GetConfigurationDraft(ctx context.Context, projectID string
 	}
 
 	return draft, nil
+}
+
+func (r *Repository) getRemediationPolicy(ctx context.Context, projectID pgtype.UUID) (domain.RemediationPolicy, error) {
+	row, err := r.queries.GetProjectRemediationPolicy(platformpostgres.WithOperation(ctx, "project.configuration.remediation_policy.get"), projectID)
+	if err != nil {
+		return domain.RemediationPolicy{}, newRepositoryError("query project remediation policy", err)
+	}
+	policy := domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(row.AgentLoopMode), Version: row.AgentLoopPolicyVersion}
+	if err := domain.ValidateRemediationPolicy(policy); err != nil {
+		return domain.RemediationPolicy{}, fmt.Errorf("validate project remediation policy row: %w", err)
+	}
+	return policy, nil
+}
+
+func (r *Repository) UpsertRemediationPolicy(ctx context.Context, projectID string, policy domain.RemediationPolicy, actorUserID, auditID string) (domain.RemediationPolicy, error) {
+	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+	if err != nil {
+		return domain.RemediationPolicy{}, err
+	}
+	row, err := r.queries.UpsertProjectRemediationPolicy(platformpostgres.WithOperation(ctx, "project.configuration.remediation_policy.upsert"), projectdb.UpsertProjectRemediationPolicyParams{
+		ProjectID: params.projectID, AgentLoopMode: string(policy.AgentLoopMode), AuditID: params.auditID, ActorUserID: params.actorID,
+	})
+	if err != nil {
+		return domain.RemediationPolicy{}, newRepositoryError("upsert project remediation policy", err)
+	}
+	return domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(row.AgentLoopMode), Version: row.AgentLoopPolicyVersion}, nil
 }
 
 func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, environment domain.Environment, actorUserID, auditID string) (domain.Environment, error) {
@@ -616,7 +656,7 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 	if err != nil {
 		return domain.Configuration{}, newRepositoryError("upsert project configuration", err)
 	}
-	return mapConfiguration(configurationRow{
+	saved, err := mapConfiguration(configurationRow{
 		environmentID: row.EnvironmentID, environmentKey: row.EnvironmentKey, environmentName: row.EnvironmentName,
 		service: row.Service, environmentVersion: row.EnvironmentVersion, repositoryID: row.RepositoryID,
 		remoteURL: row.RemoteUrl, scmProvider: row.ScmProvider, transport: row.Transport,
@@ -632,6 +672,15 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		llmID:             row.LlmID, llmProvider: stringPointer(row.LlmProvider), llmBaseURL: stringPointer(row.LlmBaseUrl),
 		llmSecretID: row.LlmCredentialSecretID, llmModel: stringPointer(row.LlmModel), llmVersion: int64Pointer(row.LlmVersion),
 	})
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	policy, err := r.getRemediationPolicy(ctx, projectUUID)
+	if err != nil {
+		return domain.Configuration{}, err
+	}
+	saved.Remediation = policy
+	return saved, nil
 }
 
 func (r *Repository) LookupWebhookToken(ctx context.Context, hash []byte) (application.WebhookIngress, error) {

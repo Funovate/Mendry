@@ -124,17 +124,18 @@ func (t *Trigger) QueueContinuation(ctx context.Context, in domain.NextAttempt) 
 		return t.attempts.CreateNextAttempt(ctx, in)
 	}
 
-	child, brief, resumePhase, priorInvocations, err := t.coordinator.prepareContinuation(ctx, in)
+	prepared, err := t.coordinator.prepareContinuation(ctx, in)
 	if err != nil {
 		return domain.Run{}, err
 	}
 	background := context.WithoutCancel(ctx)
 	go func() {
-		if _, driveErr := t.coordinator.runQueued(background, child, brief, resumePhase, child.TriggerReason, "", priorInvocations); driveErr != nil {
+		if _, driveErr := t.coordinator.runQueued(background, prepared.child, prepared.brief, prepared.priorEvidence,
+			prepared.reconstruction, prepared.resumePhase, prepared.child.TriggerReason, "", prepared.priorInvocations); driveErr != nil {
 			t.reportFailure(background, continuationTriggerRequest(in), driveErr)
 		}
 	}()
-	return child, nil
+	return prepared.child, nil
 }
 
 func continuationTriggerRequest(in domain.NextAttempt) TriggerRequest {

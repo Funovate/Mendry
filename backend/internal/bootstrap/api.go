@@ -222,6 +222,16 @@ func RunAPI(ctx context.Context, options Options) error {
 		remediationStore, repositoryReader, evidenceReader, modelClient, incidentLookup, repositoryReader,
 		remediationStore, remediationStore,
 	)
+	// evidence.read allows bounded re-reading of persisted evidence within the current run series.
+	remediationCoordinator.SetEvidenceReadPort(remediationStore)
+	// Durable working-memory checkpoints are enabled only for resilient_v1 run snapshots.
+	remediationCheckpointStore, checkpointStoreErr := remediationpostgres.NewCheckpointStore(postgresPool)
+	if checkpointStoreErr != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation checkpoint store: %w", checkpointStoreErr),
+		)
+	}
+	remediationCoordinator.SetCheckpointStore(remediationCheckpointStore)
 	remediationTrigger, err := remediationapplication.NewTrigger(remediationStore, remediationCoordinator)
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

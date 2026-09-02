@@ -33,8 +33,17 @@ INSERT INTO remediation_run (
     attempt_number,
     state,
     context_version,
-    trigger_reason
-) VALUES ($1, $2, $3, $4, $5)
+    trigger_reason,
+    agent_loop_mode,
+    agent_loop_policy_version
+)
+SELECT sqlc.arg(series_id), sqlc.arg(attempt_number), sqlc.arg(state),
+       sqlc.arg(context_version), sqlc.arg(trigger_reason),
+       project.agent_loop_mode, project.agent_loop_policy_version
+FROM remediation_series AS series
+JOIN incidents AS incident ON incident.id = series.incident_id
+JOIN projects AS project ON project.id = incident.project_id
+WHERE series.id = sqlc.arg(series_id)
 RETURNING *;
 
 -- name: CreateRemediationNextRun :one
@@ -45,11 +54,15 @@ INSERT INTO remediation_run (
     continuation_of_run_id,
     trigger_reason,
     continuation_reason,
-    context_version
+    context_version,
+    agent_loop_mode,
+    agent_loop_policy_version
 ) VALUES (
     sqlc.arg(series_id), sqlc.arg(attempt_number), 'queued',
     sqlc.arg(continuation_of_run_id), sqlc.arg(trigger_reason),
-    sqlc.arg(continuation_reason), sqlc.arg(context_version)
+    sqlc.arg(continuation_reason), sqlc.arg(context_version),
+    (SELECT agent_loop_mode FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id))
 )
 RETURNING *;
 
@@ -206,16 +219,27 @@ INSERT INTO remediation_evidence (
     project_id, environment_id, source_id, incident_id, run_id, observation_id,
     provider, evidence_kind, deduplication_key, classification, outcome,
     available, primary_evidence, temporal_correlation, operational_correlation,
-    occurred_at, content_hash, byte_count, provenance, payload
-) VALUES (
+    occurred_at, content_hash, byte_count, provenance, payload,
+    baseline_lifecycle_generation, baseline_deployed_commit
+)
+SELECT
     sqlc.arg(project_id), sqlc.arg(environment_id), sqlc.arg(source_id), sqlc.arg(incident_id),
     sqlc.narg(run_id), sqlc.narg(observation_id), sqlc.arg(provider), sqlc.arg(evidence_kind),
     sqlc.arg(deduplication_key), sqlc.arg(classification), sqlc.arg(outcome),
     sqlc.arg(available), sqlc.arg(primary_evidence), sqlc.arg(temporal_correlation),
     sqlc.arg(operational_correlation), sqlc.narg(occurred_at), sqlc.arg(content_hash),
-    sqlc.arg(byte_count), sqlc.arg(provenance), sqlc.arg(payload)
+    sqlc.arg(byte_count), sqlc.arg(provenance), sqlc.arg(payload),
+    COALESCE(series.lifecycle_generation, incident.lifecycle_generation),
+    COALESCE(series.deployed_commit, incident.deployed_commit)
+FROM incidents AS incident
+LEFT JOIN remediation_run AS owning_run ON owning_run.id = sqlc.narg(run_id)
+LEFT JOIN remediation_series AS series ON series.id = owning_run.series_id
+WHERE incident.id = sqlc.arg(incident_id)
+  AND incident.project_id = sqlc.arg(project_id)
+ON CONFLICT (
+    project_id, incident_id, run_id, baseline_lifecycle_generation,
+    baseline_deployed_commit, deduplication_key
 )
-ON CONFLICT (project_id, incident_id, run_id, deduplication_key)
 DO UPDATE SET
     run_id = COALESCE(EXCLUDED.run_id, remediation_evidence.run_id),
     observation_id = COALESCE(EXCLUDED.observation_id, remediation_evidence.observation_id),
@@ -232,7 +256,37 @@ JOIN remediation_run AS run
 JOIN remediation_series AS series
     ON series.id = run.series_id AND series.incident_id = incident.id
 WHERE evidence.id = sqlc.arg(evidence_id)
-  AND (evidence.run_id IS NULL OR evidence.run_id = run.id);
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS evidence_run
+           WHERE evidence_run.id = evidence.run_id
+             AND evidence_run.series_id = series.id
+             AND evidence_run.attempt_number <= run.attempt_number
+       ));
+
+-- name: GetRemediationEvidencePage :one
+SELECT evidence.*, COALESCE(evidence_run.attempt_number, 0) AS source_attempt
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_run AS run
+    ON run.id = sqlc.arg(run_id)
+JOIN remediation_series AS series
+    ON series.id = run.series_id AND series.incident_id = incident.id
+LEFT JOIN remediation_run AS evidence_run
+    ON evidence_run.id = evidence.run_id
+WHERE evidence.id = sqlc.arg(evidence_id)
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS series_run
+           WHERE series_run.id = evidence.run_id
+             AND series_run.series_id = series.id
+             AND series_run.attempt_number <= run.attempt_number
+       ));
 
 -- name: GetLatestRemediationObservationForIncident :one
 SELECT observations.*
@@ -244,6 +298,8 @@ JOIN observations
    AND observations.project_id = evidence.project_id
 WHERE evidence.incident_id = sqlc.arg(incident_id)
   AND evidence.run_id IS NULL
+  AND evidence.baseline_lifecycle_generation = incident.lifecycle_generation
+  AND evidence.baseline_deployed_commit = incident.deployed_commit
   AND evidence.evidence_kind = 'normalized_alert'
 ORDER BY evidence.created_at DESC, evidence.id DESC
 LIMIT 1;
@@ -285,7 +341,56 @@ JOIN remediation_run AS run
     ON run.id = sqlc.arg(run_id)
 JOIN remediation_series AS series
     ON series.id = run.series_id AND series.incident_id = incident.id
-WHERE evidence.run_id IS NULL OR evidence.run_id = run.id
+WHERE ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS evidence_run
+           WHERE evidence_run.id = evidence.run_id
+             AND evidence_run.series_id = series.id
+             AND evidence_run.attempt_number <= run.attempt_number
+       ))
+ORDER BY evidence.created_at ASC, evidence.id ASC
+LIMIT sqlc.arg(result_limit);
+
+-- name: ListContinuationRuntimeEvidence :many
+SELECT evidence.*
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_series AS series
+    ON series.id = sqlc.arg(series_id) AND series.incident_id = incident.id
+WHERE evidence.evidence_kind = 'runtime'
+  AND evidence.run_id IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM remediation_run AS evidence_run
+      WHERE evidence_run.id = evidence.run_id
+        AND evidence_run.series_id = series.id
+        AND evidence_run.attempt_number <= sqlc.arg(through_attempt_number)
+  )
+ORDER BY evidence.created_at ASC, evidence.id ASC
+LIMIT sqlc.arg(result_limit);
+
+-- name: ListContinuationEvidenceIndex :many
+SELECT evidence.id, evidence.evidence_kind, evidence.provider, evidence.classification,
+       evidence.content_hash, COALESCE(evidence_run.attempt_number, 0) AS source_attempt
+FROM remediation_evidence AS evidence
+JOIN incidents AS incident
+    ON incident.id = evidence.incident_id AND incident.project_id = evidence.project_id
+JOIN remediation_series AS series
+    ON series.id = sqlc.arg(series_id) AND series.incident_id = incident.id
+LEFT JOIN remediation_run AS evidence_run
+    ON evidence_run.id = evidence.run_id
+WHERE evidence.evidence_kind <> 'runtime'
+  AND ((evidence.run_id IS NULL
+        AND evidence.baseline_lifecycle_generation = series.lifecycle_generation
+        AND evidence.baseline_deployed_commit = series.deployed_commit)
+       OR EXISTS (
+           SELECT 1 FROM remediation_run AS series_run
+           WHERE series_run.id = evidence.run_id
+             AND series_run.series_id = series.id
+             AND series_run.attempt_number <= sqlc.arg(through_attempt_number)
+       ))
 ORDER BY evidence.created_at ASC, evidence.id ASC
 LIMIT sqlc.arg(result_limit);
 
@@ -312,3 +417,76 @@ DO UPDATE SET
     direct_evidence_ids = EXCLUDED.direct_evidence_ids,
     assessed_at = clock_timestamp()
 RETURNING *;
+
+-- name: CreateRemediationCheckpointEvent :one
+INSERT INTO remediation_checkpoint_event (
+    run_id,
+    sequence,
+    trigger_reason,
+    payload,
+    content_hash
+) VALUES (
+    sqlc.arg(run_id), sqlc.arg(sequence), sqlc.arg(trigger_reason),
+    sqlc.arg(payload), sqlc.arg(content_hash)
+)
+RETURNING *;
+
+-- name: GetRemediationCheckpointLatestSequence :one
+SELECT COALESCE(MAX(sequence), 0)::bigint AS sequence
+FROM remediation_checkpoint_event
+WHERE run_id = $1;
+
+-- name: GetRemediationCheckpointEvent :one
+SELECT * FROM remediation_checkpoint_event
+WHERE run_id = $1 AND sequence = $2;
+
+-- name: ListRemediationCheckpointEvents :many
+SELECT * FROM remediation_checkpoint_event
+WHERE run_id = $1
+ORDER BY sequence DESC
+LIMIT sqlc.arg(result_limit);
+
+-- name: GetRemediationWorkingMemory :one
+SELECT * FROM remediation_working_memory WHERE run_id = $1;
+
+-- name: UpsertRemediationWorkingMemory :one
+INSERT INTO remediation_working_memory (
+    run_id,
+    sequence,
+    context_version,
+    observed_run_version,
+    phase,
+    content_hash
+) VALUES (
+    sqlc.arg(run_id), sqlc.arg(sequence), sqlc.arg(context_version),
+    sqlc.arg(observed_run_version),
+    sqlc.arg(phase), sqlc.arg(content_hash)
+)
+ON CONFLICT (run_id)
+DO UPDATE SET
+    sequence = EXCLUDED.sequence,
+    context_version = EXCLUDED.context_version,
+    observed_run_version = EXCLUDED.observed_run_version,
+    phase = EXCLUDED.phase,
+    content_hash = EXCLUDED.content_hash,
+    updated_at = clock_timestamp()
+RETURNING *;
+
+-- name: CreateRemediationEvidenceReadCursor :exec
+INSERT INTO remediation_evidence_read_cursor (
+    token_hash, run_id, evidence_id, content_hash, byte_offset, expires_at
+) VALUES (
+    sqlc.arg(token_hash), sqlc.arg(run_id), sqlc.arg(evidence_id),
+    sqlc.arg(content_hash), sqlc.arg(byte_offset), sqlc.arg(expires_at)
+);
+
+-- name: GetRemediationEvidenceReadCursor :one
+SELECT * FROM remediation_evidence_read_cursor
+WHERE token_hash = sqlc.arg(token_hash)
+  AND run_id = sqlc.arg(run_id)
+  AND evidence_id = sqlc.arg(evidence_id)
+  AND content_hash = sqlc.arg(content_hash);
+
+-- name: DeleteExpiredRemediationEvidenceReadCursors :exec
+DELETE FROM remediation_evidence_read_cursor
+WHERE expires_at < clock_timestamp();

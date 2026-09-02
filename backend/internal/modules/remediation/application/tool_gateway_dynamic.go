@@ -102,6 +102,15 @@ func (g *ToolGateway) ExecuteToolWithCatalog(
 		}
 		return g.execTencentCLSDetail(ctx, scope, catalog)
 	}
+	if tool == ToolEvidenceRead {
+		if err := validateToolParameters(tool, params); err != nil {
+			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
+		}
+		if strings.TrimSpace(catalog.scope.RunID) == "" {
+			return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "evidence.read run identity is unavailable"}
+		}
+		return g.execEvidenceRead(ctx, catalog.scope.RunID, scope, params)
+	}
 	if tool == ToolDockerLogs {
 		if err := validateToolParameters(tool, params); err != nil {
 			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}

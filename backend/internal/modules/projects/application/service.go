@@ -56,6 +56,7 @@ type Repository interface {
 	UpsertSource(context.Context, string, string, domain.Source, string, string) (domain.Source, error)
 	UpsertTrigger(context.Context, string, string, domain.Trigger, string, string) (domain.Trigger, error)
 	UpsertLLMProvider(context.Context, string, domain.LLMProvider, string, string) (domain.LLMProvider, error)
+	UpsertRemediationPolicy(context.Context, string, domain.RemediationPolicy, string, string) (domain.RemediationPolicy, error)
 	LookupWebhookToken(context.Context, []byte) (WebhookIngress, error)
 	UpdateWebhookToken(context.Context, string, []byte, []byte, []byte, string, string, bool) error
 	ListAuditEvents(context.Context, string, int32) (ListResult[domain.AuditEvent], error)
@@ -483,6 +484,23 @@ func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal aut
 		return domain.LLMProvider{}, err
 	}
 	return s.repository.UpsertLLMProvider(ctx, project.ID, provider, principal.ID, auditID)
+}
+
+// PutConfigurationRemediationPolicy is the authorized project-policy source
+// used by root remediation run creation. Existing runs are immutable snapshots.
+func (s *Service) PutConfigurationRemediationPolicy(ctx context.Context, principal authdomain.User, projectKey string, policy domain.RemediationPolicy) (domain.RemediationPolicy, error) {
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return domain.RemediationPolicy{}, err
+	}
+	if err := domain.ValidateRemediationPolicy(policy); err != nil {
+		return domain.RemediationPolicy{}, ErrInvalidInput
+	}
+	auditID, err := s.newID()
+	if err != nil {
+		return domain.RemediationPolicy{}, err
+	}
+	return s.repository.UpsertRemediationPolicy(ctx, project.ID, policy, principal.ID, auditID)
 }
 
 func (s *Service) ensureConfigurationEnvironment(ctx context.Context, project domain.Project, draft domain.ConfigurationDraft, actorUserID string) (domain.Environment, error) {

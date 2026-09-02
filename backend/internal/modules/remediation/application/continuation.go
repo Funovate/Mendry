@@ -12,6 +12,10 @@ const (
 	maxContinuationBriefBytes = 32 << 10
 	maxContinuationTextBytes  = 2048
 	maxContinuationListItems  = 32
+	maxContinuationEvidence   = 16
+	// maxContinuationEvidenceIndex 是同 series 证据索引的条目上限。索引条目远小于
+	// runtime 全量记录，且与 runtime 记录共享 maxContinuationBriefBytes 总量预算。
+	maxContinuationEvidenceIndex = 32
 )
 
 const continuationHypothesisInstruction = "Prior conclusions are hypotheses only. Verify, overturn, or extend them with current bootstrap evidence before acting; current bootstrap evidence is authoritative for this attempt."
@@ -76,6 +80,122 @@ type continuationDetails struct {
 	Reason                string `json:"reason"`
 	CurrentContextVersion int64  `json:"currentContextVersion"`
 	Instruction           string `json:"instruction"`
+}
+
+// renderContinuationRuntimeEvidence 把同 series 早期 attempt 的 sanitized runtime
+// evidence 渲染进 diagnosis continuation 上下文，保留原始证据 ID 供引用。payload
+// 来自 canonical 投影（持久化前已脱敏裁剪），这里只做总量裁剪；跨 series/未来
+// attempt 的行由 store 查询排除，不会到达此处。
+func renderContinuationRuntimeEvidence(records []domain.StoredEvidence) string {
+	if len(records) == 0 {
+		return ""
+	}
+	if len(records) > maxContinuationEvidence {
+		records = records[:maxContinuationEvidence]
+	}
+	type priorEvidenceRecord struct {
+		EvidenceID     string          `json:"evidenceId"`
+		Provider       string          `json:"provider"`
+		Kind           string          `json:"kind"`
+		Classification string          `json:"classification"`
+		Outcome        string          `json:"outcome"`
+		Payload        json.RawMessage `json:"payload"`
+	}
+	items := make([]priorEvidenceRecord, 0, len(records))
+	total := 0
+	for _, record := range records {
+		if strings.TrimSpace(record.EvidenceID) == "" || len(record.Payload) == 0 {
+			continue
+		}
+		item := priorEvidenceRecord{
+			EvidenceID:     boundedContinuationText(record.EvidenceID, 128),
+			Provider:       boundedContinuationText(record.Provider, 64),
+			Kind:           boundedContinuationText(record.EvidenceKind, 96),
+			Classification: string(record.Classification),
+			Outcome:        boundedContinuationText(record.Outcome, 64),
+			Payload:        record.Payload,
+		}
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		if total+len(encoded) > maxContinuationBriefBytes {
+			break
+		}
+		items = append(items, item)
+		total += len(encoded)
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(map[string]interface{}{
+		"kind":        "prior_runtime_evidence",
+		"instruction": "Prior runtime evidence is persisted and citable; cite its evidenceId when reasoning uses it. Evidence resolution and persisted classification remain authoritative.",
+		"records":     items,
+	})
+	if err != nil {
+		return ""
+	}
+	return "## Prior runtime evidence (same series; persisted and citable)\n" + string(encoded)
+}
+
+// renderContinuationEvidenceIndex 把同 series 早期 attempt 的非 runtime 证据渲染
+// 为紧凑索引（D3/R10）：只含 evidenceId/kind/provider/classification/
+// sourceAttempt/contentHash，绝不内联 payload。模型需要内容时必须用
+// evidence.read 按 evidenceId 重新读取原始持久化证据；索引条目因此保留完整
+// 证据身份，不会把摘要升级成证据（R15）。跨 series/未来 attempt 的行由 store
+// 查询排除，不会到达此处。
+func renderContinuationEvidenceIndex(entries []domain.EvidenceIndexEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	if len(entries) > maxContinuationEvidenceIndex {
+		entries = entries[:maxContinuationEvidenceIndex]
+	}
+	type priorEvidenceIndexEntry struct {
+		EvidenceID     string `json:"evidenceId"`
+		Kind           string `json:"kind"`
+		Provider       string `json:"provider"`
+		Classification string `json:"classification"`
+		SourceAttempt  int32  `json:"sourceAttempt"`
+		ContentHash    string `json:"contentHash"`
+	}
+	items := make([]priorEvidenceIndexEntry, 0, len(entries))
+	total := 0
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.EvidenceID) == "" {
+			continue
+		}
+		item := priorEvidenceIndexEntry{
+			EvidenceID:     boundedContinuationText(entry.EvidenceID, 128),
+			Kind:           boundedContinuationText(entry.Kind, 96),
+			Provider:       boundedContinuationText(entry.Provider, 64),
+			Classification: safeContinuationClassification(entry.Classification),
+			SourceAttempt:  max(entry.SourceAttempt, 0),
+			ContentHash:    boundedContinuationText(entry.ContentHash, 64),
+		}
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		if total+len(encoded) > maxContinuationBriefBytes {
+			break
+		}
+		items = append(items, item)
+		total += len(encoded)
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(map[string]interface{}{
+		"kind":        "prior_evidence_index",
+		"instruction": "Indexed evidence is persisted and re-readable; call evidence.read with its evidenceId to page the original content. Stored classification and provenance remain authoritative.",
+		"entries":     items,
+	})
+	if err != nil {
+		return ""
+	}
+	return "## Prior evidence index (same series; persisted and re-readable by evidenceId)\n" + string(encoded)
 }
 
 // buildContinuationBrief 只把 direct predecessor 和可选 planning checkpoint 中
@@ -276,6 +396,13 @@ func safeContinuationFixability(value domain.FixabilityClass) string {
 	default:
 		return "unknown"
 	}
+}
+
+func safeContinuationClassification(value domain.EvidenceClassification) string {
+	if err := domain.ValidateEvidenceClassification(value); err != nil {
+		return "unknown"
+	}
+	return string(value)
 }
 
 func safeContinuationRisk(value domain.RiskClassification) string {

@@ -58,6 +58,24 @@ type RemediationArtifact struct {
 	Excerpt string
 }
 
+// Append-only immutable working-memory checkpoint events; each event carries a canonical SHA-256 content hash, a monotonic per-run sequence, and the full checkpoint payload.
+type RemediationCheckpointEvent struct {
+	// Application-generated event UUID; events are never updated once inserted.
+	ID pgtype.UUID
+	// Owning remediation run; deleting the run cascades its checkpoint history.
+	RunID pgtype.UUID
+	// Monotonic per-run sequence assigned by the store; the latest snapshot references the newest sequence.
+	Sequence int64
+	// Checkpoint trigger classification such as threshold, phase_boundary, recovery, or process_shutdown; never a model trace or error body.
+	TriggerReason string
+	// Canonical WorkingMemoryCheckpointV1 JSON; summaries inside it never become evidence and verified facts retain their evidence IDs.
+	Payload []byte
+	// SHA-256 of the canonical payload; loading recomputes and rejects mismatches.
+	ContentHash string
+	// PostgreSQL clock time when the event was appended.
+	CreatedAt pgtype.Timestamptz
+}
+
 // 一次 schema 校验后的诊断结论及其证据引用；不含原始日志、prompt 或凭据。
 type RemediationDecision struct {
 	// 应用生成的诊断记录 UUID。
@@ -114,6 +132,10 @@ type RemediationEvidence struct {
 	Payload   []byte
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	// Incident lifecycle generation observed atomically when the evidence was admitted; NULL legacy rows fail closed for pre-run continuation reads.
+	BaselineLifecycleGeneration *int64
+	// Deployed commit observed atomically with baseline_lifecycle_generation when the evidence was admitted.
+	BaselineDeployedCommit *string
 }
 
 // Service-owned evidence gate decision for one remediation run; separate from model confidence and model response text.
@@ -130,6 +152,17 @@ type RemediationEvidenceAssessment struct {
 	Contradictions      []string
 	DirectEvidenceIds   []string
 	AssessedAt          pgtype.Timestamptz
+}
+
+// Short-lived server-authoritative evidence paging capabilities; only a random token digest is stored and every offset is bound to run, evidence, content hash, and expiry.
+type RemediationEvidenceReadCursor struct {
+	TokenHash   []byte
+	RunID       pgtype.UUID
+	EvidenceID  pgtype.UUID
+	ContentHash string
+	ByteOffset  int64
+	ExpiresAt   pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
 }
 
 // code_fixable 诊断下的候选或推荐修复计划；建议 diff 存在 artifact，不内联到本行。
@@ -208,6 +241,10 @@ type RemediationRun struct {
 	TerminalReason string
 	// Service-owned eligibility marker for bounded automatic continuation; false is conservative for legacy and non-transient outcomes.
 	Retryable bool
+	// Project remediation policy mode snapshotted at run creation; a mid-run configuration change cannot alter semantics, and legacy remains the default so existing projects are unaffected.
+	AgentLoopMode string
+	// Version of the project remediation policy snapshotted by a root run and inherited unchanged by every continuation.
+	AgentLoopPolicyVersion int64
 }
 
 // 一次事故在固定 lifecycle_generation 与 deployed_commit 下的 remediation 系列；唯一键阻止同一基线重复建根 run。
@@ -242,4 +279,22 @@ type RemediationToolInvocation struct {
 	DurationMs *int64
 	// 调用结果分类，例如 ok、rejected、unavailable 或 error。
 	Outcome string
+}
+
+// Latest working-memory snapshot per run; its sequence must be backed by a checkpoint event, and updating the snapshot is atomic with appending that event.
+type RemediationWorkingMemory struct {
+	// Owning remediation run; at most one snapshot per run.
+	RunID pgtype.UUID
+	// Sequence of the backing checkpoint event; the foreign key rejects a snapshot whose sequence has no event.
+	Sequence int64
+	// Incident and evidence context version observed by the checkpoint; must match the run context version.
+	ContextVersion int64
+	// Durable remediation_run.version observed by the checkpoint; older values require projection rebuild and future values are corrupt.
+	ObservedRunVersion int64
+	// Checkpoint phase such as diagnosing or planning; bounded, provider-neutral text.
+	Phase string
+	// SHA-256 of the canonical checkpoint payload; must equal the backing event hash.
+	ContentHash string
+	// PostgreSQL clock time of the latest snapshot update.
+	UpdatedAt pgtype.Timestamptz
 }

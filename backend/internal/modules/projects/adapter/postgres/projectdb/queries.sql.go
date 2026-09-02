@@ -463,6 +463,24 @@ func (q *Queries) GetProjectMemberByUsername(ctx context.Context, arg GetProject
 	return i, err
 }
 
+const getProjectRemediationPolicy = `-- name: GetProjectRemediationPolicy :one
+SELECT agent_loop_mode, agent_loop_policy_version
+FROM projects
+WHERE id = $1
+`
+
+type GetProjectRemediationPolicyRow struct {
+	AgentLoopMode          string
+	AgentLoopPolicyVersion int64
+}
+
+func (q *Queries) GetProjectRemediationPolicy(ctx context.Context, projectID pgtype.UUID) (GetProjectRemediationPolicyRow, error) {
+	row := q.db.QueryRow(ctx, getProjectRemediationPolicy, projectID)
+	var i GetProjectRemediationPolicyRow
+	err := row.Scan(&i.AgentLoopMode, &i.AgentLoopPolicyVersion)
+	return i, err
+}
+
 const getProjectRepository = `-- name: GetProjectRepository :one
 SELECT id, remote_url, scm_provider, transport, credential_secret_id,
        production_branch, deployed_commit, version
@@ -1519,6 +1537,52 @@ func (q *Queries) UpsertProjectMember(ctx context.Context, arg UpsertProjectMemb
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const upsertProjectRemediationPolicy = `-- name: UpsertProjectRemediationPolicy :one
+WITH changed_policy AS (
+    UPDATE projects
+    SET agent_loop_mode = $1,
+        agent_loop_policy_version = projects.agent_loop_policy_version + 1,
+        version = projects.version + 1,
+        updated_at = clock_timestamp()
+    WHERE projects.id = $2
+    RETURNING id, agent_loop_mode, agent_loop_policy_version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT $3, changed_policy.id, $4,
+           'project.remediation_policy.updated', 'project', changed_policy.id,
+           'Project remediation policy updated.',
+           jsonb_build_object('agentLoopMode', changed_policy.agent_loop_mode,
+                              'policyVersion', changed_policy.agent_loop_policy_version)
+    FROM changed_policy
+)
+SELECT agent_loop_mode, agent_loop_policy_version
+FROM changed_policy
+`
+
+type UpsertProjectRemediationPolicyParams struct {
+	AgentLoopMode string
+	ProjectID     pgtype.UUID
+	AuditID       pgtype.UUID
+	ActorUserID   pgtype.UUID
+}
+
+type UpsertProjectRemediationPolicyRow struct {
+	AgentLoopMode          string
+	AgentLoopPolicyVersion int64
+}
+
+func (q *Queries) UpsertProjectRemediationPolicy(ctx context.Context, arg UpsertProjectRemediationPolicyParams) (UpsertProjectRemediationPolicyRow, error) {
+	row := q.db.QueryRow(ctx, upsertProjectRemediationPolicy,
+		arg.AgentLoopMode,
+		arg.ProjectID,
+		arg.AuditID,
+		arg.ActorUserID,
+	)
+	var i UpsertProjectRemediationPolicyRow
+	err := row.Scan(&i.AgentLoopMode, &i.AgentLoopPolicyVersion)
 	return i, err
 }
 

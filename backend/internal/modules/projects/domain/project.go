@@ -127,12 +127,35 @@ type LLMProvider struct {
 	Version            int64
 }
 
+type AgentLoopMode string
+
+const (
+	AgentLoopModeLegacy      AgentLoopMode = "legacy"
+	AgentLoopModeResilientV1 AgentLoopMode = "resilient_v1"
+)
+
+type RemediationPolicy struct {
+	AgentLoopMode AgentLoopMode
+	Version       int64
+}
+
+func ValidateRemediationPolicy(policy RemediationPolicy) error {
+	if policy.AgentLoopMode != AgentLoopModeLegacy && policy.AgentLoopMode != AgentLoopModeResilientV1 {
+		return fmt.Errorf("remediation policy agent loop mode is invalid")
+	}
+	if policy.Version < 0 {
+		return fmt.Errorf("remediation policy version is invalid")
+	}
+	return nil
+}
+
 type Configuration struct {
 	Environment Environment
 	Repository  Repository
 	Source      Source
 	Trigger     Trigger
 	LLM         *LLMProvider
+	Remediation RemediationPolicy
 }
 
 // ConfigurationDraft 表示配置编辑器读取到的可部分保存配置。
@@ -143,6 +166,7 @@ type ConfigurationDraft struct {
 	Source      *Source
 	Trigger     *Trigger
 	LLM         *LLMProvider
+	Remediation *RemediationPolicy
 }
 
 type AuditEvent struct {

@@ -20,6 +20,7 @@ const (
 	ToolRepoHistory      = "repository.history"
 	ToolEvidenceSearch   = "evidence.search"
 	ToolEvidenceContext  = "evidence.context"
+	ToolEvidenceRead     = "evidence.read"
 	ToolSSHInspect       = "ssh.inspect"
 	ToolDockerLogs       = "docker.logs"
 	ToolTencentCLSDetail = "evidence.tencent_cls_detail"
@@ -126,6 +127,7 @@ func (g *ToolGateway) ExecuteToolObserved(
 type ToolGateway struct {
 	repoPort          domain.RepositoryReadPort
 	evidencePort      domain.EvidenceLogPort
+	evidenceReadPort  domain.EvidenceReadPort
 	inspectPort       domain.SSHInspectPort
 	dockerPort        domain.DockerEvidencePort
 	tencentDetailPort domain.TencentCLSDetailPort
@@ -151,6 +153,12 @@ func NewToolGateway(
 		maxSearch:      100,
 		maxLogLines:    500,
 	}
+}
+
+// SetEvidenceReadPort 注入同 series 持久化证据的按 ID 分页读取端口（R9）。
+// 没有该端口时 evidence.read 在 gateway 边界 fail closed，不会访问数据库。
+func (g *ToolGateway) SetEvidenceReadPort(port domain.EvidenceReadPort) {
+	g.evidenceReadPort = port
 }
 
 // SetDockerEvidencePort enables the typed Docker logs capability for a saved
@@ -180,6 +188,7 @@ func (g *ToolGateway) AdvertisedTools(phase domain.RunState) []string {
 			ToolRepoHistory,
 			ToolEvidenceSearch,
 			ToolEvidenceContext,
+			ToolEvidenceRead,
 			ToolSSHInspect,
 		}
 	default:
@@ -279,6 +288,11 @@ func toolParameterSchema(tool string) map[string]interface{} {
 		return object(map[string]interface{}{
 			"evidenceId": stringProperty("Evidence identifier returned by evidence.search."),
 		}, "evidenceId")
+	case ToolEvidenceRead:
+		return object(map[string]interface{}{
+			"evidenceId": stringProperty("Evidence identifier of persisted trusted evidence in this remediation series."),
+			"cursor":     stringProperty("Optional opaque cursor returned by a previous evidence.read page."),
+		}, "evidenceId")
 	case ToolSSHInspect:
 		return object(map[string]interface{}{
 			"command": stringProperty("Inspect command to parse and execute. List the hinted logPath directory and discover actual file names before reading; the harness never auto-tails logPath."),
@@ -316,6 +330,7 @@ var toolDescriptions = map[string]string{
 	ToolRepoHistory:        "Read bounded commit history from the current production branch for a path.",
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
+	ToolEvidenceRead:       "Re-read a bounded page of persisted trusted evidence by evidence ID within this remediation series. Use the returned opaque cursor to page remaining content.",
 	ToolSSHInspect:         "Inspect the SSH host with an allowlisted command. List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath.",
 	ToolDockerLogs:         "Read bounded stdout and stderr from the configured Docker container. The container identity comes from saved project configuration.",
 	ToolTencentCLSDetail:   "Required for Tencent CLS webhooks: fetch the current incident's validated public detail record. This tool takes no URL and must succeed before diagnosis or stop.",
@@ -328,7 +343,7 @@ var toolDescriptions = map[string]string{
 func (g *ToolGateway) isRegistered(tool string) bool {
 	switch tool {
 	case ToolRepoListTree, ToolRepoReadFile, ToolRepoSearch, ToolRepoHistory,
-		ToolEvidenceSearch, ToolEvidenceContext, ToolSSHInspect, ToolDockerLogs, ToolTencentCLSDetail:
+		ToolEvidenceSearch, ToolEvidenceContext, ToolEvidenceRead, ToolSSHInspect, ToolDockerLogs, ToolTencentCLSDetail:
 		return true
 	default:
 		return false
@@ -406,6 +421,10 @@ func (g *ToolGateway) ExecuteTool(
 		return g.execEvidenceSearch(ctx, scope, params)
 	case ToolEvidenceContext:
 		return g.execEvidenceContext(ctx, scope, params)
+	case ToolEvidenceRead:
+		// 无 catalog 的执行路径没有 run 身份，无法执行 series 归属校验；
+		// fail closed，避免把不受 run 约束的证据 ID 交给端口。
+		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "evidence.read requires the run catalog identity"}
 	case ToolSSHInspect:
 		return g.execSSHInspect(ctx, scope, params)
 	default:
@@ -452,6 +471,13 @@ func validateToolParameters(tool string, params map[string]interface{}) error {
 		case "context_after", "context_before":
 			if !isIntegerArgument(value) {
 				return fmt.Errorf("%s must be an integer", key)
+			}
+		case "cursor":
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("cursor must be a string")
+			}
+			if len(value.(string)) > domain.MaxEvidenceReadCursorBytes {
+				return fmt.Errorf("cursor exceeds the %d byte bound", domain.MaxEvidenceReadCursorBytes)
 			}
 		case "keywords":
 			switch items := value.(type) {
@@ -618,6 +644,43 @@ func (g *ToolGateway) execEvidenceContext(ctx context.Context, scope domain.Evid
 		Summary:        fmt.Sprintf("%d evidence lines around %s", len(page.Lines), evidenceID),
 		BytesRetrieved: evidencePageBytes(page),
 		EvidenceIDs:    evidenceIDs(page),
+		Payload:        page,
+	}, nil
+}
+
+// execEvidenceRead 按 run 身份 + evidence ID 调用 EvidenceReadPort，并映射
+// domain 错误到稳定的 ToolRejection 代码：目标证据不可见（未知/跨 series/
+// 未来 attempt）是 tool_unavailable，无效/过期 cursor 是 invalid_arguments。
+// 返回的页面携带证据 ID，供后续 checkpoint evidence index 引用。
+func (g *ToolGateway) execEvidenceRead(ctx context.Context, runID string, scope domain.EvidenceScope, params map[string]interface{}) (ToolResult, error) {
+	evidenceID, ok := params["evidenceId"].(string)
+	if !ok || strings.TrimSpace(evidenceID) == "" {
+		return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolEvidenceRead, Message: "evidenceId is required"}
+	}
+	cursor, _ := params["cursor"].(string)
+	if g.evidenceReadPort == nil {
+		return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: ToolEvidenceRead, Message: "evidence read port is unavailable"}
+	}
+	page, err := g.evidenceReadPort.ReadEvidence(ctx, domain.EvidenceReadRequest{
+		RunID:      runID,
+		EvidenceID: evidenceID,
+		Cursor:     cursor,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrEvidenceReadNotFound):
+			return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: ToolEvidenceRead, Message: "evidence is not available in this run series"}
+		case errors.Is(err, domain.ErrEvidenceReadCursorInvalid), errors.Is(err, domain.ErrEvidenceReadCursorExpired):
+			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolEvidenceRead, Message: "cursor is invalid or expired; request the first page again"}
+		default:
+			return ToolResult{}, fmt.Errorf("evidence read: %w", err)
+		}
+	}
+	return ToolResult{
+		Tool:           ToolEvidenceRead,
+		Summary:        fmt.Sprintf("%s (%d bytes, truncated=%t)", page.EvidenceID, page.ByteCount, page.Truncated),
+		BytesRetrieved: page.ByteCount,
+		EvidenceIDs:    []string{page.EvidenceID},
 		Payload:        page,
 	}, nil
 }

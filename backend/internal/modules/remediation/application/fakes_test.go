@@ -26,6 +26,9 @@ type fakeRunStore struct {
 	provider      string
 	modelName     string
 	createErr     error
+	// mode 是 CreateSeriesAndRun 返回 run 时快照的 agent loop 模式；空值保持
+	// legacy，供 resilient_v1 测试注入。
+	mode domain.AgentLoopMode
 }
 
 type stateEdge struct {
@@ -58,6 +61,7 @@ func (f *fakeRunStore) CreateSeriesAndRun(_ context.Context, in domain.NewRun) (
 		TriggerReason:       in.TriggerReason,
 		ContextVersion:      in.ContextVersion,
 		Version:             1,
+		AgentLoopMode:       f.mode,
 	}
 	f.created = &run
 	return run, nil
@@ -80,6 +84,12 @@ func (f *fakeRunStore) Transition(_ context.Context, _ string, from, to domain.R
 	f.state = to
 	if f.created != nil {
 		f.created.State = to
+		// 镜像 Postgres RunStore：state update 推进一次 version，带 counters 的
+		// effect 还会由 IncrementRunCounters 再推进一次。
+		f.created.Version++
+		if fakeHasCounterEffect(effect) {
+			f.created.Version++
+		}
 	}
 	f.transitions = append(f.transitions, stateEdge{from, to})
 	f.effects = append(f.effects, effect)
@@ -98,6 +108,12 @@ func (f *fakeRunStore) Transition(_ context.Context, _ string, from, to domain.R
 	return nil
 }
 
+func fakeHasCounterEffect(effect domain.Effect) bool {
+	return effect.ModelCalls > 0 || effect.ModelTokensIn > 0 || effect.ModelTokensOut > 0 ||
+		effect.ModelCostCents > 0 || effect.ModelProvider != "" || effect.ModelName != "" ||
+		effect.ToolCalls > 0 || effect.EvidenceBytes > 0 || effect.RepositoryBytes > 0
+}
+
 func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate, error) {
 	run := domain.Run{RunID: runID, State: f.state, Budget: f.budget, ModelProvider: f.provider, ModelName: f.modelName}
 	if f.created != nil {
@@ -106,6 +122,7 @@ func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate
 		run.DeployedCommit = f.created.DeployedCommit
 		run.SeriesID = f.created.SeriesID
 		run.AttemptNumber = f.created.AttemptNumber
+		run.Version = f.created.Version
 	}
 	return domain.RunAggregate{
 		Run:               run,

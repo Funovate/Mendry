@@ -210,14 +210,35 @@ func TestTriggerAutomaticGateTreatsConcurrentStaleChildAsNoOp(t *testing.T) {
 
 type continuationStore struct {
 	*fakeRunStore
-	predecessor              domain.RunAggregate
-	checkpoint               domain.RunAggregate
-	checkpointErr            error
-	checkpointCalls          int
-	checkpointSeriesID       string
-	checkpointContext        int64
-	checkpointThroughAttempt int32
-	childInput               domain.NextAttempt
+	predecessor               domain.RunAggregate
+	checkpoint                domain.RunAggregate
+	checkpointErr             error
+	checkpointCalls           int
+	checkpointSeriesID        string
+	checkpointContext         int64
+	checkpointThroughAttempt  int32
+	childInput                domain.NextAttempt
+	continuationEvidence      []domain.StoredEvidence
+	continuationQuery         domain.ContinuationEvidenceQuery
+	continuationCalls         int
+	continuationEvidenceIndex []domain.EvidenceIndexEntry
+	continuationIndexQuery    domain.ContinuationEvidenceQuery
+	continuationIndexCalls    int
+	// childMode 是 CreateNextAttempt 返回 child 时快照的 agent loop 模式
+	// （真实存储从 predecessor 继承）；空值保持 legacy。
+	childMode domain.AgentLoopMode
+}
+
+func (s *continuationStore) ListContinuationRuntimeEvidence(_ context.Context, query domain.ContinuationEvidenceQuery) ([]domain.StoredEvidence, error) {
+	s.continuationCalls++
+	s.continuationQuery = query
+	return append([]domain.StoredEvidence(nil), s.continuationEvidence...), nil
+}
+
+func (s *continuationStore) ListContinuationEvidenceIndex(_ context.Context, query domain.ContinuationEvidenceQuery) ([]domain.EvidenceIndexEntry, error) {
+	s.continuationIndexCalls++
+	s.continuationIndexQuery = query
+	return append([]domain.EvidenceIndexEntry(nil), s.continuationEvidenceIndex...), nil
 }
 
 func (s *continuationStore) Get(ctx context.Context, runID string) (domain.RunAggregate, error) {
@@ -262,6 +283,7 @@ func (s *continuationStore) CreateNextAttempt(_ context.Context, in domain.NextA
 		ContinuationOfRunID: in.ContinuationOfRunID,
 		ContextVersion:      in.ContextVersion,
 		Version:             1,
+		AgentLoopMode:       s.childMode,
 	}
 	s.created = &child
 	s.state = domain.RunStateQueued
@@ -643,6 +665,217 @@ func TestCoordinatorCallerDeadlinePersistsBudgetExhaustion(t *testing.T) {
 	}
 	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "elapsed" || store.effects[len(store.effects)-1].Retryable {
 		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+// TestCoordinatorContinueLoadsPriorRuntimeEvidence 覆盖设计第 6 步：diagnosis
+// continuation 加载同 series 早期 attempt 的 sanitized runtime evidence（保留原始
+// 证据 ID），planning checkpoint 路径保持紧凑 brief 不加载运行时记录。
+func TestCoordinatorContinueLoadsPriorRuntimeEvidence(t *testing.T) {
+	predecessor := eligibleAutomaticAggregate(domain.RunStateFailed, 5, true)
+	predecessor.Run.TerminalReason = "provider_transport"
+	predecessor.Run.Retryable = true
+	store := &continuationStore{
+		fakeRunStore: newFakeRunStore(),
+		predecessor:  predecessor,
+		continuationEvidence: []domain.StoredEvidence{{
+			EvidenceID: "ev-ssh-prior", Provider: "ssh", EvidenceKind: domain.EvidenceKindRuntime,
+			Classification: domain.EvidenceCorrelatedSupport, Outcome: "success", Available: true,
+			Payload: json.RawMessage(`{"command":"'hostname' '-I'","stdout":"10.16.6.17 password=[redacted]"}`),
+		}, {
+			EvidenceID: "ev-docker-prior", Provider: "docker", EvidenceKind: domain.EvidenceKindRuntime,
+			Classification: domain.EvidenceDirectFault, Outcome: "success", Available: true,
+			Payload: json.RawMessage(`{"stdout":"panic: nil pointer\n"}`),
+		}},
+	}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
+	coord := application.NewRemediationCoordinatorWithReview(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store,
+	)
+
+	run, err := coord.Continue(context.Background(), domain.NextAttempt{
+		ContinuationOfRunID:     predecessor.Run.RunID,
+		SeriesID:                predecessor.Run.SeriesID,
+		IncidentID:              predecessor.Run.IncidentID,
+		LifecycleGeneration:     predecessor.Run.LifecycleGeneration,
+		DeployedCommit:          predecessor.Run.DeployedCommit,
+		ContextVersion:          6,
+		ExpectedPreviousVersion: predecessor.Run.Version,
+		Origin:                  domain.TriggerOriginAutomaticContinue,
+		TriggerReason:           domain.TriggerOriginAutomaticContinue,
+		ContinuationReason:      "new inbound evidence persisted",
+	})
+	if err != nil {
+		t.Fatalf("Continue() error = %v", err)
+	}
+	if run.State != domain.RunStateCompletedNonCode {
+		t.Fatalf("continued run = %#v", run)
+	}
+	if store.continuationCalls != 1 || store.continuationQuery.SeriesID != "series-1" ||
+		store.continuationQuery.ThroughAttemptNumber != 1 {
+		t.Fatalf("continuation evidence query = %#v calls=%d", store.continuationQuery, store.continuationCalls)
+	}
+	message := model.turns[0].UserMessage
+	if !contains(message, "prior_runtime_evidence") || !contains(message, "ev-ssh-prior") ||
+		!contains(message, "ev-docker-prior") || !contains(message, "10.16.6.17") ||
+		!contains(message, "panic: nil pointer") {
+		t.Fatalf("diagnosis continuation omitted prior runtime evidence: %s", message)
+	}
+	// canonical 持久化 payload 已脱敏，渲染时不允许重新引入凭据。
+	if contains(message, "hunter2") {
+		t.Fatalf("diagnosis continuation leaked credential: %s", message)
+	}
+}
+
+// TestCoordinatorContinueRendersSameSeriesEvidenceIndex 覆盖 implement.md
+// slice 3：diagnosis continuation 在 runtime 全量记录之外，还渲染同 series 非
+// runtime 证据（provider_detail、pre-run normalized_alert）的紧凑索引，保留证据
+// ID 与来源 attempt、绝不内联 payload；模型凭索引条目通过 evidence.read 重新
+// 读取原始内容（R10/R15）。
+func TestCoordinatorContinueRendersSameSeriesEvidenceIndex(t *testing.T) {
+	predecessor := eligibleAutomaticAggregate(domain.RunStateFailed, 5, true)
+	predecessor.Run.TerminalReason = "provider_transport"
+	predecessor.Run.Retryable = true
+	store := &continuationStore{
+		fakeRunStore: newFakeRunStore(),
+		predecessor:  predecessor,
+		continuationEvidence: []domain.StoredEvidence{{
+			EvidenceID: "ev-ssh-prior", Provider: "ssh", EvidenceKind: domain.EvidenceKindRuntime,
+			Classification: domain.EvidenceCorrelatedSupport, Outcome: "success", Available: true,
+			Payload: json.RawMessage(`{"command":"'hostname' '-I'","stdout":"10.16.6.17"}`),
+		}},
+		continuationEvidenceIndex: []domain.EvidenceIndexEntry{{
+			EvidenceID: "ev-detail-prior", Kind: domain.EvidenceKindProviderDetail,
+			Provider: "tencent_cls", Classification: domain.EvidenceDirectFault,
+			SourceAttempt: 1, ContentHash: strings.Repeat("a", 64),
+		}, {
+			EvidenceID: "ev-alert-pre-run", Kind: domain.EvidenceKindNormalizedAlert,
+			Provider: "tencent_cls", Classification: domain.EvidenceContextual,
+			SourceAttempt: 0, ContentHash: strings.Repeat("b", 64),
+		}, {
+			EvidenceID: "ev-credential-shaped", Kind: "repository",
+			Provider: "ssh password=should-not-leak", Classification: domain.EvidenceCorrelatedSupport,
+			SourceAttempt: 2, ContentHash: strings.Repeat("c", 64),
+		}},
+	}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
+	coord := application.NewRemediationCoordinatorWithReview(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store,
+	)
+
+	run, err := coord.Continue(context.Background(), domain.NextAttempt{
+		ContinuationOfRunID:     predecessor.Run.RunID,
+		SeriesID:                predecessor.Run.SeriesID,
+		IncidentID:              predecessor.Run.IncidentID,
+		LifecycleGeneration:     predecessor.Run.LifecycleGeneration,
+		DeployedCommit:          predecessor.Run.DeployedCommit,
+		ContextVersion:          6,
+		ExpectedPreviousVersion: predecessor.Run.Version,
+		Origin:                  domain.TriggerOriginAutomaticContinue,
+		TriggerReason:           domain.TriggerOriginAutomaticContinue,
+		ContinuationReason:      "new inbound evidence persisted",
+	})
+	if err != nil {
+		t.Fatalf("Continue() error = %v", err)
+	}
+	if run.State != domain.RunStateCompletedNonCode {
+		t.Fatalf("continued run = %#v", run)
+	}
+	// 两个 loader 都在 diagnosis 路径被调用，且使用同一 series/attempt 边界。
+	if store.continuationCalls != 1 || store.continuationIndexCalls != 1 ||
+		store.continuationIndexQuery.SeriesID != "series-1" ||
+		store.continuationIndexQuery.ThroughAttemptNumber != 1 {
+		t.Fatalf("continuation loaders = runtime:%d index:%d query=%#v",
+			store.continuationCalls, store.continuationIndexCalls, store.continuationIndexQuery)
+	}
+	message := model.turns[0].UserMessage
+	for _, want := range []string{
+		"prior_runtime_evidence", "ev-ssh-prior", "10.16.6.17",
+		"prior_evidence_index", "ev-detail-prior", "ev-alert-pre-run",
+		"provider_detail", "normalized_alert", "direct_fault", "evidence.read",
+	} {
+		if !contains(message, want) {
+			t.Fatalf("diagnosis continuation missing %q: %s", want, message)
+		}
+	}
+	// 索引只含紧凑元数据：条目带 sourceAttempt，且索引区不出现 payload 键。
+	// JSON 键按字母序排列，kind 位于块尾；从 entries 位置切到 kind 位置。
+	entriesPos := strings.Index(message, `"entries":[`)
+	kindPos := strings.Index(message, `"kind":"prior_evidence_index"`)
+	if entriesPos < 0 || kindPos < entriesPos {
+		t.Fatalf("diagnosis continuation omitted the evidence index: %s", message)
+	}
+	indexBlock := message[entriesPos:kindPos]
+	for _, want := range []string{
+		`"evidenceId":"ev-detail-prior"`, `"sourceAttempt":1`,
+		`"sourceAttempt":0`, `"contentHash"`, `"classification"`,
+	} {
+		if !strings.Contains(indexBlock, want) {
+			t.Fatalf("evidence index missing %s: %s", want, indexBlock)
+		}
+	}
+	if strings.Contains(indexBlock, `"payload"`) {
+		t.Fatalf("evidence index inlined a payload: %s", indexBlock)
+	}
+	// 索引元数据同样经过既有 sanitize 脱敏（R15 不引入凭据）。
+	if strings.Contains(message, "should-not-leak") {
+		t.Fatalf("evidence index leaked credential-shaped metadata: %s", message)
+	}
+}
+
+// TestCoordinatorContinuePlanningKeepsCompactBrief 覆盖 planning checkpoint 继续时
+// 不加载 runtime evidence 记录，保持既有紧凑 brief 路径。
+func TestCoordinatorContinuePlanningKeepsCompactBrief(t *testing.T) {
+	checkpoint := domain.RunAggregate{
+		Run: domain.Run{
+			RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+			LifecycleGeneration: 1, DeployedCommit: "abc123", AttemptNumber: 1,
+			State: domain.RunStateBlockedManualReview, ContextVersion: 5, Version: 7,
+		},
+		Decisions: []domain.Decision{{Fixability: domain.FixabilityCodeFixable, Confidence: 0.91}},
+	}
+	predecessor := domain.RunAggregate{
+		Run: domain.Run{
+			RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+			LifecycleGeneration: 1, DeployedCommit: "abc123", AttemptNumber: 2,
+			State: domain.RunStateFailed, ContextVersion: 5, Version: 9,
+		},
+	}
+	store := &continuationStore{
+		fakeRunStore: newFakeRunStore(), predecessor: predecessor, checkpoint: checkpoint,
+		continuationEvidence: []domain.StoredEvidence{{
+			EvidenceID: "ev-ssh-prior", Provider: "ssh", EvidenceKind: domain.EvidenceKindRuntime,
+			Classification: domain.EvidenceCorrelatedSupport, Outcome: "success", Available: true,
+			Payload: json.RawMessage(`{"stdout":"10.16.6.17"}`),
+		}},
+	}
+	model := &scriptedModel{responses: []string{planEnvelope()}}
+	coord := application.NewRemediationCoordinatorWithReview(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store,
+	)
+
+	run, err := coord.Continue(context.Background(), domain.NextAttempt{
+		ContinuationOfRunID: predecessor.Run.RunID, SeriesID: predecessor.Run.SeriesID,
+		IncidentID: predecessor.Run.IncidentID, LifecycleGeneration: predecessor.Run.LifecycleGeneration,
+		DeployedCommit: predecessor.Run.DeployedCommit, ContextVersion: 5,
+		ExpectedPreviousVersion: predecessor.Run.Version, Origin: domain.TriggerOriginManualContinue,
+		TriggerReason: domain.TriggerOriginManualContinue, ContinuationReason: "operator requested continuation",
+	})
+	if err != nil {
+		t.Fatalf("Continue() error = %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("planning continuation run = %#v", run)
+	}
+	if store.continuationCalls != 0 {
+		t.Fatalf("planning continuation loaded runtime evidence: calls=%d", store.continuationCalls)
+	}
+	if store.continuationIndexCalls != 0 {
+		t.Fatalf("planning continuation loaded the evidence index: calls=%d", store.continuationIndexCalls)
+	}
+	message := model.turns[0].UserMessage
+	if contains(message, "prior_runtime_evidence") || contains(message, "ev-ssh-prior") {
+		t.Fatalf("planning continuation should keep the compact checkpoint brief: %s", message)
 	}
 }
 

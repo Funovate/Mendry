@@ -152,6 +152,7 @@ func TestToolGateway_AdvertisesOnlyReadTools(t *testing.T) {
 		application.ToolRepoHistory:     true,
 		application.ToolEvidenceSearch:  true,
 		application.ToolEvidenceContext: true,
+		application.ToolEvidenceRead:    true,
 		application.ToolSSHInspect:      true,
 	}
 	phases := []domain.RunState{
@@ -185,8 +186,8 @@ func TestToolGateway_AdvertisedDefinitionsAreBoundedSchemas(t *testing.T) {
 		}
 	}
 	defs = gw.AdvertisedToolDefinitionsFor(domain.RunStateDiagnosing, domain.EvidenceScope{SourceID: "source-1"})
-	if len(defs) != 6 {
-		t.Fatalf("definitions with source = %d, want 6 repository+evidence tools", len(defs))
+	if len(defs) != 7 {
+		t.Fatalf("definitions with source = %d, want 7 repository+evidence tools", len(defs))
 	}
 	for _, definition := range defs {
 		if definition.Name == application.ToolSSHInspect {

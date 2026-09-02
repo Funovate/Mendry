@@ -167,6 +167,13 @@ func (f *fakeService) PutConfigurationLLMProvider(_ context.Context, _ authdomai
 	f.configuration.LLM = &provider
 	return provider, f.updateErr
 }
+
+func (f *fakeService) PutConfigurationRemediationPolicy(_ context.Context, _ authdomain.User, projectKey string, policy domain.RemediationPolicy) (domain.RemediationPolicy, error) {
+	f.projectKey = projectKey
+	policy.Version++
+	f.configuration.Remediation = policy
+	return policy, nil
+}
 func (f *fakeService) RotateWebhookToken(_ context.Context, _ authdomain.User, projectKey string) (string, error) {
 	if f.updateErr != nil {
 		return "", f.updateErr
@@ -422,6 +429,22 @@ func TestConfigurationTriggerPUTIsComponentScoped(t *testing.T) {
 	}
 	if strings.Contains(string(service.configuration.Trigger.Config), "name") {
 		t.Fatalf("trigger payload retained alias: %s", service.configuration.Trigger.Config)
+	}
+}
+
+func TestConfigurationRemediationPolicyPUTIsComponentScoped(t *testing.T) {
+	service := &fakeService{}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration/remediation-policy", strings.NewReader(`{"agentLoopMode":"resilient_v1"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" {
+		t.Fatalf("policy PUT = %d %q project=%q", response.Code, response.Body.String(), service.projectKey)
+	}
+	if !strings.Contains(response.Body.String(), `"data":{"agentLoopMode":"resilient_v1","version":1}`) {
+		t.Fatalf("policy response = %s", response.Body.String())
 	}
 }
 

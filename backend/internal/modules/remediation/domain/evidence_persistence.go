@@ -172,6 +172,38 @@ type EvidencePersistencePort interface {
 	PersistEvidenceAssessment(context.Context, EvidenceAssessment) error
 }
 
+// ContinuationEvidenceQuery 限定同 series、attempt_number <= through 的证据
+// 读取。查询必须保持 attempt 单调：不能读到未来 attempt 或其他
+// series/incident 的证据行。
+type ContinuationEvidenceQuery struct {
+	SeriesID             string
+	ThroughAttemptNumber int32
+	Limit                int
+}
+
+// EvidenceIndexEntry 是同 series 证据索引的紧凑条目（D3/R10）：只含标识与
+// 元数据，绝不内联 payload。模型需要内容时必须通过 evidence.read 按
+// EvidenceID 重新读取原始持久化证据，因此索引条目不会把摘要升级成证据（R15）。
+type EvidenceIndexEntry struct {
+	EvidenceID     string
+	Kind           string
+	Provider       string
+	Classification EvidenceClassification
+	SourceAttempt  int32
+	ContentHash    string
+}
+
+// ContinuationEvidenceStore 是同 series 早期 attempt 的证据读取边界，供
+// diagnosis continuation 引用。ListContinuationRuntimeEvidence 返回带 payload
+// 的 runtime 记录（canonical 投影，用于既有全量渲染）；
+// ListContinuationEvidenceIndex 返回其余证据种类的紧凑索引，供模型按 ID 通过
+// evidence.read 重新读取。它独立于冻结的 RunStore；实现不得把 evidence 行复制
+// 或重新归属到 child run。
+type ContinuationEvidenceStore interface {
+	ListContinuationRuntimeEvidence(context.Context, ContinuationEvidenceQuery) ([]StoredEvidence, error)
+	ListContinuationEvidenceIndex(context.Context, ContinuationEvidenceQuery) ([]EvidenceIndexEntry, error)
+}
+
 // BootstrapEvidenceLoader loads only evidence that belongs to the triggering
 // inbound Observation. It is separate from citation resolution so the model
 // cannot choose the initial context or use an evidence ID as an authority.

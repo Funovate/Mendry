@@ -235,6 +235,32 @@ WHERE e.project_id = sqlc.arg(project_id)
 ORDER BY e.created_at
 LIMIT 1;
 
+-- name: GetProjectRemediationPolicy :one
+SELECT agent_loop_mode, agent_loop_policy_version
+FROM projects
+WHERE id = sqlc.arg(project_id);
+
+-- name: UpsertProjectRemediationPolicy :one
+WITH changed_policy AS (
+    UPDATE projects
+    SET agent_loop_mode = sqlc.arg(agent_loop_mode),
+        agent_loop_policy_version = projects.agent_loop_policy_version + 1,
+        version = projects.version + 1,
+        updated_at = clock_timestamp()
+    WHERE projects.id = sqlc.arg(project_id)
+    RETURNING id, agent_loop_mode, agent_loop_policy_version
+), created_audit AS (
+    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
+    SELECT sqlc.arg(audit_id), changed_policy.id, sqlc.arg(actor_user_id),
+           'project.remediation_policy.updated', 'project', changed_policy.id,
+           'Project remediation policy updated.',
+           jsonb_build_object('agentLoopMode', changed_policy.agent_loop_mode,
+                              'policyVersion', changed_policy.agent_loop_policy_version)
+    FROM changed_policy
+)
+SELECT agent_loop_mode, agent_loop_policy_version
+FROM changed_policy;
+
 -- name: UpsertProjectConfiguration :one
 WITH changed_environment AS (
     INSERT INTO project_environments (id, project_id, environment_key, name, service)

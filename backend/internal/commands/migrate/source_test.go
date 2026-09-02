@@ -46,7 +46,7 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 15 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 {
+	if len(migrations) != 16 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 || migrations[15].Version != 16 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	if migrations[1].Name != "create_mvp_data" {
@@ -127,6 +127,40 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	for _, fragment := range requiredContinuationSchema {
 		if !strings.Contains(migrations[14].SQL, fragment) {
 			t.Errorf("migration 000015 does not contain %q", fragment)
+		}
+	}
+
+	if migrations[15].Name != "working_memory_checkpoint" {
+		t.Fatalf("migration 000016 name = %q", migrations[15].Name)
+	}
+	requiredCheckpointSchema := []string{
+		"ADD COLUMN agent_loop_policy_version bigint NOT NULL DEFAULT 1",
+		"ADD COLUMN agent_loop_mode text NOT NULL DEFAULT 'legacy'",
+		"projects_agent_loop_mode_known",
+		"remediation_run_agent_loop_mode_known",
+		"baseline_lifecycle_generation bigint",
+		"baseline_deployed_commit text",
+		"remediation_evidence_baseline_dedup_idx",
+		"CREATE TABLE remediation_checkpoint_event",
+		"remediation_checkpoint_event_run_sequence_unique",
+		"remediation_checkpoint_event_sequence_positive",
+		"remediation_checkpoint_event_content_hash_sha256",
+		"CREATE TABLE remediation_working_memory",
+		"observed_run_version bigint NOT NULL",
+		"CREATE TABLE remediation_evidence_read_cursor",
+		"remediation_working_memory_sequence_positive",
+		"remediation_working_memory_context_version_nonnegative",
+		"remediation_working_memory_event_backing",
+		"remediation_checkpoint_event_immutable",
+		"remediation_checkpoint_event_immutable_trigger",
+		"RETURN OLD",
+		"COMMENT ON COLUMN remediation_run.agent_loop_mode IS",
+		"COMMENT ON TABLE remediation_checkpoint_event IS",
+		"COMMENT ON TABLE remediation_working_memory IS",
+	}
+	for _, fragment := range requiredCheckpointSchema {
+		if !strings.Contains(migrations[15].SQL, fragment) {
+			t.Errorf("migration 000016 does not contain %q", fragment)
 		}
 	}
 

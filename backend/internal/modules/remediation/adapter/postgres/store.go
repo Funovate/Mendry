@@ -356,23 +356,25 @@ func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain
 func mapCreatedRun(run remediationdb.RemediationRun, series remediationdb.RemediationSeries, incidentID string) domain.Run {
 	triggerReason := safeTriggerReason(run.TriggerReason)
 	return domain.Run{
-		RunID:               uuidString(run.ID),
-		SeriesID:            uuidString(series.ID),
-		IncidentID:          incidentID,
-		LifecycleGeneration: series.LifecycleGeneration,
-		DeployedCommit:      series.DeployedCommit,
-		AttemptNumber:       run.AttemptNumber,
-		State:               domain.RunState(run.State),
-		Origin:              triggerReason,
-		TriggerReason:       triggerReason,
-		ContinuationOfRunID: optionalUUIDString(run.ContinuationOfRunID),
-		ContinuationReason:  run.ContinuationReason,
-		ContextVersion:      run.ContextVersion,
-		TerminalReason:      run.TerminalReason,
-		Retryable:           run.Retryable,
-		Version:             run.Version,
-		CreatedAt:           run.StartedAt.Time,
-		UpdatedAt:           run.StartedAt.Time,
+		RunID:                  uuidString(run.ID),
+		SeriesID:               uuidString(series.ID),
+		IncidentID:             incidentID,
+		LifecycleGeneration:    series.LifecycleGeneration,
+		DeployedCommit:         series.DeployedCommit,
+		AttemptNumber:          run.AttemptNumber,
+		State:                  domain.RunState(run.State),
+		Origin:                 triggerReason,
+		TriggerReason:          triggerReason,
+		ContinuationOfRunID:    optionalUUIDString(run.ContinuationOfRunID),
+		ContinuationReason:     run.ContinuationReason,
+		ContextVersion:         run.ContextVersion,
+		TerminalReason:         run.TerminalReason,
+		Retryable:              run.Retryable,
+		AgentLoopMode:          domain.ParseAgentLoopMode(run.AgentLoopMode),
+		AgentLoopPolicyVersion: run.AgentLoopPolicyVersion,
+		Version:                run.Version,
+		CreatedAt:              run.StartedAt.Time,
+		UpdatedAt:              run.StartedAt.Time,
 	}
 }
 
@@ -607,6 +609,74 @@ func (s *RunStore) ResolveEvidence(ctx context.Context, runID string, citations 
 	}
 	resolution.Correlation = correlationFromEvidence(rows)
 	return resolution, nil
+}
+
+// ListContinuationRuntimeEvidence 返回同 series 中 attempt_number <= through 的
+// runtime evidence，供 diagnosis continuation 引用。查询保持 attempt 单调，
+// 绝不返回未来 attempt 或跨 series/incident 的证据行；证据行仍归属原 attempt，
+// 不复制、不重新赋值给 child run。
+func (s *RunStore) ListContinuationRuntimeEvidence(ctx context.Context, query domain.ContinuationEvidenceQuery) ([]domain.StoredEvidence, error) {
+	seriesID, err := parseScopedUUID(query.SeriesID, "series")
+	if err != nil {
+		return nil, err
+	}
+	if query.ThroughAttemptNumber < 0 {
+		return nil, fmt.Errorf("continuation through attempt number is invalid")
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 64 {
+		limit = 64
+	}
+	rows, err := remediationdb.New(s.db).ListContinuationRuntimeEvidence(ctx, remediationdb.ListContinuationRuntimeEvidenceParams{
+		SeriesID: seriesID, ThroughAttemptNumber: query.ThroughAttemptNumber, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list continuation runtime evidence: %w", err)
+	}
+	records := make([]domain.StoredEvidence, 0, len(rows))
+	for _, row := range rows {
+		record, mapErr := mapStoredEvidence(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// ListContinuationEvidenceIndex 返回同 series 中 attempt_number <= through 的
+// 非 runtime 持久化证据紧凑索引（D3/R10）：只含身份与元数据，绝不内联 payload。
+// 查询与 ListContinuationRuntimeEvidence 保持相同的归属/单调约束；pre-run
+// 证据只有在 ingestion generation/commit baseline 与 series 精确匹配时可见。
+// runtime 记录继续由全量 payload 查询提供，避免
+// 高容量 runtime 行挤占索引配额；证据行从不复制、不重新归属给 child run。
+func (s *RunStore) ListContinuationEvidenceIndex(ctx context.Context, query domain.ContinuationEvidenceQuery) ([]domain.EvidenceIndexEntry, error) {
+	seriesID, err := parseScopedUUID(query.SeriesID, "series")
+	if err != nil {
+		return nil, err
+	}
+	if query.ThroughAttemptNumber < 0 {
+		return nil, fmt.Errorf("continuation through attempt number is invalid")
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 64 {
+		limit = 64
+	}
+	rows, err := remediationdb.New(s.db).ListContinuationEvidenceIndex(ctx, remediationdb.ListContinuationEvidenceIndexParams{
+		SeriesID: seriesID, ThroughAttemptNumber: query.ThroughAttemptNumber, ResultLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list continuation evidence index: %w", err)
+	}
+	entries := make([]domain.EvidenceIndexEntry, 0, len(rows))
+	for _, row := range rows {
+		entry, mapErr := mapEvidenceIndexEntry(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // PersistEvidenceAssessment stores the decision after verifying its run-owned
@@ -1055,6 +1125,23 @@ func mapStoredEvidence(row remediationdb.RemediationEvidence) (domain.StoredEvid
 	return evidence, nil
 }
 
+func mapEvidenceIndexEntry(row remediationdb.ListContinuationEvidenceIndexRow) (domain.EvidenceIndexEntry, error) {
+	if !row.ID.Valid || strings.TrimSpace(row.EvidenceKind) == "" || strings.TrimSpace(row.Provider) == "" {
+		return domain.EvidenceIndexEntry{}, fmt.Errorf("remediation evidence index row has invalid values")
+	}
+	if err := domain.ValidateEvidenceClassification(domain.EvidenceClassification(row.Classification)); err != nil {
+		return domain.EvidenceIndexEntry{}, fmt.Errorf("remediation evidence index classification is invalid: %w", err)
+	}
+	if len(row.ContentHash) != 64 || row.SourceAttempt < 0 {
+		return domain.EvidenceIndexEntry{}, fmt.Errorf("remediation evidence index bounds are invalid")
+	}
+	return domain.EvidenceIndexEntry{
+		EvidenceID: uuidString(row.ID), Kind: row.EvidenceKind, Provider: row.Provider,
+		Classification: domain.EvidenceClassification(row.Classification),
+		SourceAttempt:  row.SourceAttempt, ContentHash: row.ContentHash,
+	}, nil
+}
+
 func sourceCoverage(rows []remediationdb.RemediationEvidence) []domain.SourceCoverage {
 	coverage := make([]domain.SourceCoverage, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -1140,17 +1227,19 @@ func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
 	}
 	triggerReason := safeTriggerReason(row.TriggerReason)
 	return domain.Run{
-		RunID:               uuidString(row.ID),
-		SeriesID:            uuidString(row.SeriesID),
-		AttemptNumber:       row.AttemptNumber,
-		State:               domain.RunState(row.State),
-		Origin:              triggerReason,
-		TriggerReason:       triggerReason,
-		ContinuationOfRunID: optionalUUIDString(row.ContinuationOfRunID),
-		ContinuationReason:  row.ContinuationReason,
-		ContextVersion:      row.ContextVersion,
-		TerminalReason:      row.TerminalReason,
-		Retryable:           row.Retryable,
+		RunID:                  uuidString(row.ID),
+		SeriesID:               uuidString(row.SeriesID),
+		AttemptNumber:          row.AttemptNumber,
+		State:                  domain.RunState(row.State),
+		Origin:                 triggerReason,
+		TriggerReason:          triggerReason,
+		ContinuationOfRunID:    optionalUUIDString(row.ContinuationOfRunID),
+		ContinuationReason:     row.ContinuationReason,
+		ContextVersion:         row.ContextVersion,
+		TerminalReason:         row.TerminalReason,
+		Retryable:              row.Retryable,
+		AgentLoopMode:          domain.ParseAgentLoopMode(row.AgentLoopMode),
+		AgentLoopPolicyVersion: row.AgentLoopPolicyVersion,
 		Budget: domain.BudgetCounters{
 			ElapsedSeconds:  elapsedSeconds,
 			ModelCalls:      int64(row.ModelCalls),
