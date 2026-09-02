@@ -914,3 +914,26 @@ Backend is now fully committed and buildable. 08-31 task remains in_progress
 - Resume Phase 2: item 4 (exhaustion proposals + service validation), item 5
   (persist submitted diagnosis), item 6 (INC-2270 regression matrix) in a fresh
   working session.
+
+## Session 23: Commit frontend
+
+### Summary
+
+Committed the frontend configuration/LLM changes as a separate commit.
+
+### Commits
+
+- `0aa8ee3` "feat(frontend): configuration page + LLM provider wizard + project
+  switcher" — 11 files (+375/-152): LLMStep wizard (new), ProjectSwitcher (new),
+  configuration feature files, AppShell, configuration test.
+- `6f50fea` "chore: record journal sessions 16-22" — journal tracking.
+
+### Verification
+
+npm run typecheck, npm run lint, npm test (35 passed), npm run build all green.
+frontend/screenshots (PNG test artifacts) excluded.
+
+### Remaining uncommitted (intentional)
+
+.agents/.claude/.codex/.pi/AGENTS.md/CLAUDE.md (agent tooling), frontend/
+screenshots/ (artifacts). Backend fully committed + buildable.
