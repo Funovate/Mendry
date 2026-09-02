@@ -96,10 +96,10 @@ SELECT version FROM incidents WHERE id = $1 FOR SHARE;
 -- name: UpdateRemediationRunState :one
 UPDATE remediation_run
 SET state = $2,
-    ended_at = CASE WHEN $3::boolean THEN now() ELSE ended_at END,
-    elapsed_ms = CASE WHEN $3::boolean THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE elapsed_ms END,
-    terminal_reason = CASE WHEN $3::boolean THEN sqlc.arg(terminal_reason)::text ELSE terminal_reason END,
-    retryable = CASE WHEN $3::boolean THEN sqlc.arg(retryable)::boolean ELSE retryable END,
+    ended_at = CASE WHEN $3::boolean THEN now() ELSE NULL END,
+    elapsed_ms = CASE WHEN $3::boolean THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE NULL END,
+    terminal_reason = CASE WHEN $3::boolean THEN sqlc.arg(terminal_reason)::text ELSE '' END,
+    retryable = CASE WHEN $3::boolean THEN sqlc.arg(retryable)::boolean ELSE false END,
     version = version + 1
 WHERE id = $1 AND version = $4
 RETURNING *;
@@ -206,6 +206,76 @@ INSERT INTO remediation_artifact (
 ) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- name: GetRemediationLifecycleEffect :one
+SELECT * FROM remediation_lifecycle_effect
+WHERE run_id = sqlc.arg(run_id)
+  AND effect_kind = sqlc.arg(effect_kind)
+  AND idempotency_key = sqlc.arg(idempotency_key);
+
+-- name: UpsertRemediationLifecycleEffect :one
+INSERT INTO remediation_lifecycle_effect (
+    run_id, effect_kind, idempotency_key, state, attempt, baseline_commit,
+    workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash,
+    command_id, command_version, validation_known, validation_passed, branch_ref, target_branch,
+    commit_hash, draft_change_ref, compare_url, error_code, summary
+) VALUES (
+    sqlc.arg(run_id), sqlc.arg(effect_kind), sqlc.arg(idempotency_key), sqlc.arg(state),
+    sqlc.arg(attempt), sqlc.arg(baseline_commit), sqlc.arg(workspace_id),
+    sqlc.arg(base_tree_hash), sqlc.arg(result_tree_hash), sqlc.arg(artifact_ref),
+    sqlc.arg(content_hash), sqlc.arg(command_id), sqlc.arg(command_version),
+    sqlc.arg(validation_known), sqlc.arg(validation_passed), sqlc.arg(branch_ref), sqlc.arg(target_branch),
+    sqlc.arg(commit_hash), sqlc.arg(draft_change_ref), sqlc.arg(compare_url),
+    sqlc.arg(error_code), sqlc.arg(summary)
+)
+ON CONFLICT (run_id, effect_kind, idempotency_key)
+DO UPDATE SET
+    state = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.state ELSE EXCLUDED.state END,
+    attempt = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.attempt ELSE EXCLUDED.attempt END,
+    baseline_commit = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.baseline_commit ELSE EXCLUDED.baseline_commit END,
+    workspace_id = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.workspace_id ELSE EXCLUDED.workspace_id END,
+    base_tree_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.base_tree_hash ELSE EXCLUDED.base_tree_hash END,
+    result_tree_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.result_tree_hash ELSE EXCLUDED.result_tree_hash END,
+    artifact_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.artifact_ref ELSE EXCLUDED.artifact_ref END,
+    content_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.content_hash ELSE EXCLUDED.content_hash END,
+    command_id = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.command_id ELSE EXCLUDED.command_id END,
+    command_version = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.command_version ELSE EXCLUDED.command_version END,
+    validation_known = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.validation_known ELSE EXCLUDED.validation_known END,
+    validation_passed = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.validation_passed ELSE EXCLUDED.validation_passed END,
+    branch_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.branch_ref ELSE EXCLUDED.branch_ref END,
+    target_branch = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.target_branch ELSE EXCLUDED.target_branch END,
+    commit_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.commit_hash ELSE EXCLUDED.commit_hash END,
+    draft_change_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.draft_change_ref ELSE EXCLUDED.draft_change_ref END,
+    compare_url = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.compare_url ELSE EXCLUDED.compare_url END,
+    error_code = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.error_code ELSE EXCLUDED.error_code END,
+    summary = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.summary ELSE EXCLUDED.summary END,
+    updated_at = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.updated_at ELSE clock_timestamp() END
+RETURNING *;
+
+-- name: ListRemediationLifecycleEffects :many
+SELECT * FROM remediation_lifecycle_effect
+WHERE run_id = $1
+ORDER BY updated_at ASC, id ASC;
+
 -- name: GetRemediationArtifactsByRunID :many
 SELECT * FROM remediation_artifact
 WHERE run_id = $1
@@ -222,7 +292,7 @@ INSERT INTO remediation_tool_invocation (
     outcome_ref,
     evidence_ids,
     error_code
-) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))
+) VALUES (sqlc.arg(run_id), sqlc.arg(sequence), sqlc.arg(tool_name), sqlc.arg(phase), sqlc.arg(duration_ms), sqlc.arg(outcome), NULLIF(sqlc.arg(outcome_ref)::text, ''), sqlc.arg(evidence_ids), NULLIF(sqlc.arg(error_code)::text, ''))
 RETURNING *;
 
 -- name: GetRemediationToolInvocationsByRunID :many

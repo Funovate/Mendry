@@ -149,12 +149,15 @@ func fakeHasCounterEffect(effect domain.Effect) bool {
 func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate, error) {
 	run := domain.Run{RunID: runID, State: f.state, Budget: f.budget, ModelProvider: f.provider, ModelName: f.modelName}
 	if f.created != nil {
+		run.ProjectID = f.created.ProjectID
 		run.IncidentID = f.created.IncidentID
 		run.LifecycleGeneration = f.created.LifecycleGeneration
 		run.DeployedCommit = f.created.DeployedCommit
 		run.SeriesID = f.created.SeriesID
 		run.AttemptNumber = f.created.AttemptNumber
 		run.Version = f.created.Version
+		run.AgentLoopMode = f.created.AgentLoopMode
+		run.AgentLoopPolicyVersion = f.created.AgentLoopPolicyVersion
 	}
 	return domain.RunAggregate{
 		Run:               run,

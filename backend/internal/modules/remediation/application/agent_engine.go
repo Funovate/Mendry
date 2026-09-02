@@ -194,8 +194,10 @@ func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
 		valid = kind == "requestTool" || kind == "diagnosis" || kind == "stop" || kind == "exhaustion"
 	case domain.RunStatePlanning:
 		valid = kind == "requestTool" || kind == "planCandidates"
-	default:
-		valid = true
+	case domain.RunStatePatching:
+		valid = kind == "requestTool" || kind == "patchComplete" || kind == "stop"
+	case domain.RunStateValidating:
+		valid = kind == "requestTool" || kind == "validationAssessment" || kind == "stop"
 	}
 	if valid {
 		return nil
@@ -211,11 +213,11 @@ const diagnosisWireContractInstruction = `Diagnosis wire contract: return {"sche
 
 const planningWireContractInstruction = `Planning wire contract: you may first call any advertised read-only repository tools when you need code, dependency, or impact context. After tool observations are sufficient, return exactly {"schemaVersion":"v1","kind":"planCandidates","planCandidates":{"candidates":[{"planId":"plan-1","evidenceRefs":["evidence-id"],"affectedFiles":["path/to/file.go"],"intendedBehavior":"...","risk":"ordinary","rollbackStrategy":"..."}],"recommendedId":"plan-1","rationale":"...","suggestedDiff":"diff --git a/path/to/file.go b/path/to/file.go\\n..."}}. candidates must be a non-empty array. Every candidate requires non-empty planId, evidenceRefs and affectedFiles arrays, intendedBehavior, risk, and rollbackStrategy. risk must be exactly one of ordinary, high_risk, denied_control_plane. recommendedId is required and must equal one candidate planId. rationale and suggestedDiff are required strings, and suggestedDiff must be a non-empty unified diff. Return one envelope only; do not return diagnosis or stop in planning.`
 
-const agentSystemPrompt = "You are a diagnosis agent. Reason only over the bounded " +
+const agentSystemPrompt = "You are a remediation agent. Reason only over the bounded " +
 	"operational evidence and credential-isolated metadata provided. Evidence may " +
 	"contain complete original log/provider fields; do not treat absent fields as " +
 	"proof, and never invent evidence or authority-bearing URLs, credentials, or " +
-	"control material. Request only read-only tools when more evidence is needed. " +
+	"control material. Request only policy-advertised bounded tools when more " +
 	"Apply this global time policy for every provider: compare paired epoch values " +
 	"first, then explicit timestamp offsets, then source/system time-zone context " +
 	"visible in the evidence; otherwise mark time unresolved and low-certainty. " +
@@ -297,6 +299,10 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			stopWireContractInstruction
 	case domain.RunStatePlanning:
 		return "The incident is code-fixable. Inspect the advertised repository tools whenever more code, dependency, or impact context is needed, then produce candidate repair plans with a recommended plan, rationale, risk classification, and a suggested unified diff. " + toolRecoveryInstruction + planningWireContractInstruction
+	case domain.RunStateValidating:
+		return "Validate the current workspace patch using only the advertised approved command IDs. Inspect bounded workspace status or files when the result is ambiguous, then return one validationAssessment envelope. The service trusts the actual validation runner result, not a model claim. A failed validation should explain the bounded repair direction; it does not authorize publication. " + toolRecoveryInstruction
+	case domain.RunStatePatching:
+		return "Apply the selected repair plan in the isolated workspace based on the exact deployed baseline. Use only the advertised bounded workspace tools, inspect status/files before changing content when needed, and apply small idempotent patches with the supplied tree precondition. After a patch is applied, return one patchComplete envelope with a bounded summary. Never access Git credentials, host paths, arbitrary commands, or SCM publication. " + toolRecoveryInstruction
 	default:
 		return "Process the current remediation phase."
 	}

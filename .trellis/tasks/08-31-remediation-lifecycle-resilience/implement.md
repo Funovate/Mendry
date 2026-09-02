@@ -175,21 +175,13 @@ tool/context challenge unification and full lifecycle restart coverage remain op
       coverage are retained as audit facts but are no longer universal planning
       prerequisites when direct evidence and causal closure establish that the
       gaps are non-material. Legacy mode retains its rollout routing.
-- [ ] Feed fact-gate, protocol, tool, context, and budget challenges back into
+- [x] Feed fact-gate, protocol, tool, context, and budget challenges back into
       the same conversation and checkpoint after strategy changes.
-      Delivered (2026-09-02, fact-gate/evidence-correction part only): the
-      diagnosis case after `EvidenceGate.Apply` appends a bounded
-      `RecoveryChallengeV1` (kind `evidence_correction`, severity `recoverable`,
-      reason `citation_classification_mismatch`, stored classifications in the
-      sanitized message) and continues the loop (AC5); the challenged model turn
-      is charged to the budget; resilient_v1 additionally records a
-      `CheckpointRecovery{kind: evidence_correction, action: correct_citation}`
-      and forces a recovery checkpoint (D2). Repeated malformed envelopes in
-      `resilient_v1` now use `protocol_correction` checkpoints and normalize
-      no-progress to an exhaustion request rather than direct manual review.
-      Tool-failure and context-rehydration observations still need migration to
-      the common `RecoveryChallengeV1` envelope before this aggregate item can
-      be marked complete.
+      Delivered (2026-09-04): fact-gate/evidence-correction and protocol
+      correction already use `RecoveryChallengeV1`; resilient repository/log
+      tool failures now add the same bounded `tool_failure` challenge after
+      invocation/budget persistence. Lifecycle patch/validation failures use
+      the shared challenge builder as well; legacy routing remains unchanged.
 - [x] Replace direct terminal paths for `stop`, empty
       `insufficient_evidence`, Docker refinement, and collect-loop limits with
       exhaustion proposals and service validation.
@@ -335,17 +327,50 @@ tool/context challenge unification and full lifecycle restart coverage remain op
 
 ## Phase 3: Remaining Lifecycle
 
-- [ ] Apply the same checkpoint/challenge protocol to planning output
+Phase 3 implementation is delivered as a resilient backend vertical slice. The
+existing diagnosis and plan-review flow remains the human selection boundary;
+`ApplyPlan` is the explicit, policy-authorized entry into patching. Legacy runs
+keep the existing walking-skeleton behavior because all new lifecycle wiring is
+additive and requires `resilient_v1` plus the companion stores/ports.
+
+- [x] Apply the same checkpoint/challenge protocol to planning output
       correction and policy/risk feedback.
-- [ ] Checkpoint workspace/artifact identities around patching; let the agent
+      Delivered: planning now evaluates bounded candidate path/risk policy,
+      feeds recoverable `validation_revision` challenges into the same
+      conversation, checkpoints strategy changes, and turns unchanged policy
+      rejection into an explicit policy blocker.
+- [x] Checkpoint workspace/artifact identities around patching; let the agent
       inspect bounded workspace state and revise failed patches.
-- [ ] Normalize validation failures into structured evidence and bounded patch
+      Delivered: `WorkspacePort`, `LifecycleToolGateway`, content-addressed
+      patch results, immutable baseline/tree CAS, `ApplyPlan`, and a bounded
+      patch tool loop are implemented. Workspace IDs and patch artifacts are
+      restored from checkpoint/effect state after restart.
+- [x] Normalize validation failures into structured evidence and bounded patch
       revision turns while protecting validation/resolution reserves.
-- [ ] Make publication recovery idempotent across process restarts and transient
+      Delivered: approved command-ID/version validation, bounded result artifact
+      references, runner-authoritative pass/fail, `validation_revision` feedback,
+      changed-patch-only revision, and allocator handling that keeps later and
+      recovery reserves protected during the backward validation-repair edge.
+- [x] Make publication recovery idempotent across process restarts and transient
       SCM failures; do not expose write credentials or bypass the human merge
       gate.
-- [ ] Add forced checkpoint and restart tests before/after every phase transition
+      Delivered: `PublicationPort` has no merge/deploy operation; publication
+      effects persist started/recoverable/succeeded state under a stable key,
+      snapshot target branch/baseline, cap transient retries, restore successful
+      branch/commit/change identities, and transition only to
+      `awaiting_human_review`.
+- [x] Add forced checkpoint and restart tests before/after every phase transition
       and external effect.
+      Delivered: focused fake matrix covers restart after workspace, patch,
+      validation, and publication effects; it verifies no duplicate external
+      calls, stable artifact/tree/baseline identities, publication policy
+      retention, same-key retry, and final human-review state. Boundary
+      checkpoint ordering is asserted by the lifecycle flow tests.
+
+Delivery status: Phase 3 production contracts, coordinator loop, persistence,
+policy feedback, and lifecycle restart regressions are complete. Phase 4 remains
+for API/UI recovery projections, rollout controls, metrics, and final cross-layer
+acceptance.
 
 ## Phase 4: API, UI, Rollout, And Verification
 

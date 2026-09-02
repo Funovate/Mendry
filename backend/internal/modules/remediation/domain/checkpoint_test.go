@@ -180,6 +180,17 @@ func TestWorkingMemoryCheckpointV1CanonicalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkingMemoryCheckpointV1OmitsEmptyLifecycleFieldsForLegacyHashes(t *testing.T) {
+	payload, err := validCheckpoint().CanonicalEncode()
+	if err != nil {
+		t.Fatalf("CanonicalEncode() error = %v", err)
+	}
+	for _, field := range []string{"workspace", "artifacts", "validation", "publication", "publicationPolicy", "validationCommands"} {
+		if strings.Contains(string(payload), `"`+field+`"`) {
+			t.Fatalf("legacy-compatible checkpoint unexpectedly encoded empty field %q: %s", field, payload)
+		}
+	}
+}
 func TestWorkingMemoryCheckpointV1OversizeRejected(t *testing.T) {
 	checkpoint := validCheckpoint()
 	// 把所有字段推到边界上限：64 个 verified facts，每个携带 64 个 128-rune

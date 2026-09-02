@@ -110,13 +110,13 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list applied migrations: %v", err)
 	}
-	if len(applied) != 11 || applied[0].Version != 1 || applied[1].Version != 2 || applied[2].Version != 3 || applied[3].Version != 4 ||
-		applied[4].Version != 5 || applied[5].Version != 6 || applied[6].Version != 7 || applied[7].Version != 8 ||
-		applied[8].Version != 9 || applied[9].Version != 10 || applied[10].Version != 11 ||
-		len(applied[0].Checksum) != 64 || len(applied[1].Checksum) != 64 || len(applied[2].Checksum) != 64 || len(applied[3].Checksum) != 64 ||
-		len(applied[4].Checksum) != 64 || len(applied[5].Checksum) != 64 || len(applied[6].Checksum) != 64 ||
-		len(applied[7].Checksum) != 64 || len(applied[8].Checksum) != 64 || len(applied[9].Checksum) != 64 || len(applied[10].Checksum) != 64 {
-		t.Fatalf("applied migrations = %#v", applied)
+	if len(applied) != 18 {
+		t.Fatalf("applied migration count = %d, want 18: %#v", len(applied), applied)
+	}
+	for index, migration := range applied {
+		if migration.Version != int64(index+1) || len(migration.Checksum) != 64 {
+			t.Fatalf("applied migration[%d] = %#v, want version %d and sha256 checksum", index, migration, index+1)
+		}
 	}
 
 	assertMVPRelations(t, ctx, pool)
@@ -126,7 +126,7 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 
 func resetMVPPostgreSQLSchema(ctx context.Context, pool *postgres.Pool, operation string) error {
 	for _, table := range []string{
-		"remediation_tool_invocation", "remediation_artifact", "remediation_plan",
+		"remediation_lifecycle_effect", "remediation_tool_invocation", "remediation_artifact", "remediation_plan",
 		"remediation_decision", "remediation_run", "remediation_series",
 		"audit_events", "incidents", "observations", "project_triggers", "project_sources",
 		"project_repositories", "project_secrets", "project_memberships",
@@ -170,25 +170,26 @@ func assertMVPRelations(t *testing.T, ctx context.Context, pool *postgres.Pool) 
 func assertSchemaComments(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	t.Helper()
 	expectedColumnCounts := map[string]int{
-		"fixthe_schema_migrations":    4,
-		"users":                       8,
-		"projects":                    7,
-		"project_environments":        8,
-		"project_memberships":         6,
-		"project_secrets":             11,
-		"project_repositories":        12,
-		"project_sources":             11,
-		"project_triggers":            13,
-		"observations":                13,
-		"incidents":                   21,
-		"audit_events":                9,
-		"remediation_series":          5,
-		"remediation_run":             17,
-		"remediation_decision":        11,
-		"remediation_plan":            12,
-		"remediation_artifact":        8,
-		"remediation_tool_invocation": 8,
-		"project_llm_providers":       9,
+		"fixthe_schema_migrations":     4,
+		"users":                        8,
+		"projects":                     7,
+		"project_environments":         8,
+		"project_memberships":          6,
+		"project_secrets":              11,
+		"project_repositories":         12,
+		"project_sources":              11,
+		"project_triggers":             13,
+		"observations":                 13,
+		"incidents":                    21,
+		"audit_events":                 9,
+		"remediation_series":           5,
+		"remediation_run":              17,
+		"remediation_decision":         11,
+		"remediation_plan":             12,
+		"remediation_artifact":         8,
+		"remediation_tool_invocation":  8,
+		"remediation_lifecycle_effect": 25,
+		"project_llm_providers":        9,
 	}
 	for table, expectedColumnCount := range expectedColumnCounts {
 		var tableComment string

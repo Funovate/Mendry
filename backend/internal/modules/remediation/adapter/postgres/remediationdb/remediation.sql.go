@@ -654,7 +654,7 @@ INSERT INTO remediation_tool_invocation (
     outcome_ref,
     evidence_ids,
     error_code
-) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))
+) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7::text, ''), $8, NULLIF($9::text, ''))
 RETURNING id, run_id, sequence, tool_name, phase, invoked_at, duration_ms, outcome, outcome_ref, evidence_ids, error_code
 `
 
@@ -1112,6 +1112,52 @@ func (q *Queries) GetRemediationEvidenceReadCursor(ctx context.Context, arg GetR
 		&i.ByteOffset,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRemediationLifecycleEffect = `-- name: GetRemediationLifecycleEffect :one
+SELECT id, run_id, effect_kind, idempotency_key, state, attempt, baseline_commit, workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash, command_id, command_version, validation_known, validation_passed, branch_ref, target_branch, commit_hash, draft_change_ref, compare_url, error_code, summary, created_at, updated_at FROM remediation_lifecycle_effect
+WHERE run_id = $1
+  AND effect_kind = $2
+  AND idempotency_key = $3
+`
+
+type GetRemediationLifecycleEffectParams struct {
+	RunID          pgtype.UUID
+	EffectKind     string
+	IdempotencyKey string
+}
+
+func (q *Queries) GetRemediationLifecycleEffect(ctx context.Context, arg GetRemediationLifecycleEffectParams) (RemediationLifecycleEffect, error) {
+	row := q.db.QueryRow(ctx, getRemediationLifecycleEffect, arg.RunID, arg.EffectKind, arg.IdempotencyKey)
+	var i RemediationLifecycleEffect
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.EffectKind,
+		&i.IdempotencyKey,
+		&i.State,
+		&i.Attempt,
+		&i.BaselineCommit,
+		&i.WorkspaceID,
+		&i.BaseTreeHash,
+		&i.ResultTreeHash,
+		&i.ArtifactRef,
+		&i.ContentHash,
+		&i.CommandID,
+		&i.CommandVersion,
+		&i.ValidationKnown,
+		&i.ValidationPassed,
+		&i.BranchRef,
+		&i.TargetBranch,
+		&i.CommitHash,
+		&i.DraftChangeRef,
+		&i.CompareUrl,
+		&i.ErrorCode,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1839,6 +1885,58 @@ func (q *Queries) ListRemediationEvidenceForRun(ctx context.Context, arg ListRem
 	return items, nil
 }
 
+const listRemediationLifecycleEffects = `-- name: ListRemediationLifecycleEffects :many
+SELECT id, run_id, effect_kind, idempotency_key, state, attempt, baseline_commit, workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash, command_id, command_version, validation_known, validation_passed, branch_ref, target_branch, commit_hash, draft_change_ref, compare_url, error_code, summary, created_at, updated_at FROM remediation_lifecycle_effect
+WHERE run_id = $1
+ORDER BY updated_at ASC, id ASC
+`
+
+func (q *Queries) ListRemediationLifecycleEffects(ctx context.Context, runID pgtype.UUID) ([]RemediationLifecycleEffect, error) {
+	rows, err := q.db.Query(ctx, listRemediationLifecycleEffects, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RemediationLifecycleEffect
+	for rows.Next() {
+		var i RemediationLifecycleEffect
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.EffectKind,
+			&i.IdempotencyKey,
+			&i.State,
+			&i.Attempt,
+			&i.BaselineCommit,
+			&i.WorkspaceID,
+			&i.BaseTreeHash,
+			&i.ResultTreeHash,
+			&i.ArtifactRef,
+			&i.ContentHash,
+			&i.CommandID,
+			&i.CommandVersion,
+			&i.ValidationKnown,
+			&i.ValidationPassed,
+			&i.BranchRef,
+			&i.TargetBranch,
+			&i.CommitHash,
+			&i.DraftChangeRef,
+			&i.CompareUrl,
+			&i.ErrorCode,
+			&i.Summary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockRemediationIncidentContextVersion = `-- name: LockRemediationIncidentContextVersion :one
 SELECT version FROM incidents WHERE id = $1 FOR SHARE
 `
@@ -1874,10 +1972,10 @@ func (q *Queries) LockRemediationSeriesForRun(ctx context.Context, runID pgtype.
 const updateRemediationRunState = `-- name: UpdateRemediationRunState :one
 UPDATE remediation_run
 SET state = $2,
-    ended_at = CASE WHEN $3::boolean THEN now() ELSE ended_at END,
-    elapsed_ms = CASE WHEN $3::boolean THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE elapsed_ms END,
-    terminal_reason = CASE WHEN $3::boolean THEN $5::text ELSE terminal_reason END,
-    retryable = CASE WHEN $3::boolean THEN $6::boolean ELSE retryable END,
+    ended_at = CASE WHEN $3::boolean THEN now() ELSE NULL END,
+    elapsed_ms = CASE WHEN $3::boolean THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE NULL END,
+    terminal_reason = CASE WHEN $3::boolean THEN $5::text ELSE '' END,
+    retryable = CASE WHEN $3::boolean THEN $6::boolean ELSE false END,
     version = version + 1
 WHERE id = $1 AND version = $4
 RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version
@@ -1999,6 +2097,147 @@ func (q *Queries) UpsertRemediationEvidenceAssessment(ctx context.Context, arg U
 		&i.Contradictions,
 		&i.DirectEvidenceIds,
 		&i.AssessedAt,
+	)
+	return i, err
+}
+
+const upsertRemediationLifecycleEffect = `-- name: UpsertRemediationLifecycleEffect :one
+INSERT INTO remediation_lifecycle_effect (
+    run_id, effect_kind, idempotency_key, state, attempt, baseline_commit,
+    workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash,
+    command_id, command_version, validation_known, validation_passed, branch_ref, target_branch,
+    commit_hash, draft_change_ref, compare_url, error_code, summary
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7,
+    $8, $9, $10,
+    $11, $12, $13,
+    $14, $15, $16, $17,
+    $18, $19, $20,
+    $21, $22
+)
+ON CONFLICT (run_id, effect_kind, idempotency_key)
+DO UPDATE SET
+    state = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.state ELSE EXCLUDED.state END,
+    attempt = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.attempt ELSE EXCLUDED.attempt END,
+    baseline_commit = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.baseline_commit ELSE EXCLUDED.baseline_commit END,
+    workspace_id = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.workspace_id ELSE EXCLUDED.workspace_id END,
+    base_tree_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.base_tree_hash ELSE EXCLUDED.base_tree_hash END,
+    result_tree_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.result_tree_hash ELSE EXCLUDED.result_tree_hash END,
+    artifact_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.artifact_ref ELSE EXCLUDED.artifact_ref END,
+    content_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.content_hash ELSE EXCLUDED.content_hash END,
+    command_id = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.command_id ELSE EXCLUDED.command_id END,
+    command_version = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.command_version ELSE EXCLUDED.command_version END,
+    validation_known = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.validation_known ELSE EXCLUDED.validation_known END,
+    validation_passed = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.validation_passed ELSE EXCLUDED.validation_passed END,
+    branch_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.branch_ref ELSE EXCLUDED.branch_ref END,
+    target_branch = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.target_branch ELSE EXCLUDED.target_branch END,
+    commit_hash = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.commit_hash ELSE EXCLUDED.commit_hash END,
+    draft_change_ref = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.draft_change_ref ELSE EXCLUDED.draft_change_ref END,
+    compare_url = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.compare_url ELSE EXCLUDED.compare_url END,
+    error_code = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.error_code ELSE EXCLUDED.error_code END,
+    summary = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.summary ELSE EXCLUDED.summary END,
+    updated_at = CASE WHEN remediation_lifecycle_effect.state = 'succeeded'
+        THEN remediation_lifecycle_effect.updated_at ELSE clock_timestamp() END
+RETURNING id, run_id, effect_kind, idempotency_key, state, attempt, baseline_commit, workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash, command_id, command_version, validation_known, validation_passed, branch_ref, target_branch, commit_hash, draft_change_ref, compare_url, error_code, summary, created_at, updated_at
+`
+
+type UpsertRemediationLifecycleEffectParams struct {
+	RunID            pgtype.UUID
+	EffectKind       string
+	IdempotencyKey   string
+	State            string
+	Attempt          int32
+	BaselineCommit   string
+	WorkspaceID      string
+	BaseTreeHash     string
+	ResultTreeHash   string
+	ArtifactRef      string
+	ContentHash      string
+	CommandID        string
+	CommandVersion   int64
+	ValidationKnown  bool
+	ValidationPassed bool
+	BranchRef        string
+	TargetBranch     string
+	CommitHash       string
+	DraftChangeRef   string
+	CompareUrl       string
+	ErrorCode        string
+	Summary          string
+}
+
+func (q *Queries) UpsertRemediationLifecycleEffect(ctx context.Context, arg UpsertRemediationLifecycleEffectParams) (RemediationLifecycleEffect, error) {
+	row := q.db.QueryRow(ctx, upsertRemediationLifecycleEffect,
+		arg.RunID,
+		arg.EffectKind,
+		arg.IdempotencyKey,
+		arg.State,
+		arg.Attempt,
+		arg.BaselineCommit,
+		arg.WorkspaceID,
+		arg.BaseTreeHash,
+		arg.ResultTreeHash,
+		arg.ArtifactRef,
+		arg.ContentHash,
+		arg.CommandID,
+		arg.CommandVersion,
+		arg.ValidationKnown,
+		arg.ValidationPassed,
+		arg.BranchRef,
+		arg.TargetBranch,
+		arg.CommitHash,
+		arg.DraftChangeRef,
+		arg.CompareUrl,
+		arg.ErrorCode,
+		arg.Summary,
+	)
+	var i RemediationLifecycleEffect
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.EffectKind,
+		&i.IdempotencyKey,
+		&i.State,
+		&i.Attempt,
+		&i.BaselineCommit,
+		&i.WorkspaceID,
+		&i.BaseTreeHash,
+		&i.ResultTreeHash,
+		&i.ArtifactRef,
+		&i.ContentHash,
+		&i.CommandID,
+		&i.CommandVersion,
+		&i.ValidationKnown,
+		&i.ValidationPassed,
+		&i.BranchRef,
+		&i.TargetBranch,
+		&i.CommitHash,
+		&i.DraftChangeRef,
+		&i.CompareUrl,
+		&i.ErrorCode,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

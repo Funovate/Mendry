@@ -1041,6 +1041,72 @@ next, err := store.CreateNextAttempt(ctx, domain.NextAttempt{
 })
 ```
 
+## Scenario: Resilient Repair Lifecycle Effects
+
+### 1. Scope / Trigger
+- Trigger: resilient_v1 planning, isolated patching, approved validation, and SCM publication with process restart or bounded transient failures.
+- The coordinator owns phase transitions; adapters receive only opaque run/workspace/artifact identities.
+
+### 2. Signatures
+```go
+func (*application.RemediationCoordinator) ApplyPlan(context.Context, string, string) (domain.Run, error)
+func (*application.RemediationCoordinator) ResumeLifecycle(context.Context, string) (domain.Run, error)
+type domain.WorkspacePort interface { Ensure(...); Status(...); ReadFile(...); ApplyPatch(...); Destroy(...) }
+type domain.ValidationPort interface { Run(context.Context, domain.ValidationRequest) (domain.ValidationResult, error) }
+type domain.PublicationPort interface { Publish(context.Context, domain.PublicationRequest) (domain.PublicationResult, error) }
+type domain.LifecycleStore interface {
+    GetLifecycleEffect(context.Context, string, domain.LifecycleEffectKind, string) (domain.LifecycleEffect, error)
+    UpsertLifecycleEffect(context.Context, domain.LifecycleEffect) (domain.LifecycleEffect, error)
+    ListLifecycleEffects(context.Context, string) ([]domain.LifecycleEffect, error)
+}
+```
+
+### 3. Contracts
+- `ApplyPlan` is the explicit selected-plan boundary. Legacy runs do not enter it.
+- `WorkspaceRequest` and `PublicationRequest` carry the exact deployed baseline; validation accepts only approved command IDs and versions, never shell text.
+- Each external effect is keyed by `(run_id, effect_kind, idempotency_key)`. Persist `started` before the adapter call and `succeeded`/`recoverable` after it. A successful projection is immutable to later failures.
+- Checkpoints retain workspace/tree hashes, artifact references, approved validation command versions, publication target/branch/commit, and the human-review-only flag. They never retain patch bodies or raw command output.
+- `PublicationPort` has no merge or deploy operation. A successful publication must set `HumanReviewRequired=true` and transition to `awaiting_human_review`.
+
+### 4. Validation & Error Matrix
+| Condition | Required behavior |
+|---|---|
+| Missing lifecycle companion port | Return `ErrLifecycleUnavailable`; do not mutate the run or call an adapter. |
+| Workspace baseline/tree mismatch | Persist a safe failure and stop automation; never switch to current remote HEAD. |
+| Transient workspace/tool/SCM failure | Persist a bounded recoverable effect, append `RecoveryChallengeV1`, checkpoint, and keep the phase active. |
+| Repeated unchanged validation failure | Return to patching only with a new patch; after the bounded revision limit use a policy blocker. |
+| Publication effect already succeeded | Reuse branch/commit/change identifiers and do not call SCM again. |
+| Publisher returns target/baseline/branch mismatch | Reject the effect and keep merge/deploy unavailable. |
+| Unapproved validation command or arbitrary shell text | Reject before sandbox execution. |
+
+### 5. Good/Base/Bad Cases
+- Good: a patch is applied with a tree precondition, its content-addressed artifact is persisted, validation fails with a bounded artifact reference, and the agent submits a changed patch.
+- Base: a worker restarts in `publishing`; `ResumeLifecycle` reads the succeeded effect and transitions to human review without a duplicate push.
+- Bad: recompute target branch from mutable project configuration, pass a model command string to the sandbox, persist validation output inline, or expose SCM credentials to the model.
+
+### 6. Tests Required
+- Contract tests for workspace path/tree/idempotency validation and validation command allowlisting.
+- Coordinator tests for plan policy feedback, patch/validation revision, phase-boundary checkpoints, effect-before/after ordering, transient publication retry, and no duplicate success effect.
+- PostgreSQL tests for lifecycle effect round-trip, unique run/kind/key projection, and successful-state immutability.
+- Restart tests must assert baseline, command version, publication target, artifact reference, and human merge gate survive process reconstruction.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+publisher.Publish(ctx, domain.PublicationRequest{TargetBranch: currentProjectBranch})
+```
+
+#### Correct
+```go
+// The target branch and baseline come from the run checkpoint/effect snapshot.
+request := domain.PublicationRequest{
+    BaselineCommit: run.DeployedCommit,
+    TargetBranch: snapshot.TargetBranch,
+    IdempotencyKey: effectKey,
+}
+publisher.Publish(ctx, request)
+```
+
 ## Common Mistakes
 
 - Do not treat `FIXTHE_ENCRYPTION_KEY` as the OpenAI key. It only unwraps

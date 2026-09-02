@@ -38,7 +38,7 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			"schemaVersion": map[string]interface{}{"type": "string", "const": EnvelopeVersion},
 			"kind": map[string]interface{}{
 				"type": "string",
-				"enum": []string{"requestTool", "diagnosis", "planCandidates", "stop", "exhaustion"},
+				"enum": []string{"requestTool", "diagnosis", "planCandidates", "stop", "exhaustion", "patchComplete", "validationAssessment"},
 			},
 			"stop": map[string]interface{}{
 				"type": "object",
@@ -49,16 +49,22 @@ func AgentEnvelopeSchema() map[string]interface{} {
 				"required":             []string{"reason", "recommendedNextAction"},
 				"additionalProperties": false,
 			},
-			"exhaustion": map[string]interface{}{
+			"patchComplete": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"unresolvedGoal":      map[string]interface{}{"type": "string", "minLength": 1},
-					"attemptedPaths":      map[string]interface{}{"type": "array"},
-					"untriedCapabilities": map[string]interface{}{"type": "array"},
-					"bestConclusion":      map[string]interface{}{"type": "string", "minLength": 1},
-					"handoff":             map[string]interface{}{"type": "string", "minLength": 1},
+					"success": map[string]interface{}{"type": "boolean"},
+					"message": map[string]interface{}{"type": "string", "minLength": 1},
 				},
-				"required":             []string{"unresolvedGoal", "attemptedPaths", "untriedCapabilities", "bestConclusion", "handoff"},
+				"required":             []string{"success", "message"},
+				"additionalProperties": false,
+			},
+			"validationAssessment": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"passed":  map[string]interface{}{"type": "boolean"},
+					"summary": map[string]interface{}{"type": "string", "minLength": 1},
+				},
+				"required":             []string{"passed", "summary"},
 				"additionalProperties": false,
 			},
 		},
@@ -69,6 +75,8 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			{"required": []string{"planCandidates"}},
 			{"required": []string{"stop"}},
 			{"required": []string{"exhaustion"}},
+			{"required": []string{"patchComplete"}},
+			{"required": []string{"validationAssessment"}},
 		},
 	}
 }
@@ -90,7 +98,8 @@ type AgentEnvelope struct {
 	// Exhaustion 是 D6 exhaustion proof envelope；仅 resilient_v1 run 的
 	// coordinator 处理它，legacy run 把它当作 unexpected kind 协议错误。
 	Exhaustion *domain.ExhaustionProposalV1 `json:"exhaustion,omitempty"`
-	// Reserved for later slices
+	// PatchComplete 和 ValidationAssessment 是 patch/validation 阶段的严格确认；
+	// 实际 artifact、tree hash 与 validation 结果仍由服务端端口确认。
 	PatchComplete        *PatchCompleteOutput        `json:"patchComplete,omitempty"`
 	ValidationAssessment *ValidationAssessmentOutput `json:"validationAssessment,omitempty"`
 	nativeToolRequests   []RequestTool
@@ -169,13 +178,14 @@ type StopOutput struct {
 	RecommendedNextAction string `json:"recommendedNextAction"`
 }
 
-// PatchCompleteOutput 是补丁完成的信封（本 slice 未使用）。
+// PatchCompleteOutput 是 agent 完成一轮 patch tool 操作后的确认，不携带可执行脚本。
 type PatchCompleteOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// ValidationAssessmentOutput 是验证评估的信封（本 slice 未使用）。
+// ValidationAssessmentOutput 是 agent 对已执行验证结果的 bounded 解释；验证
+// 通过与否以 ValidationPort 的实际结果为准。
 type ValidationAssessmentOutput struct {
 	Passed  bool   `json:"passed"`
 	Summary string `json:"summary"`
@@ -259,8 +269,14 @@ func DecodeEnvelope(raw string) (*AgentEnvelope, error) {
 		if err := validateExhaustionProposal(env.Exhaustion); err != nil {
 			return nil, err
 		}
-	case "patchComplete", "validationAssessment":
-		return nil, fmt.Errorf("envelope kind %q is reserved for later slices", env.Kind)
+	case "patchComplete":
+		if err := validatePatchComplete(env.PatchComplete); err != nil {
+			return nil, err
+		}
+	case "validationAssessment":
+		if err := validateValidationAssessment(env.ValidationAssessment); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("unknown envelope kind %q", env.Kind)
 	}
@@ -395,8 +411,28 @@ func validatePlanCandidates(pc *PlanCandidatesOutput) error {
 	return nil
 }
 
+func validatePatchComplete(output *PatchCompleteOutput) error {
+	if output == nil || strings.TrimSpace(output.Message) == "" {
+		return fmt.Errorf("patchComplete: message is required")
+	}
+	if len(output.Message) > maxMessageBytes {
+		return fmt.Errorf("patchComplete: message exceeds bounds")
+	}
+	return nil
+}
+
+func validateValidationAssessment(output *ValidationAssessmentOutput) error {
+	if output == nil || strings.TrimSpace(output.Summary) == "" {
+		return fmt.Errorf("validationAssessment: summary is required")
+	}
+	if len(output.Summary) > maxMessageBytes {
+		return fmt.Errorf("validationAssessment: summary exceeds bounds")
+	}
+	return nil
+}
+
 func validateStop(s *StopOutput) error {
-	if s.Reason == "" {
+	if s == nil || s.Reason == "" {
 		return fmt.Errorf("stop: reason is required")
 	}
 	if strings.TrimSpace(s.RecommendedNextAction) == "" {

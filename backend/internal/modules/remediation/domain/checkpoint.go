@@ -110,8 +110,56 @@ type WorkingMemoryCheckpointV1 struct {
 	PhaseProgress       CheckpointPhaseProgress       `json:"phaseProgress"`
 	Recoveries          []CheckpointRecovery          `json:"recoveries"`
 	NextActions         []string                      `json:"nextActions"`
+	Workspace           *CheckpointWorkspace          `json:"workspace,omitempty"`
+	Artifacts           []CheckpointArtifact          `json:"artifacts,omitempty"`
+	Validation          *CheckpointValidation         `json:"validation,omitempty"`
+	Publication         *CheckpointPublication        `json:"publication,omitempty"`
+	PublicationPolicy   *CheckpointPublicationPolicy  `json:"publicationPolicy,omitempty"`
+	ValidationCommands  map[string]int64              `json:"validationCommands,omitempty"`
 	Budget              BudgetPlanRecoveryV1          `json:"budget"`
 	Reason              string                        `json:"reason"`
+}
+
+// CheckpointWorkspace 是工作区外部身份的 checkpoint 投影；不保存仓库内容。
+type CheckpointWorkspace struct {
+	WorkspaceID     string `json:"workspaceId"`
+	BaselineCommit  string `json:"baselineCommit"`
+	BaseTreeHash    string `json:"baseTreeHash"`
+	CurrentTreeHash string `json:"currentTreeHash"`
+	Version         int64  `json:"version"`
+}
+
+// CheckpointArtifact 是 content-addressed patch 或验证结果的安全引用。
+type CheckpointArtifact struct {
+	Kind        string `json:"kind"`
+	Reference   string `json:"reference"`
+	ContentHash string `json:"contentHash"`
+	SizeBytes   int64  `json:"sizeBytes"`
+}
+
+// CheckpointValidation 是最近一次 approved command 验证的状态投影。
+type CheckpointValidation struct {
+	CommandID      string `json:"commandId"`
+	CommandVersion int64  `json:"commandVersion"`
+	Passed         bool   `json:"passed"`
+	OutputArtifact string `json:"outputArtifact,omitempty"`
+	OutputHash     string `json:"outputHash,omitempty"`
+}
+
+// CheckpointPublicationPolicy 是 run 创建时快照的 publication target/ref policy。
+type CheckpointPublicationPolicy struct {
+	TargetBranch string `json:"targetBranch"`
+	BranchPrefix string `json:"branchPrefix"`
+}
+
+// CheckpointPublication 是发布外部效果的 branch/commit/change-request 身份。
+type CheckpointPublication struct {
+	BranchRef       string `json:"branchRef"`
+	TargetBranch    string `json:"targetBranch"`
+	CommitHash      string `json:"commitHash"`
+	DraftChangeRef  string `json:"draftChangeRef,omitempty"`
+	CompareURL      string `json:"compareUrl,omitempty"`
+	HumanReviewOnly bool   `json:"humanReviewOnly"`
 }
 
 // CheckpointObjective 是当前目标与完成标准。
@@ -276,6 +324,9 @@ func (c WorkingMemoryCheckpointV1) Validate() error {
 			return fmt.Errorf("%w: %v", ErrCheckpointInvalid, err)
 		}
 	}
+	if err := validateCheckpointLifecycle(c); err != nil {
+		return fmt.Errorf("%w: %v", ErrCheckpointInvalid, err)
+	}
 	if err := c.Budget.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrCheckpointInvalid, err)
 	}
@@ -319,6 +370,107 @@ func (c WorkingMemoryCheckpointV1) ContentHash() (string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func validateCheckpointLifecycle(c WorkingMemoryCheckpointV1) error {
+	if c.Workspace != nil {
+		workspace := c.Workspace
+		for label, value := range map[string]string{
+			"workspace id":                workspace.WorkspaceID,
+			"workspace baseline commit":   workspace.BaselineCommit,
+			"workspace base tree hash":    workspace.BaseTreeHash,
+			"workspace current tree hash": workspace.CurrentTreeHash,
+		} {
+			if err := boundedText(label, value, 512); err != nil {
+				return err
+			}
+		}
+		if workspace.Version < 1 {
+			return fmt.Errorf("workspace version must be positive")
+		}
+	}
+	if len(c.Artifacts) > maxCheckpointEvidenceIDs {
+		return fmt.Errorf("lifecycle artifacts exceed %d entries", maxCheckpointEvidenceIDs)
+	}
+	for _, artifact := range c.Artifacts {
+		if err := boundedText("artifact kind", artifact.Kind, 64); err != nil {
+			return err
+		}
+		if err := boundedText("artifact reference", artifact.Reference, 512); err != nil {
+			return err
+		}
+		if err := boundedText("artifact content hash", artifact.ContentHash, 128); err != nil {
+			return err
+		}
+		if err := validateContentHash("artifact content hash", artifact.ContentHash); err != nil {
+			return err
+		}
+		if artifact.SizeBytes < 0 || artifact.SizeBytes > MaxCheckpointPayloadBytes {
+			return fmt.Errorf("artifact size is out of bounds")
+		}
+	}
+	if c.Validation != nil {
+		if err := boundedText("validation command id", c.Validation.CommandID, 128); err != nil {
+			return err
+		}
+		if c.Validation.CommandVersion < 1 {
+			return fmt.Errorf("validation command version must be positive")
+		}
+		if err := boundedOptionalText("validation artifact", c.Validation.OutputArtifact, 512); err != nil {
+			return err
+		}
+		if c.Validation.OutputArtifact != "" && c.Validation.OutputHash == "" {
+			return fmt.Errorf("validation artifact requires output hash")
+		}
+		if err := boundedOptionalText("validation output hash", c.Validation.OutputHash, 128); err != nil {
+			return err
+		}
+		if c.Validation.OutputHash != "" {
+			if err := validateContentHash("validation output hash", c.Validation.OutputHash); err != nil {
+				return err
+			}
+		}
+	}
+	if c.PublicationPolicy != nil {
+		if err := boundedText("publication policy target branch", c.PublicationPolicy.TargetBranch, 256); err != nil {
+			return err
+		}
+		if err := boundedText("publication policy branch prefix", c.PublicationPolicy.BranchPrefix, 256); err != nil {
+			return err
+		}
+	}
+	if len(c.ValidationCommands) > 32 {
+		return fmt.Errorf("validation command snapshot exceeds 32 entries")
+	}
+	for commandID, version := range c.ValidationCommands {
+		if err := boundedText("validation command snapshot id", commandID, 128); err != nil {
+			return err
+		}
+		if version < 1 {
+			return fmt.Errorf("validation command snapshot version must be positive")
+		}
+	}
+	if c.Publication != nil {
+		if err := boundedText("publication branch ref", c.Publication.BranchRef, 256); err != nil {
+			return err
+		}
+		if err := boundedText("publication target branch", c.Publication.TargetBranch, 256); err != nil {
+			return err
+		}
+		if err := boundedText("publication commit hash", c.Publication.CommitHash, 256); err != nil {
+			return err
+		}
+		if err := boundedOptionalText("publication draft change ref", c.Publication.DraftChangeRef, 512); err != nil {
+			return err
+		}
+		if err := boundedOptionalText("publication compare URL", c.Publication.CompareURL, 1024); err != nil {
+			return err
+		}
+		if !c.Publication.HumanReviewOnly {
+			return fmt.Errorf("publication checkpoint must preserve human review gate")
+		}
+	}
+	return nil
 }
 
 func (o CheckpointObjective) validate() error {

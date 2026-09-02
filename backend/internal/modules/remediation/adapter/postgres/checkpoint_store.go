@@ -296,8 +296,15 @@ func mapCheckpointSnapshot(row remediationdb.RemediationWorkingMemory, checkpoin
 
 func checkpointPhaseMatchesRun(phase, runState string) bool {
 	state := domain.RunState(runState)
-	if state == domain.RunStateQueued || state == domain.RunStatePreparingContext {
+	switch state {
+	case domain.RunStateQueued, domain.RunStatePreparingContext:
 		return phase == string(domain.RunStateDiagnosing)
+	case domain.RunStateDiagnosisReadyForReview:
+		// 该状态是 planning 的人工选择边界；checkpoint 仍以 planning
+		// 作为 allocator/恢复 phase，避免选定计划前产生新的伪 phase。
+		return phase == string(domain.RunStatePlanning)
+	case domain.RunStateAwaitingHumanReview:
+		return phase == string(domain.RunStatePublishing)
 	}
 	budgetPhase, ok := domain.BudgetPhaseFor(state)
 	return ok && phase == string(budgetPhase)

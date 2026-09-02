@@ -378,3 +378,82 @@ if diagnosis.CausalClosure.ExplainsOriginalSymptom && diagnosis.Fixability == Fi
 	return requestCausalClosureReassessment()
 }
 ```
+
+```go
+// Correct: validation and publication consume service-owned identities and
+// return a bounded challenge instead of converting a retryable failure into a
+// diagnosis conclusion.
+challenge := domain.RecoveryChallengeV1{
+    Kind: domain.RecoveryChallengeKindValidationRevision,
+    Severity: domain.RecoverySeverityRecoverable,
+    ReasonCode: "validation_failed",
+    FailedActionRef: "workspace.run_validation",
+}
+```
+
+## Scenario: Lifecycle Policy Feedback And Effect Recovery
+
+### 1. Scope / Trigger
+- Trigger: plan candidate policy/risk feedback, workspace patch results, approved validation failures, and publication retry metadata.
+- This is a control-plane recovery contract; it must not alter evidence ownership or the model's diagnosis conclusion.
+
+### 2. Signatures
+```go
+type domain.PlanPolicyEvaluator interface {
+    EvaluatePlan(context.Context, domain.PlanPolicyInput) (domain.PlanPolicyDecision, error)
+}
+type domain.ValidationResult struct {
+    RunID, WorkspaceID, CommandID string
+    CommandVersion int64
+    Passed bool
+    OutputArtifactRef, OutputHash, Summary string
+}
+type domain.PublicationResult struct {
+    BranchRef, CommitHash, DraftChangeRef, CompareURL string
+    BaselineCommit, TargetBranch string
+    HumanReviewRequired bool
+}
+```
+
+### 3. Contracts
+- A policy rejection is a structured `validation_revision` challenge when another permitted plan or correction remains; denied control-plane changes are verified manual blockers.
+- Validation truth comes from the approved runner and its content-addressed artifact, not from `validationAssessment.passed`.
+- Publication retries reuse the same run-scoped idempotency key and the snapshotted target branch/baseline. A success remains a human-review handoff.
+- Checkpoints may carry evidence/artifact identifiers and hashes, but summaries never become evidence and raw validation/model/SCM payloads are excluded.
+
+### 4. Validation & Error Matrix
+| Condition | Required behavior |
+|---|---|
+| High-risk candidate without opt-in/specialized command | Recoverable plan feedback or verified policy blocker; no patch. |
+| Validation command not in run snapshot | Reject before execution; do not infer a command from model text. |
+| Validation fails | Store bounded result identity, challenge the same loop, and permit only a changed patch revision. |
+| Transient SCM failure | Store `publication_retry`, keep `publishing` active, and retain the same effect key. |
+| Successful publication | Store branch/commit/change references and require human merge review. |
+| Classification or policy metadata mismatch | Correct metadata through the loop; never rewrite causal fixability. |
+
+### 5. Good/Base/Bad Cases
+- Good: a model chooses an ordinary source plan after the service rejects a dependency edit, then validation fails and the agent revises the patch with a new tree hash.
+- Base: a restarted worker retries one incomplete publication effect with its stored target branch and receives the existing SCM result.
+- Bad: accept a passing model assessment without a runner result, let a changed project policy retarget an in-flight run, or turn a transient SCM timeout into `manual fix` immediately.
+
+### 6. Tests Required
+- Plan policy matrix for ordinary, opted-in high-risk, denied control-plane, and alternative-candidate feedback.
+- Validation tests for approved command/version, bounded output artifact/hash, model-claim disagreement, unchanged-failure limit, and changed-patch recovery.
+- Publication tests for retryable error, same-key restart, baseline/target mismatch, successful human gate, and credential-free result projection.
+- Cross-layer tests must confirm review projections expose only bounded recovery metadata and no raw evidence/output.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+if assessment.Passed {
+    transitionToPublishing()
+}
+```
+
+#### Correct
+```go
+// Runner truth controls publication; the model assessment is explanatory only.
+if validationResult.Passed && validationResult.OutputHash != "" {
+    transitionToPublishing()
+}
+```

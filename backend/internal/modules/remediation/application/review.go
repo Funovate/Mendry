@@ -18,6 +18,9 @@ const (
 	NotificationInsufficientEvidence = "remediation.insufficient_evidence"
 	// NotificationManualReviewRequired 是其余 blocked_manual_review 终态的通知 action。
 	NotificationManualReviewRequired = "remediation.manual_review_required"
+	// NotificationChangeReadyForReview 表示 validated publication 已完成，
+	// 但 merge/deploy 仍必须由 human 完成。
+	NotificationChangeReadyForReview = "remediation.change_ready_for_review"
 )
 
 const maxReviewAttempts = 64
@@ -120,6 +123,8 @@ func NotificationKindForTerminal(state domain.RunState, fixability domain.Fixabi
 		return NotificationNonCodeDiagnosed
 	case domain.RunStateDiagnosisReadyForReview:
 		return NotificationDiagnosisReadyForReview
+	case domain.RunStateAwaitingHumanReview:
+		return NotificationChangeReadyForReview
 	case domain.RunStateBlockedManualReview:
 		if fixability == domain.FixabilityInsufficientEvidence {
 			return NotificationInsufficientEvidence
@@ -136,6 +141,8 @@ func notificationSummary(kind string) string {
 		return "Remediation diagnosed a non-code cause."
 	case NotificationDiagnosisReadyForReview:
 		return "Remediation diagnosis is ready for review."
+	case NotificationChangeReadyForReview:
+		return "Remediation change is ready for human review."
 	case NotificationInsufficientEvidence:
 		return "Remediation needs more evidence."
 	case NotificationManualReviewRequired:

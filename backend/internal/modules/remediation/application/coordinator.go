@@ -20,16 +20,20 @@ const defaultMaxCollectLoops = 3
 const maxConsecutiveProtocolFailures = 3
 
 // RemediationCoordinator is the only component allowed to advance run state. It
-// drives the walking-skeleton subset of the state machine:
+// drives the diagnosis/planning walking-skeleton subset and, for resilient_v1,
+// the explicit selected-plan lifecycle:
 //
 //	queued → preparing_context → diagnosing →
 //	  {collecting_more_context loop | completed_non_code |
 //	   blocked_manual_review | planning → diagnosis_ready_for_review}
 //
-// Any active state can transition to failed. Reserved states (patching,
-// validating, publishing, awaiting_human_review) exist but are unreachable
-// here. The coordinator holds only domain ports plus the in-process engine,
-// assembler, and gateway; it never receives credentials or raw clients.
+//	 diagnosis_ready_for_review → patching → validating → publishing →
+//	   awaiting_human_review
+//
+// Validation failures may return to patching within the bounded revision contract.
+// Any active state can transition to failed. The coordinator holds only domain
+// ports plus the in-process engine, assembler, and gateway; it never receives
+// credentials or raw clients.
 type RemediationCoordinator struct {
 	store           domain.RunStore
 	lookup          IncidentLookup
@@ -49,7 +53,15 @@ type RemediationCoordinator struct {
 	// checkpointStore 是可选注入的 durable working-memory checkpoint store
 	// （D2）。nil（默认）或 run 快照模式为 legacy 时，coordinator 完全走既有
 	// 路径；只有 resilient_v1 run 才 append/load checkpoint。
-	checkpointStore domain.CheckpointStore
+	checkpointStore    domain.CheckpointStore
+	planPolicy         domain.PlanPolicyEvaluator
+	workspace          domain.WorkspacePort
+	validation         domain.ValidationPort
+	publication        domain.PublicationPort
+	lifecycleStore     domain.LifecycleStore
+	lifecycleTools     *LifecycleToolGateway
+	validationCommands map[string]int64
+	publicationPolicy  LifecyclePublicationPolicy
 }
 
 // IncidentIdentity 是 remediation 需要的事故身份，不含凭据或客户端。
@@ -265,17 +277,20 @@ func newRemediationCoordinator(
 ) *RemediationCoordinator {
 	gateway := NewToolGateway(repoPort, evidencePort)
 	return &RemediationCoordinator{
-		store:           store,
-		lookup:          lookup,
-		reviews:         reviews,
-		notifications:   notifications,
-		contextAssem:    NewContextAssembler(repoPort, evidencePort),
-		agentEngine:     NewAgentEngine(llmPort, gateway),
-		toolGateway:     gateway,
-		budgetLimits:    normalizeBudgetLimits(limits),
-		maxCollectLoops: defaultMaxCollectLoops,
-		observer:        noopRunObserver{},
-		evidenceGate:    NewEvidenceGate(nil),
+		store:              store,
+		lookup:             lookup,
+		reviews:            reviews,
+		notifications:      notifications,
+		contextAssem:       NewContextAssembler(repoPort, evidencePort),
+		agentEngine:        NewAgentEngine(llmPort, gateway),
+		toolGateway:        gateway,
+		budgetLimits:       normalizeBudgetLimits(limits),
+		maxCollectLoops:    defaultMaxCollectLoops,
+		observer:           noopRunObserver{},
+		evidenceGate:       NewEvidenceGate(nil),
+		planPolicy:         NewDefaultPlanPolicy(),
+		validationCommands: map[string]int64{},
+		lifecycleTools:     NewLifecycleToolGateway(nil, nil),
 	}
 }
 
@@ -1362,6 +1377,9 @@ func (c *RemediationCoordinator) planFrom(
 	if err != nil || exhausted {
 		return err
 	}
+	if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStatePlanning, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+		return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(checkpointErr))
+	}
 
 	protocolFailures := 0
 	for {
@@ -1411,6 +1429,25 @@ func (c *RemediationCoordinator) planFrom(
 
 		case "planCandidates":
 			protocolFailures = 0
+			if tracker := resilientStateFrom(ctx); tracker != nil && c.planPolicy != nil {
+				policyDecision, policyErr := c.planPolicy.EvaluatePlan(ctx, domain.PlanPolicyInput{
+					RunID: runID, BaselineCommit: ref.Commit,
+					Candidates: repairPlanCandidates(env.PlanCandidates), RecommendedID: env.PlanCandidates.RecommendedID,
+				})
+				if policyErr != nil {
+					return c.fail(ctx, runID, domain.RunStatePlanning, markConfigurationFailure(fmt.Errorf("evaluate plan policy: %w", policyErr)))
+				}
+				done, policyErr := c.handlePlanPolicyDecision(ctx, budget, runID, usage, policyDecision, conversation)
+				if policyErr != nil {
+					return policyErr
+				}
+				if done {
+					return nil
+				}
+				if !policyDecision.Accepted {
+					continue
+				}
+			}
 		default:
 			exhausted, transitionErr := c.handleTurnError(
 				ctx, budget, runID, domain.RunStatePlanning, usage, conversation, &protocolFailures,
@@ -1546,7 +1583,15 @@ func (c *RemediationCoordinator) runTool(
 		return exhausted, res, budgetErr
 	}
 	exhausted, budgetErr := c.recordSameStateBudget(ctx, budget, runID, phase, effect)
-	return exhausted, res, budgetErr
+	if budgetErr != nil || exhausted {
+		return exhausted, res, budgetErr
+	}
+	if tracker != nil && err != nil {
+		if recoveryErr := c.appendToolRecoveryChallenge(ctx, budget, runID, phase, req, err, conversation); recoveryErr != nil {
+			return false, res, recoveryErr
+		}
+	}
+	return false, res, nil
 }
 
 // appendDecision maps and persists the model's diagnosis.

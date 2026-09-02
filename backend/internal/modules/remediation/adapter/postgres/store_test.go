@@ -1192,6 +1192,49 @@ func TestRunStore_ContinuationEvidenceIndexSameSeries(t *testing.T) {
 	}
 }
 
+func TestLifecycleEffectsRoundTripAndSuccessfulProjectionIsImmutable(t *testing.T) {
+	pool := setupTestDB(t)
+	defer pool.Close()
+	incidentID := mustIncident(t, pool)
+	store := mustStore(t, pool)
+	root, err := store.CreateSeriesAndRun(context.Background(), newRun(incidentID, 1, "abc123"))
+	if err != nil {
+		t.Fatalf("CreateSeriesAndRun: %v", err)
+	}
+	started := domain.LifecycleEffect{
+		RunID: root.RunID, Kind: domain.LifecycleEffectWorkspace, IdempotencyKey: "workspace/test",
+		State: domain.LifecycleEffectStarted, Attempt: 1, BaselineCommit: root.DeployedCommit,
+		Summary: "workspace started",
+	}
+	if _, err := store.UpsertLifecycleEffect(context.Background(), started); err != nil {
+		t.Fatalf("UpsertLifecycleEffect started: %v", err)
+	}
+	succeeded := started
+	succeeded.State = domain.LifecycleEffectSucceeded
+	succeeded.WorkspaceID = "workspace-1"
+	succeeded.BaseTreeHash = "base-tree"
+	succeeded.ResultTreeHash = "base-tree"
+	succeeded.Summary = "workspace ready"
+	if _, err := store.UpsertLifecycleEffect(context.Background(), succeeded); err != nil {
+		t.Fatalf("UpsertLifecycleEffect succeeded: %v", err)
+	}
+	failed := succeeded
+	failed.State = domain.LifecycleEffectFailed
+	failed.ErrorCode = "transport"
+	failed.Summary = "must not replace success"
+	loaded, err := store.UpsertLifecycleEffect(context.Background(), failed)
+	if err != nil {
+		t.Fatalf("UpsertLifecycleEffect after success: %v", err)
+	}
+	if loaded.State != domain.LifecycleEffectSucceeded || loaded.WorkspaceID != succeeded.WorkspaceID {
+		t.Fatalf("successful lifecycle effect was overwritten: %#v", loaded)
+	}
+	listed, err := store.ListLifecycleEffects(context.Background(), root.RunID)
+	if err != nil || len(listed) != 1 || listed[0].State != domain.LifecycleEffectSucceeded {
+		t.Fatalf("ListLifecycleEffects = %#v, err=%v", listed, err)
+	}
+}
+
 // makeTerminalRunForIncident 在指定 incident 上创建 terminal run（供跨 incident 隔离断言）。
 func makeTerminalRunForIncident(t *testing.T, pool *pgxpool.Pool, store *postgres.RunStore, incidentID uuid.UUID, state domain.RunState, contextVersion int64, retryable bool) domain.Run {
 	t.Helper()

@@ -275,7 +275,7 @@ func TestDecodeEnvelope_InvalidConfidence(t *testing.T) {
 	}
 }
 
-func TestDecodeEnvelope_ReservedKind(t *testing.T) {
+func TestDecodeEnvelope_AcceptsPatchComplete(t *testing.T) {
 	raw := `{
 		"schemaVersion": "v1",
 		"kind": "patchComplete",
@@ -284,12 +284,19 @@ func TestDecodeEnvelope_ReservedKind(t *testing.T) {
 			"message": "Done"
 		}
 	}`
-	_, err := DecodeEnvelope(raw)
-	if err == nil {
-		t.Fatal("expected error for reserved kind")
+	env, err := DecodeEnvelope(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "reserved") {
-		t.Errorf("expected reserved kind error, got: %v", err)
+	if env.Kind != "patchComplete" || !env.PatchComplete.Success {
+		t.Fatalf("patch envelope = %#v", env)
+	}
+}
+
+func TestDecodeEnvelope_RejectsMissingPatchConfirmationMessage(t *testing.T) {
+	raw := `{"schemaVersion":"v1","kind":"patchComplete","patchComplete":{"success":true,"message":" "}}`
+	if _, err := DecodeEnvelope(raw); err == nil || !strings.Contains(err.Error(), "patchComplete: message is required") {
+		t.Fatalf("DecodeEnvelope() error = %v, want missing patch message", err)
 	}
 }
 

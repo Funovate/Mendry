@@ -719,6 +719,38 @@ func redactConversationValue(value any) any {
 			"truncated": current.Truncated,
 			"reason":    current.Reason,
 		}
+	case domain.WorkspaceFile:
+		// 工作区文件同 repository FileContent 一样先转成文本，避免 []byte
+		// 被 encoding/json 编成可还原的 base64。
+		return map[string]interface{}{
+			"path":      redactConversationText(current.Path),
+			"content":   redactConversationText(string(current.Content)),
+			"truncated": current.Truncated,
+			"reason":    current.Reason,
+		}
+	case domain.PatchResult:
+		return map[string]interface{}{
+			"workspaceId": current.WorkspaceID, "applied": current.Applied,
+			"alreadyApplied": current.AlreadyApplied, "artifactRef": current.ArtifactRef,
+			"contentHash": current.ContentHash, "resultTreeHash": current.ResultTreeHash,
+			"changedFiles": current.ChangedFiles, "bytesRetrieved": current.BytesRetrieved,
+			"summary": redactConversationText(current.Summary),
+		}
+	case domain.ValidationResult:
+		return map[string]interface{}{
+			"workspaceId": current.WorkspaceID, "commandId": current.CommandID,
+			"commandVersion": current.CommandVersion, "passed": current.Passed,
+			"exitCode": current.ExitCode, "outputArtifactRef": current.OutputArtifactRef,
+			"outputHash": current.OutputHash, "outputExcerpt": redactConversationText(current.OutputExcerpt),
+			"bytesRetrieved": current.BytesRetrieved, "summary": redactConversationText(current.Summary),
+		}
+	case domain.WorkspaceStatus:
+		return map[string]interface{}{
+			"workspaceId": current.Identity.WorkspaceID, "baselineCommit": current.Identity.BaselineCommit,
+			"baseTreeHash": current.Identity.BaseTreeHash, "currentTreeHash": current.Identity.CurrentTreeHash,
+			"version": current.Identity.Version, "clean": current.Clean,
+			"changedFiles": current.ChangedFiles, "bytes": current.Bytes,
+		}
 	case []byte:
 		return redactConversationText(string(current))
 	case string:

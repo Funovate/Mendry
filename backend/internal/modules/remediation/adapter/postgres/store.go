@@ -51,6 +51,7 @@ var (
 	_ domain.BootstrapEvidenceLoader = (*RunStore)(nil)
 	_ domain.CallbackEvidenceLoader  = (*RunStore)(nil)
 	_ domain.ToolPolicyResolver      = (*RunStore)(nil)
+	_ domain.LifecycleStore          = (*RunStore)(nil)
 	_ application.ReviewRecorder     = (*RunStore)(nil)
 	_ application.ReviewQuery        = (*RunStore)(nil)
 	_ application.NotificationSink   = (*RunStore)(nil)
@@ -916,6 +917,13 @@ func (s *RunStore) Get(ctx context.Context, runID string) (domain.RunAggregate, 
 		}
 		return domain.RunAggregate{}, fmt.Errorf("get run series: %w", err)
 	}
+	projectID, err := q.GetRemediationRunProject(ctx, rid)
+	if err != nil {
+		return domain.RunAggregate{}, fmt.Errorf("get run project: %w", err)
+	}
+	if !projectID.Valid {
+		return domain.RunAggregate{}, fmt.Errorf("run project identity is invalid")
+	}
 	attempts, err := q.GetRemediationRunsBySeriesID(ctx, run.SeriesID)
 	if err != nil {
 		return domain.RunAggregate{}, fmt.Errorf("get attempt summaries: %w", err)
@@ -931,6 +939,7 @@ func (s *RunStore) Get(ctx context.Context, runID string) (domain.RunAggregate, 
 		RecommendedPlanID:  recommendedPlanID(plans),
 		AttemptSummaries:   mapAttemptSummaries(attempts),
 	}
+	agg.Run.ProjectID = uuidString(projectID)
 	agg.Run.IncidentID = uuidString(series.IncidentID)
 	agg.Run.LifecycleGeneration = series.LifecycleGeneration
 	agg.Run.DeployedCommit = series.DeployedCommit
@@ -997,7 +1006,98 @@ func (s *RunStore) RecordSuggestedDiff(ctx context.Context, runID string, diff s
 	return nil
 }
 
-// GetLatestForIncident 读取 series key 下 attempt 最大的 run；没有 series 时返回 ErrNotFound。
+// GetLifecycleEffect 返回指定幂等 key 的 latest effect；不存在时返回稳定 sentinel，
+// 调用方可安全执行同一 key 的恢复，而不会猜测外部效果状态。
+func (s *RunStore) GetLifecycleEffect(ctx context.Context, runID string, kind domain.LifecycleEffectKind, idempotencyKey string) (domain.LifecycleEffect, error) {
+	rid, err := parseRunID(runID)
+	if err != nil {
+		return domain.LifecycleEffect{}, err
+	}
+	if !kind.IsKnown() {
+		return domain.LifecycleEffect{}, fmt.Errorf("unknown lifecycle effect kind %q", kind)
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return domain.LifecycleEffect{}, fmt.Errorf("lifecycle effect idempotency key is required")
+	}
+	row, err := remediationdb.New(s.db).GetRemediationLifecycleEffect(ctx, remediationdb.GetRemediationLifecycleEffectParams{
+		RunID: rid, EffectKind: string(kind), IdempotencyKey: idempotencyKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.LifecycleEffect{}, domain.ErrLifecycleEffectNotFound
+	}
+	if err != nil {
+		return domain.LifecycleEffect{}, fmt.Errorf("get remediation lifecycle effect: %w", err)
+	}
+	return mapLifecycleEffect(row)
+}
+
+// UpsertLifecycleEffect 原子更新 effect projection。SQL 层保护已 succeeded 的
+// 记录不被后续 uncertain/failure 重写，保证 process restart 可复用成功身份。
+func (s *RunStore) UpsertLifecycleEffect(ctx context.Context, effect domain.LifecycleEffect) (domain.LifecycleEffect, error) {
+	if err := effect.Validate(); err != nil {
+		return domain.LifecycleEffect{}, err
+	}
+	rid, err := parseRunID(effect.RunID)
+	if err != nil {
+		return domain.LifecycleEffect{}, err
+	}
+	row, err := remediationdb.New(s.db).UpsertRemediationLifecycleEffect(ctx, remediationdb.UpsertRemediationLifecycleEffectParams{
+		RunID: rid, EffectKind: string(effect.Kind), IdempotencyKey: effect.IdempotencyKey,
+		State: string(effect.State), Attempt: int32(effect.Attempt), BaselineCommit: effect.BaselineCommit,
+		WorkspaceID: effect.WorkspaceID, BaseTreeHash: effect.BaseTreeHash, ResultTreeHash: effect.ResultTreeHash,
+		ArtifactRef: effect.ArtifactRef, ContentHash: effect.ContentHash, CommandID: effect.CommandID,
+		CommandVersion: effect.CommandVersion, ValidationKnown: effect.ValidationKnown, ValidationPassed: effect.ValidationPassed,
+		BranchRef: effect.BranchRef, TargetBranch: effect.TargetBranch, CommitHash: effect.CommitHash, DraftChangeRef: effect.DraftChangeRef,
+		CompareUrl: effect.CompareURL, ErrorCode: effect.ErrorCode, Summary: effect.Summary,
+	})
+	if err != nil {
+		return domain.LifecycleEffect{}, fmt.Errorf("upsert remediation lifecycle effect: %w", err)
+	}
+	return mapLifecycleEffect(row)
+}
+
+// ListLifecycleEffects 返回 run 的有界 effect projection，供恢复和审计使用；不返回
+// patch、验证输出或任何 provider payload。
+func (s *RunStore) ListLifecycleEffects(ctx context.Context, runID string) ([]domain.LifecycleEffect, error) {
+	rid, err := parseRunID(runID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := remediationdb.New(s.db).ListRemediationLifecycleEffects(ctx, rid)
+	if err != nil {
+		return nil, fmt.Errorf("list remediation lifecycle effects: %w", err)
+	}
+	effects := make([]domain.LifecycleEffect, 0, len(rows))
+	for _, row := range rows {
+		effect, mapErr := mapLifecycleEffect(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		effects = append(effects, effect)
+	}
+	return effects, nil
+}
+
+func mapLifecycleEffect(row remediationdb.RemediationLifecycleEffect) (domain.LifecycleEffect, error) {
+	if !row.ID.Valid || !row.RunID.Valid || !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return domain.LifecycleEffect{}, fmt.Errorf("remediation lifecycle effect row has invalid generated values")
+	}
+	effect := domain.LifecycleEffect{
+		EffectID: uuidString(row.ID), RunID: uuidString(row.RunID), Kind: domain.LifecycleEffectKind(row.EffectKind),
+		IdempotencyKey: row.IdempotencyKey, State: domain.LifecycleEffectState(row.State), Attempt: int(row.Attempt),
+		BaselineCommit: row.BaselineCommit, WorkspaceID: row.WorkspaceID, BaseTreeHash: row.BaseTreeHash,
+		ResultTreeHash: row.ResultTreeHash, ArtifactRef: row.ArtifactRef, ContentHash: row.ContentHash,
+		CommandID: row.CommandID, CommandVersion: row.CommandVersion, ValidationKnown: row.ValidationKnown,
+		ValidationPassed: row.ValidationPassed, BranchRef: row.BranchRef, TargetBranch: row.TargetBranch, CommitHash: row.CommitHash,
+		DraftChangeRef: row.DraftChangeRef, CompareURL: row.CompareUrl, ErrorCode: row.ErrorCode,
+		Summary: row.Summary, CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
+	}
+	if err := effect.Validate(); err != nil {
+		return domain.LifecycleEffect{}, fmt.Errorf("validate remediation lifecycle effect row: %w", err)
+	}
+	return effect, nil
+}
+
 func (s *RunStore) GetLatestForIncident(ctx context.Context, incidentID string, generation int64, deployedCommit string) (domain.RunAggregate, error) {
 	incidentUUID, err := uuid.Parse(incidentID)
 	if err != nil {
@@ -1354,8 +1454,8 @@ func mapInvocations(rows []remediationdb.RemediationToolInvocation) []domain.Too
 	out := make([]domain.ToolInvocation, 0, len(rows))
 	for _, r := range rows {
 		invocationID := uuidString(r.ID)
-		if r.OutcomeRef.Valid && r.OutcomeRef.String != "" {
-			invocationID = r.OutcomeRef.String
+		if r.OutcomeRef != nil && *r.OutcomeRef != "" {
+			invocationID = *r.OutcomeRef
 		}
 		inv := domain.ToolInvocation{
 			InvocationID:  invocationID,
@@ -1365,8 +1465,8 @@ func mapInvocations(rows []remediationdb.RemediationToolInvocation) []domain.Too
 			EvidenceIDs:   cloneStrings(r.EvidenceIds),
 			InvokedAt:     r.InvokedAt.Time,
 		}
-		if r.ErrorCode.Valid && r.ErrorCode.String != "" {
-			inv.Error = r.ErrorCode.String
+		if r.ErrorCode != nil && *r.ErrorCode != "" {
+			inv.Error = *r.ErrorCode
 		} else if r.Outcome == "error" {
 			// Historical rows predate error_code and only preserve coarse outcome.
 			inv.Error = r.Outcome
@@ -1455,7 +1555,7 @@ func isTerminalState(state domain.RunState) bool {
 	switch state {
 	case domain.RunStateFailed, domain.RunStateBudgetExhausted,
 		domain.RunStateCompletedNonCode, domain.RunStateBlockedManualReview,
-		domain.RunStateDiagnosisReadyForReview:
+		domain.RunStateDiagnosisReadyForReview, domain.RunStateAwaitingHumanReview:
 		return true
 	default:
 		return false

@@ -360,6 +360,65 @@ INSERT INTO incidents (...) VALUES (...)
 ON CONFLICT DO NOTHING;
 ```
 
+## Scenario: Remediation Lifecycle Effect Projection
+
+### 1. Scope / Trigger
+- Trigger: adding the Phase 3 PostgreSQL projection for resilient workspace, patch, validation, and publication effects.
+- The table is additive and is owned by the remediation PostgreSQL adapter; application/domain contracts expose no sqlc or pgx types.
+
+### 2. Signatures
+```go
+func (*postgres.RunStore) GetLifecycleEffect(context.Context, string, domain.LifecycleEffectKind, string) (domain.LifecycleEffect, error)
+func (*postgres.RunStore) UpsertLifecycleEffect(context.Context, domain.LifecycleEffect) (domain.LifecycleEffect, error)
+func (*postgres.RunStore) ListLifecycleEffects(context.Context, string) ([]domain.LifecycleEffect, error)
+```
+```sql
+CREATE TABLE remediation_lifecycle_effect (...);
+UNIQUE (run_id, effect_kind, idempotency_key)
+```
+
+### 3. Contracts
+- Migration `000018_remediation_lifecycle_effect.up.sql` is forward-only and carries semantic comments on the table and every column.
+- SQL source remains `internal/modules/remediation/adapter/postgres/queries/remediation.sql`; generated sqlc files are regenerated with the pinned tool.
+- The unique key scopes one latest projection to one run/effect/key. `succeeded` is protected in the SQL upsert from later failure or uncertain-state overwrites.
+- Stored fields are bounded identity/status metadata only: baseline/tree hashes, artifact refs, approved command/version, branch/commit/change refs, safe error code, and safe summary. Raw patch/output/model/provider data is excluded.
+
+### 4. Validation & Error Matrix
+| Condition | Required behavior |
+|---|---|
+| Unknown run/effect kind/invalid key | Fail at domain/adapter validation before SQL. |
+| Duplicate run/effect/key | Upsert the same projection; do not create a second external-effect identity. |
+| Existing succeeded projection | Return the existing row unchanged, even when the new input reports failure. |
+| Invalid generated row/hash/status | Map fails closed; never expose the row to application recovery. |
+| Migration history/checksum mismatch | Migration runner fails before later schema changes. |
+| Missing migration/database table | Lifecycle wiring reports a persistence/configuration blocker; it does not silently use an in-memory fallback. |
+
+### 5. Good/Base/Bad Cases
+- Good: write `started`, execute an idempotent adapter key, write `succeeded`, and load the same branch/artifact identity after process restart.
+- Base: `GetLifecycleEffect` returns the not-found sentinel, so the coordinator creates the initial projection.
+- Bad: add effect state to audit JSON only, use `(run_id, kind)` without the idempotency key, let a retry overwrite success, or hand-edit generated sqlc output.
+
+### 6. Tests Required
+- Migration source test asserts version 18, table/constraint/comment fragments, and contiguous ordering.
+- PostgreSQL integration test asserts lifecycle effect round-trip, unique projection, success immutability, cascade cleanup, and all column comments.
+- Generated-code hash check must pass with the pinned sqlc binary; adapter tests must cover malformed mapped rows and safe field bounds.
+
+### 7. Wrong vs Correct
+#### Wrong
+```sql
+ON CONFLICT (run_id, effect_kind) DO UPDATE SET state = EXCLUDED.state;
+```
+
+#### Correct
+```sql
+ON CONFLICT (run_id, effect_kind, idempotency_key)
+DO UPDATE SET state = CASE
+    WHEN remediation_lifecycle_effect.state = 'succeeded'
+    THEN remediation_lifecycle_effect.state
+    ELSE EXCLUDED.state
+END;
+```
+
 ## Common Mistakes
 
 - Do not log raw SQL, bind arguments, connection strings, credentials, database

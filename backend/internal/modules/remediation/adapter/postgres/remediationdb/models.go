@@ -165,6 +165,60 @@ type RemediationEvidenceReadCursor struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// Latest bounded projection for a resilient workspace, patch, validation, or publication effect; raw patch/output and credentials are excluded.
+type RemediationLifecycleEffect struct {
+	// Application-owned identity of one lifecycle effect projection.
+	ID pgtype.UUID
+	// Remediation attempt that owns the effect; cascade cleanup follows run lifecycle.
+	RunID pgtype.UUID
+	// Bounded external effect class used to select recovery behavior and idempotency scope.
+	EffectKind string
+	// Coordinator-generated stable key that makes retries and process restart address the same external effect.
+	IdempotencyKey string
+	// Latest effect state; succeeded projections are reused and cannot be replaced by a later failure.
+	State string
+	// Bounded logical attempt count for the effect, independent of adapter-local transport retries.
+	Attempt int32
+	// Immutable deployed source baseline used by workspace and publication replay.
+	BaselineCommit string
+	// Opaque run-owned workspace identity; no host path or engine authority is stored.
+	WorkspaceID string
+	// Content identity of the clean workspace tree before a patch.
+	BaseTreeHash string
+	// Content identity expected after a patch or verified by publication replay.
+	ResultTreeHash string
+	// Content-addressed patch or approved artifact reference, never the artifact body.
+	ArtifactRef string
+	// Hash of the referenced patch or effect artifact used for replay verification.
+	ContentHash string
+	// Administrator-approved validation command identity; arbitrary shell text is excluded.
+	CommandID string
+	// Immutable validation command version snapshotted for this run.
+	CommandVersion int64
+	// Whether the effect has an authoritative validation result rather than a model claim.
+	ValidationKnown bool
+	// Authoritative validation outcome when validation_known is true.
+	ValidationPassed bool
+	// Policy-approved change branch reference returned by the trusted publisher.
+	BranchRef string
+	// Publication target branch snapshotted before the external effect; configuration changes cannot retarget this run.
+	TargetBranch string
+	// Published change commit identity returned by the trusted publisher.
+	CommitHash string
+	// Optional provider-native draft change request identity; no merge authority.
+	DraftChangeRef string
+	// Optional safe compare link without embedded userinfo, tokens, or credentials.
+	CompareUrl string
+	// Sanitized low-cardinality recovery or terminal error code.
+	ErrorCode string
+	// Bounded operator-safe effect summary; raw output and model text are excluded.
+	Summary string
+	// Time the effect projection was first created.
+	CreatedAt pgtype.Timestamptz
+	// Time the latest state or safe identity projection was written.
+	UpdatedAt pgtype.Timestamptz
+}
+
 // code_fixable 诊断下的候选或推荐修复计划；建议 diff 存在 artifact，不内联到本行。
 type RemediationPlan struct {
 	// 应用生成的计划记录 UUID。
@@ -317,12 +371,12 @@ type RemediationToolInvocation struct {
 	DurationMs *int64
 	// 调用结果分类，例如 ok、rejected、unavailable 或 error。
 	Outcome string
-	// 服务生成并公开给模型的 capability action ref；历史行可为空。
-	OutcomeRef pgtype.Text
-	// 本次 invocation 产出的有界 evidence ID 集合，不含原始 payload。
+	// Service-issued action reference exposed in the bounded tool observation and used to prove a capability attempt; null for historical invocations.
+	OutcomeRef *string
+	// Bounded persisted evidence IDs produced by this invocation; payloads and raw tool output are never stored here.
 	EvidenceIds []string
-	// 失败时的稳定安全错误码；成功或历史行可为空。
-	ErrorCode pgtype.Text
+	// Sanitized stable tool error code when outcome is error; never raw connector text or credentials.
+	ErrorCode *string
 }
 
 // Latest working-memory snapshot per run; its sequence must be backed by a checkpoint event, and updating the snapshot is atomic with appending that event.

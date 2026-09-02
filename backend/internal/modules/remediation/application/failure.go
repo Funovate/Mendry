@@ -134,6 +134,8 @@ func terminalEffectForState(to domain.RunState, effect domain.Effect, reason bud
 			effect.TerminalReason = "completed_non_code"
 		case domain.RunStateBlockedManualReview:
 			effect.TerminalReason = "blocked_manual_review"
+		case domain.RunStateAwaitingHumanReview:
+			effect.TerminalReason = "awaiting_human_review"
 		case domain.RunStateFailed:
 			effect.TerminalReason = "unknown_failure"
 		default:
@@ -150,7 +152,7 @@ func isTerminalStateForApplication(state domain.RunState) bool {
 	switch state {
 	case domain.RunStateFailed, domain.RunStateBudgetExhausted,
 		domain.RunStateCompletedNonCode, domain.RunStateBlockedManualReview,
-		domain.RunStateDiagnosisReadyForReview:
+		domain.RunStateDiagnosisReadyForReview, domain.RunStateAwaitingHumanReview:
 		return true
 	default:
 		return false

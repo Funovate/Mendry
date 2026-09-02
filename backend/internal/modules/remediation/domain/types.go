@@ -382,6 +382,7 @@ type AttemptSummary struct {
 type Run struct {
 	RunID               string
 	SeriesID            string
+	ProjectID           string
 	IncidentID          string
 	LifecycleGeneration int64
 	DeployedCommit      string

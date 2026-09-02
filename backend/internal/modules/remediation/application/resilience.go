@@ -65,6 +65,23 @@ type resilientRunState struct {
 	nextActions              []string
 	conversation             *AgentConversation
 	analysisOnly             bool
+	// lifecycle fields are bounded identities only; raw patch and validation output
+	// remain content-addressed artifacts outside the checkpoint payload.
+	lifecyclePlanID             string
+	lifecyclePhase              domain.RunState
+	workspace                   *domain.CheckpointWorkspace
+	artifacts                   []domain.CheckpointArtifact
+	validation                  *domain.CheckpointValidation
+	publication                 *domain.CheckpointPublication
+	publicationPolicy           *domain.CheckpointPublicationPolicy
+	validationCommands          map[string]int64
+	planFeedbackAttempts        int
+	planFeedbackNoProgress      int
+	lastPlanFeedbackFingerprint string
+	lifecycleRecoveryAttempts   int
+	lifecycleStopAttempts       int
+	validationNoProgress        int
+	lastValidationFingerprint   string
 	// exhaustionProposalAttempts 是本次 run 已请求的 exhaustion proposal
 	// 次数，用作 exhaustion challenge 的 Attempt 字段进度计数。
 	exhaustionProposalAttempts int
@@ -197,6 +214,12 @@ func (t *resilientRunState) buildCheckpoint(phase domain.RunState, reason string
 		EvidenceIndex:      append([]domain.CheckpointEvidenceIndexItem(nil), t.evidenceIndex...),
 		Recoveries:         append([]domain.CheckpointRecovery(nil), t.recoveries...),
 		NextActions:        append([]string(nil), t.nextActions...),
+		Workspace:          cloneCheckpointWorkspace(t.workspace),
+		Artifacts:          append([]domain.CheckpointArtifact(nil), t.artifacts...),
+		Validation:         cloneCheckpointValidation(t.validation),
+		Publication:        cloneCheckpointPublication(t.publication),
+		PublicationPolicy:  cloneCheckpointPublicationPolicy(t.publicationPolicy),
+		ValidationCommands: cloneValidationCommands(t.validationCommands),
 		Reason:             reason,
 	}
 	if t.alloc != nil {
@@ -335,8 +358,18 @@ func (c *RemediationCoordinator) softBudgetRecovery(ctx context.Context, budget 
 		return nil
 	}
 	phase, ok := domain.BudgetPhaseFor(state)
-	if !ok || phase != tracker.alloc.current {
+	if !ok {
 		return nil
+	}
+	if phase != tracker.alloc.current {
+		// validation 失败可以安全地回到 patching；allocator 保持在已接纳的
+		// validation frontier，revision 消耗继续计入当前 phase，避免重开
+		// 已关闭 phase 或重复借用 unreserved pool。
+		if tracker.lifecyclePhase == domain.RunStatePatching && tracker.alloc.current != "" {
+			phase = tracker.alloc.current
+		} else {
+			return nil
+		}
 	}
 	// elapsed 按 runBudget 的累计语义取值，再减去上次镜像时的值得到本次增量；
 	// 与 hard ceiling 同源（budget.elapsed()），保证镜像投影与真实消耗一致。
@@ -397,8 +430,26 @@ func (t *resilientRunState) advanceSoftBudget(from, to domain.RunState) error {
 		return nil
 	}
 	fromPhase, fromOK := domain.BudgetPhaseFor(from)
+	if from == domain.RunStateDiagnosisReadyForReview {
+		fromPhase, fromOK = domain.RunStatePlanning, true
+	}
 	toPhase, toOK := domain.BudgetPhaseFor(to)
 	if !toOK || (fromOK && fromPhase == toPhase) {
+		return nil
+	}
+	if fromOK && toOK && domain.BudgetPhaseIndex(toPhase) < domain.BudgetPhaseIndex(fromPhase) {
+		// Validation repair is a bounded backward state transition. The allocator
+		// stays at the validation frontier; recovery work is charged there.
+		return nil
+	}
+	if fromOK && t.alloc.current != "" && fromPhase != t.alloc.current {
+		// validation revision may temporarily drive patching tools while the
+		// allocator remains on the forward validation frontier. Keep one budget
+		// projection and charge the recovery work there instead of reopening a
+		// closed phase.
+		if toOK && toPhase == t.alloc.current {
+			return nil
+		}
 		return nil
 	}
 	if fromOK {

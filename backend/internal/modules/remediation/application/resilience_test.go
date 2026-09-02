@@ -209,8 +209,8 @@ func TestResilient_CodeFixableCheckpointsAroundPlanning(t *testing.T) {
 	if store.state != domain.RunStateDiagnosisReadyForReview {
 		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
 	}
-	if len(checkpoints.appends) != 3 {
-		t.Fatalf("checkpoints appended = %d, want 3 (diagnosing entry + before plan + before terminal)", len(checkpoints.appends))
+	if len(checkpoints.appends) != 4 {
+		t.Fatalf("checkpoints appended = %d, want 4 (diagnosing entry + before/after planning + before terminal)", len(checkpoints.appends))
 	}
 	if checkpoints.appends[1].Phase != string(domain.RunStateDiagnosing) ||
 		checkpoints.appends[1].Reason != domain.CheckpointReasonPhaseBoundary {

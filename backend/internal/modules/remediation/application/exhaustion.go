@@ -222,6 +222,10 @@ func toolCapabilityClass(name string) string {
 		return "provider_evidence"
 	case name == ToolSourceSearchTools || name == ToolSourceRefreshTools:
 		return "provider_evidence"
+	case name == ToolWorkspaceRunValidation:
+		return "validation"
+	case strings.HasPrefix(name, "workspace."):
+		return "workspace"
 	case strings.HasPrefix(name, "mcp_"):
 		return "provider_evidence"
 	default:

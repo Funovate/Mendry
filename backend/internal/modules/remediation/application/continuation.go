@@ -376,7 +376,8 @@ func safeContinuationReasonCode(value string) string {
 		"runtime_evidence_persistence", "prior_detail_failure", "policy_rejection",
 		"invalid_envelope", "blocked_manual_review", "insufficient_evidence", "budget_exhausted",
 		"elapsed", "model_calls", "model_cost", "tool_calls", "evidence_bytes", "repository_bytes",
-		"configuration_failure", "authorization_failure", "persistence_failure", "canceled", "unknown_failure":
+		"configuration_failure", "authorization_failure", "persistence_failure", "canceled", "unknown_failure",
+		"awaiting_human_review":
 		return value
 	default:
 		return "unknown"
