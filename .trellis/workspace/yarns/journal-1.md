@@ -870,3 +870,47 @@ Phase 2 items 1-2 `[x]`; item 3 fact-gate/evidence-correction part `[x]`; items
 - Phase 2 item 6: INC-2270 regression matrix + provider-detail-loss regression.
 - Resolve the commit-staging complication (HEAD not a Go module; entangled
   foundation refactor) before any commit.
+
+## Session 22: Commit — landing backend foundation + Phase 1
+
+### Summary
+
+Solved the commit problem. Confirmed HEAD was not a Go module (0 tracked .go
+files); the whole backend + shared foundation + in-flight sibling work were
+uncommitted and entangled in the same files. Per user decision (single large
+commit, accept infra inclusion), committed the entire buildable backend.
+
+### Commits
+
+- `3aa92fb` (pre-existing today, 10:15): "feat(remediation): add phase 1 durable
+  kernel" — partial Phase 1 (created by an earlier op before this session's commit).
+- `a9810be` (this session): "feat(remediation): landing backend foundation +
+  lifecycle resilience Phase 1" — 309 files, +32.8k/-403: the full backend
+  foundation scaffold (go.mod, migrate runner, platform/postgres, redis,
+  telemetry, auth, cmd, dev, tools, sqlc), rest of Phase 1 (checkpoint kernel,
+  evidence.read, evidence index, budget_plan, resilience wiring, Phase 2
+  increment 1 INC-2270 core), .trellis tracking/spec, and .gitignore
+  (backend/api binary).
+
+### Commit hygiene
+
+- Excluded: frontend/ (separate consumer + unrelated feature), frontend/
+  screenshots/ (artifacts), agent tooling (.pi/.agents/.claude/.codex/
+  AGENTS.md/CLAUDE.md), and the `backend/api` ELF build binary (added to
+  .gitignore instead).
+- `git diff --cached --check` exit 0; fixed 2 markdown trailing-blank warnings.
+- Verified before commit: `go build ./...`, `go vet ./...`, `go test ./...` all
+  green; after commit 0 backend modifications remain (committed tree == green
+  working tree).
+
+### Status
+
+Backend is now fully committed and buildable. 08-31 task remains in_progress
+(Phases 2(rest)-4 pending).
+
+### Next Steps
+
+- Commit frontend/ (separate commit) when ready.
+- Resume Phase 2: item 4 (exhaustion proposals + service validation), item 5
+  (persist submitted diagnosis), item 6 (INC-2270 regression matrix) in a fresh
+  working session.
