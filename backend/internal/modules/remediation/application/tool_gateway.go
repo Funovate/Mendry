@@ -71,10 +71,13 @@ func RejectionCode(err error) (ToolRejectionCode, bool) {
 // Payload 保留 adapter 已经裁剪且不含凭据的 domain value，之后由
 // AgentConversation 再次裁剪并作为下一轮的 model observation。
 type ToolResult struct {
-	Tool               string
-	Summary            string
-	BytesRetrieved     int64
-	EvidenceIDs        []string
+	Tool           string
+	Summary        string
+	BytesRetrieved int64
+	EvidenceIDs    []string
+	// ActionRef 是 resilient_v1 coordinator 为一次真实工具执行生成的有界引用。
+	// 它仅用于 exhaustion proof 的 capability/action 绑定，不授予任何工具权限。
+	ActionRef          string
 	RefinementRequired bool
 	RefinementReason   string
 	Payload            any

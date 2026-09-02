@@ -5,10 +5,11 @@
 ### 1. Scope / Trigger
 
 Use this contract when changing normalized webhook evidence, remediation
-bootstrap context, source coverage, the service-owned diagnosis gate, or the
+bootstrap context, source coverage, the service-owned diagnosis gate,
+exhaustion proof validation, submitted-diagnosis/tool-invocation audit, or the
 read-only Docker path behind an SSH source. The application gate decides
-whether a model diagnosis may enter planning; model confidence alone is never
-the authority.
+whether a model diagnosis may enter planning; model confidence and
+model-declared exhaustion alone are never authority.
 
 ### 2. Signatures
 
@@ -17,9 +18,14 @@ type EvidenceResolver interface {
     ResolveEvidence(context.Context, string, []domain.EvidenceCitation) (domain.EvidenceResolution, error)
 }
 
-func (*application.EvidenceGate).Evaluate(context.Context, string, *application.DiagnosisOutput) (domain.EvidenceGateDecision, error)
-func (*application.EvidenceGate).Apply(context.Context, string, *application.DiagnosisOutput) (*application.DiagnosisOutput, domain.EvidenceGateDecision, error)
+func (*application.EvidenceGate).Evaluate(context.Context, string, *application.DiagnosisOutput) (domain.EvidenceGateDecision, []application.CitationClassificationMismatch, error)
+func (*application.EvidenceGate).Apply(context.Context, string, *application.DiagnosisOutput) (*application.DiagnosisOutput, domain.EvidenceGateDecision, []application.CitationClassificationMismatch, error)
 func domain.EvaluateEvidenceGate(domain.EvidenceGateInput) domain.EvidenceGateDecision
+
+func application.ValidateExhaustionProposal(domain.ExhaustionProposalV1, application.ExhaustionValidationContext) (bool, domain.RecoveryChallengeV1, []string)
+func (*postgres.RunStore).RecordToolInvocation(context.Context, string, domain.ToolInvocation) error
+func (*postgres.RunStore).AppendSubmittedDiagnosis(context.Context, string, domain.SubmittedDiagnosis) error
+func (*postgres.RunStore).LatestDecisionID(context.Context, string) (string, error)
 
 func (*postgres.RunStore).ResolveEvidence(context.Context, string, []domain.EvidenceCitation) (domain.EvidenceResolution, error)
 func (*postgres.RunStore).PersistEvidenceAssessment(context.Context, domain.EvidenceAssessment) error
@@ -87,16 +93,37 @@ the ID is runtime evidence, never durable configuration or model input.
   preserves the diagnosis `TimeAssessment` because the diagnosis was produced
   from the raw bootstrap time fields; an empty resolver field must not erase it.
 - `0.00-0.39` is low, `0.40-0.69` is medium, and `0.70-1.00` is high. Missing
-  direct fault evidence caps at `0.39`; unresolved time, host/source coverage,
-  or material contradictions cap at `0.69`.
+  direct fault evidence caps at `0.39`; a service-resolved material
+  contradiction caps at `0.69`. Time, host identity, request correlation, and
+  primary-source coverage remain structured audit facts, but an unresolved
+  value does not independently cap every diagnosis.
 - Planning requires effective confidence of at least `0.70`, a trusted direct
-  citation, temporal and operational correlation, inspected primary coverage or
-  a direct bridge, no material contradiction, and causal closure to the original
-  symptom. Unsupported `code_fixable` becomes `insufficient_evidence`.
+  citation, no material contradiction, and causal closure to the original
+  symptom. The gate records an `insufficient_evidence` verdict when these facts
+  fail but never mutates the model's fixability/confidence. In `resilient_v1`,
+  the coordinator persists the original submission and returns a structured
+  fact-check challenge to the same loop; repeated no-progress requests a
+  service-validated exhaustion proof. Legacy routing remains rollout-compatible.
 - Test authorization is an audit dimension, not causal evidence. An unknown or
   unmatched structured test policy may remain in `missingEvidence` and the
   operator recommendation, but it must not by itself turn an otherwise closed
   runtime/request/deployed-code explanation into `insufficient_evidence`.
+- Before `resilient_v1` enters manual review for exhaustion, every advertised
+  capability must be covered exactly once as attempted or untried. An attempted
+  path must cite an `outcome_ref` persisted on a real tool-invocation row whose
+  `tool_name` maps to that capability; evidence or recovery challenge refs
+  cannot impersonate an action. The same row persists bounded evidence IDs,
+  coarse outcome, and sanitized error code so continuation can reconstruct the
+  binding. `irrelevant` requires owned evidence; `unavailable`/`unsafe` require
+  matching service policy; `budget_prohibited` checks model calls, model cost,
+  tool calls, elapsed time, and the capability-specific byte reserve.
+- Submitted-diagnosis and resilient tool-invocation audit are hard consistency
+  boundaries. A missing companion store, invalid correction metadata,
+  latest-decision mismatch, sequence/insert failure, or tool-audit failure must
+  transition to `persistence_failure`; it must never be swallowed as
+  best-effort. PostgreSQL allocates submitted and tool sequences while holding
+  the owning series row lock. A submitted `decision_id` must belong to the same
+  run.
 - A terminal `insufficient_evidence` diagnosis with
   `causalClosure.explainsOriginalSymptom=true` is structurally inconsistent.
   When it has no bounded `collectMoreContext` request, the coordinator records
@@ -173,9 +200,14 @@ the ID is runtime evidence, never durable configuration or model input.
 | Pre-run evidence baseline differs from the target series, or is NULL | Exclude it from continuation indexes and return not-found from `evidence.read` |
 | Cursor token is modified or minted from evidence ID/content hash/source code | Reject it; offset and expiry exist only in server-side random cursor state |
 | Generic or unverified Tencent detail lookalike | Do not grant preferred status or URL-fetch authority |
-| Missing direct fault record | Cap `0.39`; persist `insufficient_evidence` |
+| Missing direct fault record | Cap `0.39`; return a fact-check rejection without rewriting the submission |
+| Unresolved time/host/request/source fact with direct evidence and causal closure | Preserve it for audit; do not impose a universal cap unless service resolution marks a material contradiction |
+| Material contradiction | Cap `0.69`, block planning, and challenge the resilient loop |
+| Attempted exhaustion path cites challenge/evidence/another capability action | Reject with `exhaustion_proof_incomplete`; continue automation |
+| Untried `unavailable`/`unsafe` has no matching service policy | Reject the proof; model text cannot create policy authority |
+| Untried `budget_prohibited` omits an available hard-budget dimension | Reject the proof; validate the complete projection |
+| Submitted diagnosis or resilient tool audit cannot persist consistently | Fail the run with `persistence_failure`; do not continue to a business terminal |
 | Resolver lacks time assessment | Retain structured diagnosis time assessment; resolver contradictions still win |
-| Unresolved time/host/primary source/material contradiction | Cap `0.69` unless a trusted direct bridge closes the gap |
 | Code-only or unsupported fixability claim | Keep hypothesis non-actionable; never enter planning |
 | Causal closure true, only test authorization unknown | Preserve the audit gap and reassess actual fixability; do not block solely on authorization |
 | `insufficient_evidence` with causal closure true and no collection request | Issue one budgeted causal-closure reassessment; a repeated inconsistent result may block |
@@ -188,6 +220,12 @@ the ID is runtime evidence, never durable configuration or model input.
 
 ### 5. Good/Base/Bad Cases
 
+- Good: a direct persisted fault plus causal closure permits planning even when
+  a non-material host-correlation field is unresolved; the unresolved field
+  remains visible in the assessment.
+- Good: an exhaustion attempted path cites the exact durable action ref returned
+  by a repository tool observation, and continuation rehydrates the same ref,
+  tool identity, outcome, and evidence IDs.
 - Good: each run collecting the same provider record receives a distinct,
   incident-consistent evidence ID; retries inside that run return the same row.
 - Good: the resolver verifies a direct Tencent/Docker record and source
@@ -209,12 +247,25 @@ the ID is runtime evidence, never durable configuration or model input.
   `(project_id, deduplication_key)` so a new run steals an old incident's row.
 - Bad: treat missing approved-test identity as proof that an otherwise explained
   production request, panic, and HTTP failure lacks causal closure.
+- Bad: accept `challenge:exhaustion:*` as proof that a repository capability
+  executed, or continue after a submitted-diagnosis/tool-audit insert failed.
 
 ### 6. Tests Required
 
-- Domain gate tests cover missing direct evidence, unresolved time/correlation,
-  direct bridges, contradiction caps, causal closure, and high-confidence
-  eligibility.
+- Domain gate tests cover missing direct evidence, non-material unresolved
+  time/correlation, material contradiction caps, causal closure, and
+  high-confidence eligibility.
+- Exhaustion validator tests reject recovery refs, cross-capability action refs,
+  unowned evidence, unsupported policy reasons, unresolved recoveries, and
+  incomplete hard-budget dimensions; one test accepts a fully service-backed
+  proof.
+- Coordinator tests prove failed fact checks preserve the submitted fixability,
+  repeated malformed envelopes remain recoverable, action refs are persisted
+  before exposure, and submitted/tool audit failures become
+  `persistence_failure`.
+- PostgreSQL integration tests prove concurrent monotonic submitted/tool
+  sequences, same-run decision linkage, durable action/evidence rehydration,
+  and omission of raw model/tool payloads.
 - Coordinator regression tests prove a closed-causal `insufficient_evidence`
   result receives the fixed reassessment observation, can recover to
   `diagnosis_ready_for_review`, and blocks after one repeated inconsistent result.
@@ -302,7 +353,18 @@ Correct: mint a random cursor capability; persist only its digest and the
 run/evidence/hash/offset/expiry binding on the server.
 ```
 
-Diagnosis terminal routing follows the causal-closure invariant:
+Diagnosis and exhaustion authority stay separate:
+
+```go
+// Wrong: mutate the agent claim or accept a recovery marker as an action.
+diagnosis.Fixability = domain.FixabilityInsufficientEvidence
+attempted.OutcomeRefs = []string{"challenge:exhaustion:stop"}
+
+// Correct: preserve the submitted claim, challenge the same loop, and validate
+// only the durable capability-bound ref returned by RecordToolInvocation.
+conversation.AppendRecoveryChallenge(factCheckChallenge)
+attempted.OutcomeRefs = []string{"action:repository:1"}
+```
 
 ```go
 // Wrong: unknown test approval terminates a causally closed diagnosis.

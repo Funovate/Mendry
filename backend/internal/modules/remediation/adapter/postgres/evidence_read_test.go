@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,6 +128,13 @@ func TestEvidenceRead_OwnershipAndSinglePage(t *testing.T) {
 	})
 
 	t.Run("pre-run evidence remains readable", func(t *testing.T) {
+		// Pre-run evidence snapshots the incident baseline. Align the fixture's
+		// incident with the immutable series before appending the evidence.
+		if _, err := pool.Exec(ctx,
+			`UPDATE incidents SET lifecycle_generation = $2, deployed_commit = $3 WHERE id = $1`,
+			root.IncidentID, root.LifecycleGeneration, root.DeployedCommit); err != nil {
+			t.Fatalf("align pre-run baseline: %v", err)
+		}
 		payload, _ := json.Marshal(map[string]interface{}{"normalized": "alert"})
 		sum := sha256.Sum256(payload)
 		preRun := domain.StoredEvidence{
@@ -154,8 +162,15 @@ func TestEvidenceRead_OwnershipAndSinglePage(t *testing.T) {
 		if page.Provenance.SourceAttempt != 0 {
 			t.Fatalf("pre-run source attempt = %d, want 0", page.Provenance.SourceAttempt)
 		}
-		if page.Content != string(payload) {
-			t.Fatalf("pre-run page content differs from stored payload")
+		var gotContent, wantContent any
+		if err := json.Unmarshal([]byte(page.Content), &gotContent); err != nil {
+			t.Fatalf("decode pre-run page content: %v", err)
+		}
+		if err := json.Unmarshal(payload, &wantContent); err != nil {
+			t.Fatalf("decode stored pre-run payload: %v", err)
+		}
+		if !reflect.DeepEqual(gotContent, wantContent) {
+			t.Fatalf("pre-run page content = %#v, want %#v", gotContent, wantContent)
 		}
 	})
 }

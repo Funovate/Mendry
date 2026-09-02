@@ -12,20 +12,24 @@ import (
 // fakeRunStore is an in-memory RunStore that records every mutation and
 // enforces the from-state guard, mirroring the optimistic-version contract.
 type fakeRunStore struct {
-	state         domain.RunState
-	created       *domain.Run
-	decisions     []domain.Decision
-	plans         []domain.RepairPlanCandidate
-	recommendedID string
-	suggestedDiff string
-	notifications []application.TerminalNotification
-	invocations   []domain.ToolInvocation
-	transitions   []stateEdge
-	effects       []domain.Effect
-	budget        domain.BudgetCounters
-	provider      string
-	modelName     string
-	createErr     error
+	state             domain.RunState
+	created           *domain.Run
+	decisions         []domain.Decision
+	submitted         []domain.SubmittedDiagnosis
+	plans             []domain.RepairPlanCandidate
+	recommendedID     string
+	suggestedDiff     string
+	notifications     []application.TerminalNotification
+	invocations       []domain.ToolInvocation
+	transitions       []stateEdge
+	effects           []domain.Effect
+	budget            domain.BudgetCounters
+	provider          string
+	modelName         string
+	createErr         error
+	invocationErr     error
+	submittedErr      error
+	latestDecisionErr error
 	// mode 是 CreateSeriesAndRun 返回 run 时快照的 agent loop 模式；空值保持
 	// legacy，供 resilient_v1 测试注入。
 	mode domain.AgentLoopMode
@@ -72,7 +76,35 @@ func (f *fakeRunStore) AppendDecision(_ context.Context, _ string, d domain.Deci
 	return nil
 }
 
+// SubmittedDiagnosisStore 审计 companion：记录追加的 submitted 行，并提供
+// 与 postgres RunStore 一致的 LatestDecisionID 语义（冻结的 AppendDecision
+// 不返回 ID，审计链用最近一次 decision 解析 submitted→accepted join）。
+func (f *fakeRunStore) AppendSubmittedDiagnosis(_ context.Context, _ string, d domain.SubmittedDiagnosis) error {
+	if f.submittedErr != nil {
+		return f.submittedErr
+	}
+	f.submitted = append(f.submitted, d)
+	return nil
+}
+
+func (f *fakeRunStore) ListSubmittedDiagnoses(_ context.Context, _ string) ([]domain.SubmittedDiagnosis, error) {
+	return append([]domain.SubmittedDiagnosis(nil), f.submitted...), nil
+}
+
+func (f *fakeRunStore) LatestDecisionID(_ context.Context, _ string) (string, error) {
+	if f.latestDecisionErr != nil {
+		return "", f.latestDecisionErr
+	}
+	if len(f.decisions) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("decision-%d", len(f.decisions)), nil
+}
+
 func (f *fakeRunStore) RecordToolInvocation(_ context.Context, _ string, t domain.ToolInvocation) error {
+	if f.invocationErr != nil {
+		return f.invocationErr
+	}
 	f.invocations = append(f.invocations, t)
 	return nil
 }

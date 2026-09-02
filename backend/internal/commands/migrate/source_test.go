@@ -46,7 +46,7 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 16 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 || migrations[15].Version != 16 {
+	if len(migrations) != 17 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 || migrations[15].Version != 16 || migrations[16].Version != 17 {
 		t.Fatalf("migrations = %#v", migrations)
 	}
 	if migrations[1].Name != "create_mvp_data" {
@@ -161,6 +161,39 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	for _, fragment := range requiredCheckpointSchema {
 		if !strings.Contains(migrations[15].SQL, fragment) {
 			t.Errorf("migration 000016 does not contain %q", fragment)
+		}
+	}
+
+	if migrations[16].Name != "submitted_diagnosis" {
+		t.Fatalf("migration 000017 name = %q", migrations[16].Name)
+	}
+	requiredSubmittedDiagnosisSchema := []string{
+		"ALTER TABLE remediation_tool_invocation",
+		"ADD COLUMN outcome_ref text",
+		"ADD COLUMN evidence_ids text[] NOT NULL",
+		"ADD COLUMN error_code text",
+		"remediation_tool_invocation_run_outcome_ref_unique",
+		"COMMENT ON COLUMN remediation_tool_invocation.outcome_ref IS",
+		"COMMENT ON COLUMN remediation_tool_invocation.evidence_ids IS",
+		"COMMENT ON COLUMN remediation_tool_invocation.error_code IS",
+		"CREATE TABLE remediation_submitted_diagnosis",
+		"remediation_submitted_diagnosis_run_sequence_unique",
+		"remediation_submitted_diagnosis_sequence_positive",
+		"remediation_submitted_diagnosis_fixability_known",
+		"remediation_submitted_diagnosis_confidence_valid",
+		"remediation_submitted_diagnosis_reasoning_bounded",
+		"remediation_submitted_diagnosis_correction_kind_known",
+		"remediation_submitted_diagnosis_correction_count_valid",
+		"remediation_submitted_diagnosis_corrected_consistent",
+		"remediation_submitted_diagnosis_gate_outcome_known",
+		"idx_remediation_submitted_diagnosis_run",
+		"COMMENT ON TABLE remediation_submitted_diagnosis IS",
+		"COMMENT ON COLUMN remediation_submitted_diagnosis.correction_evidence IS",
+		"COMMENT ON COLUMN remediation_submitted_diagnosis.decision_id IS",
+	}
+	for _, fragment := range requiredSubmittedDiagnosisSchema {
+		if !strings.Contains(migrations[16].SQL, fragment) {
+			t.Errorf("migration 000017 does not contain %q", fragment)
 		}
 	}
 

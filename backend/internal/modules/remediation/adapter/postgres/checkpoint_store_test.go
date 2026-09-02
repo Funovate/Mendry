@@ -241,10 +241,12 @@ func TestCheckpointStore_LoadRejectsCorruptState(t *testing.T) {
 			t.Fatalf("insert forged event: %v", err)
 		}
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO remediation_working_memory (run_id, sequence, context_version, phase, content_hash)
-			 VALUES ($1, 3, $2, 'diagnosing', $3)`,
-			run.RunID, run.ContextVersion, hex.EncodeToString(sum[:])); err != nil {
-			t.Fatalf("insert forged snapshot: %v", err)
+			`UPDATE remediation_working_memory
+			 SET sequence = 3, context_version = $2, observed_run_version = $3,
+			     phase = 'diagnosing', content_hash = $4
+			 WHERE run_id = $1`,
+			run.RunID, run.ContextVersion, run.Version, hex.EncodeToString(sum[:])); err != nil {
+			t.Fatalf("update forged snapshot: %v", err)
 		}
 		if _, err := store.LoadLatestCheckpoint(ctx, run.RunID); !errors.Is(err, domain.ErrCheckpointCorrupt) {
 			t.Fatalf("LoadLatestCheckpoint error = %v, want ErrCheckpointCorrupt", err)

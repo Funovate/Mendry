@@ -563,6 +563,86 @@ func (q *Queries) CreateRemediationSeries(ctx context.Context, arg CreateRemedia
 	return i, err
 }
 
+const createRemediationSubmittedDiagnosis = `-- name: CreateRemediationSubmittedDiagnosis :one
+INSERT INTO remediation_submitted_diagnosis (
+    run_id,
+    sequence,
+    fixability_class,
+    confidence_score,
+    reasoning,
+    contradictions,
+    missing_evidence,
+    evidence_citations,
+    recommended_next_action,
+    correction_kind,
+    correction_evidence,
+    correction_count,
+    corrected,
+    gate_outcome,
+    decision_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+RETURNING id, run_id, sequence, fixability_class, confidence_score, reasoning, contradictions, missing_evidence, evidence_citations, recommended_next_action, correction_kind, correction_evidence, correction_count, corrected, gate_outcome, decision_id, submitted_at
+`
+
+type CreateRemediationSubmittedDiagnosisParams struct {
+	RunID                 pgtype.UUID
+	Sequence              int32
+	FixabilityClass       string
+	ConfidenceScore       pgtype.Numeric
+	Reasoning             string
+	Contradictions        []string
+	MissingEvidence       []string
+	EvidenceCitations     []string
+	RecommendedNextAction string
+	CorrectionKind        string
+	CorrectionEvidence    []byte
+	CorrectionCount       int32
+	Corrected             bool
+	GateOutcome           string
+	DecisionID            pgtype.UUID
+}
+
+func (q *Queries) CreateRemediationSubmittedDiagnosis(ctx context.Context, arg CreateRemediationSubmittedDiagnosisParams) (RemediationSubmittedDiagnosis, error) {
+	row := q.db.QueryRow(ctx, createRemediationSubmittedDiagnosis,
+		arg.RunID,
+		arg.Sequence,
+		arg.FixabilityClass,
+		arg.ConfidenceScore,
+		arg.Reasoning,
+		arg.Contradictions,
+		arg.MissingEvidence,
+		arg.EvidenceCitations,
+		arg.RecommendedNextAction,
+		arg.CorrectionKind,
+		arg.CorrectionEvidence,
+		arg.CorrectionCount,
+		arg.Corrected,
+		arg.GateOutcome,
+		arg.DecisionID,
+	)
+	var i RemediationSubmittedDiagnosis
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Sequence,
+		&i.FixabilityClass,
+		&i.ConfidenceScore,
+		&i.Reasoning,
+		&i.Contradictions,
+		&i.MissingEvidence,
+		&i.EvidenceCitations,
+		&i.RecommendedNextAction,
+		&i.CorrectionKind,
+		&i.CorrectionEvidence,
+		&i.CorrectionCount,
+		&i.Corrected,
+		&i.GateOutcome,
+		&i.DecisionID,
+		&i.SubmittedAt,
+	)
+	return i, err
+}
+
 const createRemediationToolInvocation = `-- name: CreateRemediationToolInvocation :one
 INSERT INTO remediation_tool_invocation (
     run_id,
@@ -570,18 +650,24 @@ INSERT INTO remediation_tool_invocation (
     tool_name,
     phase,
     duration_ms,
-    outcome
-) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, run_id, sequence, tool_name, phase, invoked_at, duration_ms, outcome
+    outcome,
+    outcome_ref,
+    evidence_ids,
+    error_code
+) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))
+RETURNING id, run_id, sequence, tool_name, phase, invoked_at, duration_ms, outcome, outcome_ref, evidence_ids, error_code
 `
 
 type CreateRemediationToolInvocationParams struct {
-	RunID      pgtype.UUID
-	Sequence   int32
-	ToolName   string
-	Phase      string
-	DurationMs *int64
-	Outcome    string
+	RunID       pgtype.UUID
+	Sequence    int32
+	ToolName    string
+	Phase       string
+	DurationMs  *int64
+	Outcome     string
+	OutcomeRef  string
+	EvidenceIds []string
+	ErrorCode   string
 }
 
 func (q *Queries) CreateRemediationToolInvocation(ctx context.Context, arg CreateRemediationToolInvocationParams) (RemediationToolInvocation, error) {
@@ -592,6 +678,9 @@ func (q *Queries) CreateRemediationToolInvocation(ctx context.Context, arg Creat
 		arg.Phase,
 		arg.DurationMs,
 		arg.Outcome,
+		arg.OutcomeRef,
+		arg.EvidenceIds,
+		arg.ErrorCode,
 	)
 	var i RemediationToolInvocation
 	err := row.Scan(
@@ -603,6 +692,9 @@ func (q *Queries) CreateRemediationToolInvocation(ctx context.Context, arg Creat
 		&i.InvokedAt,
 		&i.DurationMs,
 		&i.Outcome,
+		&i.OutcomeRef,
+		&i.EvidenceIds,
+		&i.ErrorCode,
 	)
 	return i, err
 }
@@ -615,6 +707,20 @@ WHERE expires_at < clock_timestamp()
 func (q *Queries) DeleteExpiredRemediationEvidenceReadCursors(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredRemediationEvidenceReadCursors)
 	return err
+}
+
+const getLatestRemediationDecisionID = `-- name: GetLatestRemediationDecisionID :one
+SELECT id FROM remediation_decision
+WHERE run_id = $1
+ORDER BY sequence DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestRemediationDecisionID(ctx context.Context, runID pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getLatestRemediationDecisionID, runID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getLatestRemediationObservationForIncident = `-- name: GetLatestRemediationObservationForIncident :one
@@ -1194,8 +1300,52 @@ func (q *Queries) GetRemediationSeriesByID(ctx context.Context, id pgtype.UUID) 
 	return i, err
 }
 
+const getRemediationSubmittedDiagnosesByRunID = `-- name: GetRemediationSubmittedDiagnosesByRunID :many
+SELECT id, run_id, sequence, fixability_class, confidence_score, reasoning, contradictions, missing_evidence, evidence_citations, recommended_next_action, correction_kind, correction_evidence, correction_count, corrected, gate_outcome, decision_id, submitted_at FROM remediation_submitted_diagnosis
+WHERE run_id = $1
+ORDER BY sequence ASC
+`
+
+func (q *Queries) GetRemediationSubmittedDiagnosesByRunID(ctx context.Context, runID pgtype.UUID) ([]RemediationSubmittedDiagnosis, error) {
+	rows, err := q.db.Query(ctx, getRemediationSubmittedDiagnosesByRunID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RemediationSubmittedDiagnosis
+	for rows.Next() {
+		var i RemediationSubmittedDiagnosis
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Sequence,
+			&i.FixabilityClass,
+			&i.ConfidenceScore,
+			&i.Reasoning,
+			&i.Contradictions,
+			&i.MissingEvidence,
+			&i.EvidenceCitations,
+			&i.RecommendedNextAction,
+			&i.CorrectionKind,
+			&i.CorrectionEvidence,
+			&i.CorrectionCount,
+			&i.Corrected,
+			&i.GateOutcome,
+			&i.DecisionID,
+			&i.SubmittedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRemediationToolInvocationsByRunID = `-- name: GetRemediationToolInvocationsByRunID :many
-SELECT id, run_id, sequence, tool_name, phase, invoked_at, duration_ms, outcome FROM remediation_tool_invocation
+SELECT id, run_id, sequence, tool_name, phase, invoked_at, duration_ms, outcome, outcome_ref, evidence_ids, error_code FROM remediation_tool_invocation
 WHERE run_id = $1
 ORDER BY sequence ASC
 `
@@ -1218,6 +1368,9 @@ func (q *Queries) GetRemediationToolInvocationsByRunID(ctx context.Context, runI
 			&i.InvokedAt,
 			&i.DurationMs,
 			&i.Outcome,
+			&i.OutcomeRef,
+			&i.EvidenceIds,
+			&i.ErrorCode,
 		); err != nil {
 			return nil, err
 		}

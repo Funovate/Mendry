@@ -135,7 +135,10 @@ func TestResilient_ForcedCheckpointsAtPhaseBoundaryAndBeforeTerminal(t *testing.
 	store := newFakeRunStore()
 	store.mode = domain.AgentLoopModeResilientV1
 	checkpoints := &fakeCheckpointStore{runStore: store}
-	model := &scriptedModel{responses: []string{insufficientWithoutCollectionEnvelope()}}
+	// 终态诊断用 unsafe_to_automate：它是 D6 明确的 policy blocker，保留直接
+	// 终态语义；insufficient_evidence 在 resilient_v1 下会先要求 exhaustion
+	// proof，不属于本测试要验证的 checkpoint 触发集。
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("unsafe_to_automate")}}
 	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
 	coord.SetCheckpointStore(checkpoints)
 
@@ -289,7 +292,10 @@ func TestResilient_SoftBudgetSignalsFeedChallengeAndCheckpoint(t *testing.T) {
 	model := &scriptedModel{responses: []string{
 		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
 		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
-		insufficientWithoutCollectionEnvelope(),
+		// 终态诊断用 unsafe_to_automate（policy blocker，保留直接终态语义）；
+		// resilient_v1 的 insufficient_evidence 会先要求 exhaustion proof，
+		// 不属于本测试要验证的 soft-budget 信号集。
+		diagnosisEnvelope("unsafe_to_automate"),
 	}}
 	coord := newCoordinatorWithBudget(store, &heavyRepoPort{}, &fakeEvidencePort{}, model, limits)
 	coord.SetCheckpointStore(checkpoints)
@@ -375,7 +381,7 @@ func TestResilient_ContinuationReconstructsFromDurableCheckpoint(t *testing.T) {
 			},
 		},
 	}
-	model := &scriptedModel{responses: []string{insufficientWithoutCollectionEnvelope()}}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("unsafe_to_automate")}}
 	coord := application.NewRemediationCoordinatorWithReview(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store)
 	coord.SetCheckpointStore(checkpoints)
 
@@ -464,7 +470,7 @@ func TestResilient_ReconstructionFallsBackToRuntimeBrief(t *testing.T) {
 			},
 		},
 	}
-	model := &scriptedModel{responses: []string{insufficientWithoutCollectionEnvelope()}}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("unsafe_to_automate")}}
 	coord := application.NewRemediationCoordinatorWithReview(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store)
 	coord.SetCheckpointStore(checkpoints)
 
@@ -638,7 +644,10 @@ func TestResilient_LegacyAndNilStoreTakeExactLegacyPath(t *testing.T) {
 		store := newFakeRunStore()
 		store.mode = domain.AgentLoopModeResilientV1
 		checkpoints := &fakeCheckpointStore{appendErr: fmt.Errorf("checkpoint store unavailable"), appendErrAt: 2}
-		model := &scriptedModel{responses: []string{insufficientWithoutCollectionEnvelope()}}
+		// 终态诊断用 unsafe_to_automate：它是 D6 明确的 policy blocker，终态前
+		// 仍强制 terminal checkpoint；insufficient_evidence 在 resilient_v1 下
+		// 会先要求 exhaustion proof，不再直接走到终态 checkpoint。
+		model := &scriptedModel{responses: []string{diagnosisEnvelope("unsafe_to_automate")}}
 		coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
 		coord.SetCheckpointStore(checkpoints)
 
@@ -670,7 +679,9 @@ func TestResilient_EvidenceReadUpdatesCheckpointEvidenceIndex(t *testing.T) {
 	readPort := &fakeEvidenceReadPort{result: mustEvidenceReadPage()}
 	model := &scriptedModel{responses: []string{
 		requestEvidenceReadEnvelope("0190-0000-0000-7000-0000000000aa"),
-		insufficientWithoutCollectionEnvelope(),
+		// 终态诊断用 unsafe_to_automate（policy blocker，保留直接终态语义）；
+		// resilient_v1 的 insufficient_evidence 会先要求 exhaustion proof。
+		diagnosisEnvelope("unsafe_to_automate"),
 	}}
 	coord := sourceWiredCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
 	coord.SetCheckpointStore(checkpoints)
@@ -716,7 +727,9 @@ func TestResilient_EvidenceIndexDeduplicatesRepeatedReads(t *testing.T) {
 	model := &scriptedModel{responses: []string{
 		requestEvidenceReadEnvelope("0190-0000-0000-7000-0000000000aa"),
 		requestEvidenceReadEnvelope("0190-0000-0000-7000-0000000000aa"),
-		insufficientWithoutCollectionEnvelope(),
+		// 终态诊断用 unsafe_to_automate（policy blocker，保留直接终态语义）；
+		// resilient_v1 的 insufficient_evidence 会先要求 exhaustion proof。
+		diagnosisEnvelope("unsafe_to_automate"),
 	}}
 	coord := sourceWiredCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
 	coord.SetCheckpointStore(checkpoints)

@@ -240,79 +240,35 @@ func EvaluateEvidenceGate(input EvidenceGateInput) EvidenceGateDecision {
 		decision.ConfidenceCap = ConfidenceCapMissingDirect
 		decision.Reasons = append(decision.Reasons, "missing direct fault evidence")
 		decision.MissingEvidence = appendUnique(decision.MissingEvidence, "direct_fault")
-	} else {
-		unresolved := false
-		if input.Resolution.Time == nil || input.Resolution.Time.Certainty == "" || input.Resolution.Time.Certainty == "unresolved" {
-			unresolved = true
-			decision.MissingEvidence = appendUnique(decision.MissingEvidence, "reconciled event time")
-		}
-		if input.Resolution.Time != nil && input.Resolution.Time.Contradictory {
-			unresolved = true
-			decision.Contradictions = appendUnique(decision.Contradictions, "contradictory time evidence")
-		}
-		if input.Resolution.Correlation == nil || !input.Resolution.Correlation.Temporal || !input.Resolution.Correlation.Operational {
-			unresolved = true
-			decision.MissingEvidence = appendUnique(decision.MissingEvidence, "temporal and operational correlation")
-		}
-		if !primarySourceInspected(input.Resolution.Sources) && !hasDirectBridge(input.Resolution) {
-			unresolved = true
-			decision.MissingEvidence = appendUnique(decision.MissingEvidence, "primary runtime source coverage")
-		}
-		if len(input.Resolution.MaterialContradictions) > 0 {
-			unresolved = true
-			decision.Contradictions = appendUnique(decision.Contradictions, input.Resolution.MaterialContradictions...)
-		}
-		if len(decision.Contradictions) > 0 {
-			unresolved = true
-		}
-		if unresolved {
-			decision.ConfidenceCap = ConfidenceCapUnresolved
-			decision.Reasons = append(decision.Reasons, "unresolved host, time, primary source, or material contradiction")
-		}
 	}
 
+	// R8/D4：time、host、operational correlation 与 primary source coverage
+	// 不是所有 code fix 的全局前置矩阵。它们仍保留在 resolution/audit 中，
+	// 但只有模型声明并由服务解析出的 material contradiction 才会阻断；
+	// causal closure false 则表示缺口对当前因果链仍然 material。
+	if len(input.Resolution.MaterialContradictions) > 0 {
+		decision.Contradictions = appendUnique(decision.Contradictions, input.Resolution.MaterialContradictions...)
+		decision.ConfidenceCap = minConfidence(decision.ConfidenceCap, ConfidenceCapUnresolved)
+		decision.Reasons = append(decision.Reasons, "material contradiction remains unresolved")
+	}
+	if input.Resolution.Time != nil && input.Resolution.Time.Contradictory {
+		decision.Contradictions = appendUnique(decision.Contradictions, "contradictory time evidence")
+		decision.ConfidenceCap = minConfidence(decision.ConfidenceCap, ConfidenceCapUnresolved)
+		decision.Reasons = appendUnique(decision.Reasons, "material contradiction remains unresolved")
+	}
 	if input.CausalClosure == nil || !input.CausalClosure.ExplainsOriginalSymptom {
 		decision.Reasons = append(decision.Reasons, "causal closure does not explain the original symptom")
-	}
-	if len(decision.Contradictions) > 0 {
-		decision.Reasons = appendUnique(decision.Reasons, "material contradiction remains unresolved")
 	}
 	decision.EffectiveConfidence = minConfidence(decision.EffectiveConfidence, decision.ConfidenceCap)
 	decision.PlanningEligible = input.Fixability == FixabilityCodeFixable &&
 		hasDirect && decision.EffectiveConfidence >= 0.70 &&
-		input.Resolution.Time != nil && input.Resolution.Time.Certainty != "" && input.Resolution.Time.Certainty != "unresolved" &&
-		!input.Resolution.Time.Contradictory && input.Resolution.Correlation != nil &&
-		input.Resolution.Correlation.Temporal && input.Resolution.Correlation.Operational &&
-		(primarySourceInspected(input.Resolution.Sources) || hasDirectBridge(input.Resolution)) &&
 		len(decision.Contradictions) == 0 && input.CausalClosure != nil && input.CausalClosure.ExplainsOriginalSymptom
 	if input.Fixability == FixabilityCodeFixable && !decision.PlanningEligible {
+		// Outcome 描述 gate verdict，不改写 agent diagnosis；application 必须将
+		// failed fact check 作为 structured challenge 回到同一 resilient loop。
 		decision.Outcome = FixabilityInsufficientEvidence
 	}
 	return decision
-}
-
-func primarySourceInspected(sources []SourceCoverage) bool {
-	for _, source := range sources {
-		if !source.Primary {
-			continue
-		}
-		if source.Status == SourceInspectedSuccess || source.Status == SourceInspectedEmpty {
-			return true
-		}
-	}
-	return false
-}
-
-func hasDirectBridge(resolution EvidenceResolution) bool {
-	if resolution.Correlation != nil && resolution.Correlation.DirectBridge {
-		return true
-	}
-	for _, source := range resolution.Sources {
-		if source.DirectBridge {
-			return true
-		}
-	}
-	return false
 }
 
 func clampConfidence(value float64) float64 {

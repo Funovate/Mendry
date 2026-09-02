@@ -288,6 +288,40 @@ func (c *AgentConversation) AppendRecoveryChallenge(challenge domain.RecoveryCha
 	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
 }
 
+// AppendExhaustionProposalRequest 把 D6 exhaustion proposal 请求（R18）作为
+// 下一轮可见的 recoverable observation 回喂。请求只含服务端固定 schema 指令、
+// attempt、available capability classes、剩余预算与一个可引用的 outcomeRef；
+// 不携带模型输出、凭据或 connector 细节。
+func (c *AgentConversation) AppendExhaustionProposalRequest(
+	attempt int,
+	capabilities []string,
+	remaining map[string]int64,
+	outcomeRef string,
+) {
+	if c == nil {
+		return
+	}
+	observation := map[string]interface{}{
+		"status": "recoverable",
+		"challenge": map[string]interface{}{
+			"schemaVersion":         domain.RecoverySchemaVersionV1,
+			"kind":                  domain.RecoveryChallengeKindExhaustion,
+			"severity":              domain.RecoverySeverityRecoverable,
+			"reasonCode":            "exhaustion_proof_required",
+			"attempt":               attempt,
+			"availableCapabilities": append([]string(nil), capabilities...),
+			"remainingBudget":       copyBudget(remaining),
+			"outcomeRef":            outcomeRef,
+			"message":               exhaustionProposalRequestMessage,
+		},
+	}
+	encoded, encodeErr := json.Marshal(observation)
+	if encodeErr != nil {
+		encoded = []byte(`{"status":"recoverable","challenge":{"reasonCode":"encode_failed","message":"exhaustion proposal request could not be encoded"}}`)
+	}
+	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
+}
+
 // AppendCausalClosureReassessment 要求模型消解“因果已闭环但证据不足”的语义
 // 冲突。该观察只包含服务端固定文案，不能携带模型输出或未净化的证据。
 func (c *AgentConversation) AppendCausalClosureReassessment() {
@@ -334,6 +368,9 @@ func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult,
 		"parameters":  redactConversationValue(req.Parameters),
 		"bytes":       result.BytesRetrieved,
 		"evidenceIds": append([]string(nil), result.EvidenceIDs...),
+	}
+	if result.ActionRef != "" {
+		observation["actionRef"] = result.ActionRef
 	}
 	if err != nil {
 		safe := c.recoveryToolError(req.ToolName, classifyToolError(err))

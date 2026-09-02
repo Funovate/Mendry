@@ -38,7 +38,7 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			"schemaVersion": map[string]interface{}{"type": "string", "const": EnvelopeVersion},
 			"kind": map[string]interface{}{
 				"type": "string",
-				"enum": []string{"requestTool", "diagnosis", "planCandidates", "stop"},
+				"enum": []string{"requestTool", "diagnosis", "planCandidates", "stop", "exhaustion"},
 			},
 			"stop": map[string]interface{}{
 				"type": "object",
@@ -49,6 +49,18 @@ func AgentEnvelopeSchema() map[string]interface{} {
 				"required":             []string{"reason", "recommendedNextAction"},
 				"additionalProperties": false,
 			},
+			"exhaustion": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"unresolvedGoal":      map[string]interface{}{"type": "string", "minLength": 1},
+					"attemptedPaths":      map[string]interface{}{"type": "array"},
+					"untriedCapabilities": map[string]interface{}{"type": "array"},
+					"bestConclusion":      map[string]interface{}{"type": "string", "minLength": 1},
+					"handoff":             map[string]interface{}{"type": "string", "minLength": 1},
+				},
+				"required":             []string{"unresolvedGoal", "attemptedPaths", "untriedCapabilities", "bestConclusion", "handoff"},
+				"additionalProperties": false,
+			},
 		},
 		"required": []string{"schemaVersion", "kind"},
 		"oneOf": []map[string]interface{}{
@@ -56,6 +68,7 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			{"required": []string{"diagnosis"}},
 			{"required": []string{"planCandidates"}},
 			{"required": []string{"stop"}},
+			{"required": []string{"exhaustion"}},
 		},
 	}
 }
@@ -74,6 +87,9 @@ type AgentEnvelope struct {
 	Diagnosis      *DiagnosisOutput      `json:"diagnosis,omitempty"`
 	PlanCandidates *PlanCandidatesOutput `json:"planCandidates,omitempty"`
 	Stop           *StopOutput           `json:"stop,omitempty"`
+	// Exhaustion 是 D6 exhaustion proof envelope；仅 resilient_v1 run 的
+	// coordinator 处理它，legacy run 把它当作 unexpected kind 协议错误。
+	Exhaustion *domain.ExhaustionProposalV1 `json:"exhaustion,omitempty"`
 	// Reserved for later slices
 	PatchComplete        *PatchCompleteOutput        `json:"patchComplete,omitempty"`
 	ValidationAssessment *ValidationAssessmentOutput `json:"validationAssessment,omitempty"`
@@ -200,6 +216,9 @@ func DecodeEnvelope(raw string) (*AgentEnvelope, error) {
 	if env.Stop != nil {
 		kinds = append(kinds, "stop")
 	}
+	if env.Exhaustion != nil {
+		kinds = append(kinds, "exhaustion")
+	}
 	if env.PatchComplete != nil {
 		kinds = append(kinds, "patchComplete")
 	}
@@ -234,6 +253,10 @@ func DecodeEnvelope(raw string) (*AgentEnvelope, error) {
 		}
 	case "stop":
 		if err := validateStop(env.Stop); err != nil {
+			return nil, err
+		}
+	case "exhaustion":
+		if err := validateExhaustionProposal(env.Exhaustion); err != nil {
 			return nil, err
 		}
 	case "patchComplete", "validationAssessment":
@@ -380,4 +403,13 @@ func validateStop(s *StopOutput) error {
 		return errStopRecommendationRequired
 	}
 	return nil
+}
+
+// validateExhaustionProposal 严格校验 D6 exhaustion payload；结构违规由
+// coordinator 按协议错误回喂，不能静默放行。
+func validateExhaustionProposal(proposal *domain.ExhaustionProposalV1) error {
+	if proposal == nil {
+		return fmt.Errorf("exhaustion: payload is required")
+	}
+	return proposal.Validate()
 }

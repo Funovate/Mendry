@@ -69,11 +69,12 @@ type continuationDiffSummary struct {
 }
 
 type continuationToolOutcome struct {
-	Name      string `json:"name"`
-	Phase     string `json:"phase"`
-	Outcome   string `json:"outcome"`
-	ErrorCode string `json:"errorCode,omitempty"`
-	Bytes     int64  `json:"bytes"`
+	Name       string `json:"name"`
+	Phase      string `json:"phase"`
+	Outcome    string `json:"outcome"`
+	OutcomeRef string `json:"outcomeRef,omitempty"`
+	ErrorCode  string `json:"errorCode,omitempty"`
+	Bytes      int64  `json:"bytes"`
 }
 
 type continuationDetails struct {
@@ -263,11 +264,12 @@ func buildContinuationBrief(predecessor domain.RunAggregate, planningCheckpoint 
 			break
 		}
 		brief.ToolOutcomes = append(brief.ToolOutcomes, continuationToolOutcome{
-			Name:      safeContinuationToolName(invocation.ToolName),
-			Phase:     safeContinuationState(invocation.Phase),
-			Outcome:   safeContinuationToolOutcome(invocation),
-			ErrorCode: safeContinuationErrorCode(invocation.Error),
-			Bytes:     max(invocation.BytesRetrieved, 0),
+			Name:       safeContinuationToolName(invocation.ToolName),
+			Phase:      safeContinuationState(invocation.Phase),
+			Outcome:    safeContinuationToolOutcome(invocation),
+			OutcomeRef: boundedContinuationText(invocation.InvocationID, 128),
+			ErrorCode:  safeContinuationErrorCode(invocation.Error),
+			Bytes:      max(invocation.BytesRetrieved, 0),
 		})
 	}
 

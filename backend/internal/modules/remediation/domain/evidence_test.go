@@ -20,7 +20,7 @@ func TestEvaluateEvidenceGateCapsMissingDirectEvidence(t *testing.T) {
 	}
 }
 
-func TestEvaluateEvidenceGateCapsUnresolvedCorrelation(t *testing.T) {
+func TestEvaluateEvidenceGateDoesNotGloballyRequireCorrelation(t *testing.T) {
 	decision := EvaluateEvidenceGate(EvidenceGateInput{
 		Fixability:      FixabilityCodeFixable,
 		ModelConfidence: 0.99,
@@ -33,11 +33,11 @@ func TestEvaluateEvidenceGateCapsUnresolvedCorrelation(t *testing.T) {
 		},
 		CausalClosure: &CausalClosure{ExplainsOriginalSymptom: true},
 	})
-	if decision.ConfidenceCap != ConfidenceCapUnresolved || decision.EffectiveConfidence != ConfidenceCapUnresolved {
-		t.Fatalf("decision = %#v, want unresolved cap", decision)
+	if decision.ConfidenceCap != 1 || decision.EffectiveConfidence != 0.99 {
+		t.Fatalf("decision = %#v, unresolved non-material correlation must not cap confidence", decision)
 	}
-	if decision.PlanningEligible {
-		t.Fatal("unresolved correlation must not be planning eligible")
+	if !decision.PlanningEligible {
+		t.Fatal("direct evidence plus causal closure must remain planning eligible without a universal correlation matrix")
 	}
 }
 

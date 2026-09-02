@@ -261,6 +261,44 @@ type RemediationSeries struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+// Append-only audit of each model-submitted diagnosis envelope before the evidence gate, with bounded correction metadata; the accepted decision remains the review authority and raw model turns are never stored.
+type RemediationSubmittedDiagnosis struct {
+	// Application-generated audit row UUID; rows are never updated once inserted.
+	ID pgtype.UUID
+	// Owning remediation run; deleting the run cascades its submitted-diagnosis audit rows.
+	RunID pgtype.UUID
+	// Monotonic per-run sequence assigned by the store in append order.
+	Sequence int32
+	// The model-submitted fixability from the original pre-gate envelope, preserved even when the evidence gate later rejects it.
+	FixabilityClass string
+	// The model-submitted numeric confidence from the original pre-gate envelope.
+	ConfidenceScore pgtype.Numeric
+	// Bounded structured causal reasoning from the envelope; never raw provider text or conversation history.
+	Reasoning string
+	// Model-declared contradiction summaries from the envelope, bounded to the same limit as remediation_decision.
+	Contradictions []string
+	// Model-declared missing evidence identifiers from the envelope.
+	MissingEvidence []string
+	// Model-cited evidence ID list from the envelope; must resolve against run-owned evidence.
+	EvidenceCitations []string
+	// Model-recommended next action from the envelope, bounded and credential-free.
+	RecommendedNextAction string
+	// Bounded correction classification: empty, evidence_correction (citation metadata), or exhaustion (accepted proof).
+	CorrectionKind string
+	// Bounded JSON array of corrected citations as {"evidenceId","storedClassification"} pairs showing only the authoritative stored classification.
+	CorrectionEvidence []byte
+	// Number of correction entries recorded, so audit can show a correction occurred without storing raw model text.
+	CorrectionCount int32
+	// True when the submission required a correction (citation mismatch or exhaustion acceptance).
+	Corrected bool
+	// Service-owned evidence gate verdict: empty when no gate ran, planning_eligible, or rejected; never derived from model text.
+	GateOutcome string
+	// Accepted remediation_decision produced from this submission when one exists, so audit can join submitted to accepted; null when the submission was corrected without a decision.
+	DecisionID pgtype.UUID
+	// PostgreSQL clock time when the submitted diagnosis was recorded.
+	SubmittedAt pgtype.Timestamptz
+}
+
 // 一次只读工具调用的元数据；参数已归一化，禁止保存秘密字段或原始大段输出。
 type RemediationToolInvocation struct {
 	// 应用生成的工具调用 UUID。
@@ -279,6 +317,12 @@ type RemediationToolInvocation struct {
 	DurationMs *int64
 	// 调用结果分类，例如 ok、rejected、unavailable 或 error。
 	Outcome string
+	// 服务生成并公开给模型的 capability action ref；历史行可为空。
+	OutcomeRef pgtype.Text
+	// 本次 invocation 产出的有界 evidence ID 集合，不含原始 payload。
+	EvidenceIds []string
+	// 失败时的稳定安全错误码；成功或历史行可为空。
+	ErrorCode pgtype.Text
 }
 
 // Latest working-memory snapshot per run; its sequence must be backed by a checkpoint event, and updating the snapshot is atomic with appending that event.

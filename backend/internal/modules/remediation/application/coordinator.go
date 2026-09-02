@@ -492,6 +492,11 @@ func (c *RemediationCoordinator) runQueued(
 		tracker := newResilientRunState(c.checkpointStore, run, reconstruction)
 		tracker.analysisOnly = analysisOnly
 		tracker.admitSoftBudget(c.budgetLimits, resumePhase)
+		// resilient_v1：predecessor attempt 的持久化 invocation ID/evidence ID
+		// 按工具 capability 绑定，供 continuation exhaustion proof 引用。
+		for _, invocation := range priorInvocations {
+			tracker.recordPriorToolAction(invocation)
+		}
 		ctx = withResilientRunState(ctx, tracker)
 	}
 	c.observer.RunStarted(ctx, RunStartedObservation{
@@ -684,6 +689,13 @@ func (c *RemediationCoordinator) drive(
 		}
 		bootstrap = prepareBootstrapEvidence(loaded)
 		scope.TimeRange = bootstrap.TimeRange
+		// resilient_v1：bootstrap 预存证据只记入 evidence authority 集合，
+		// 可支持 materiality 说明，但不能冒充任何工具 capability 已执行。
+		if tracker := resilientStateFrom(ctx); tracker != nil {
+			for _, record := range bootstrap.Records {
+				tracker.recordEvidenceRefs([]string{record.EvidenceID})
+			}
+		}
 	}
 
 	source := legacySourceCapability(scope)
@@ -807,6 +819,31 @@ func (c *RemediationCoordinator) drive(
 			continue
 		}
 
+		// R18/D6：resilient_v1 下模型可返回 exhaustion proof envelope；先于
+		// 普通 switch 处理，保证 legacy 的 default 分支（unexpected kind）
+		// 字节不变。接受→blocked_manual_review；拒绝→recoverable challenge。
+		if tracker := resilientStateFrom(ctx); tracker != nil && env.Kind == "exhaustion" {
+			// 强制 Tencent detail 证据门保持权威：gate 关闭（尚未尝试 detail）时
+			// exhaustion proof 与 diagnosis/stop 一样被 required_direct_evidence
+			// 拒绝，模型必须先调用 evidence.tencent_cls_detail（R20 能力目录
+			// 覆盖校验的前提是目录已包含该能力路径）。
+			if catalog.tencentDetailGateClosed() {
+				exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+				if err != nil || exhausted {
+					return err
+				}
+				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				continue
+			}
+			done, err := c.handleExhaustionEnvelope(ctx, budget, runID, usage, env.Exhaustion, catalog, conversation)
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+			continue
+		}
 		switch env.Kind {
 		case "requestTool":
 			protocolFailures = 0
@@ -847,6 +884,12 @@ func (c *RemediationCoordinator) drive(
 			}
 			protocolFailures = 0
 			diagnosis := env.Diagnosis
+			// D4/INC-2270 audit：先捕获模型提交的原始 pre-gate envelope（有界结构化
+			// 字段，不含 raw model turn / prompt / conversation）。submitted 行的
+			// fixability/confidence 始终是模型原值，即使 gate 硬拒绝或 citation
+			// classification 修正也不会被改写；audit persistence 是 hard blocker，
+			// 不能在缺少原 submission 的情况下继续 decision/route。
+			submitted := submittedDiagnosisFrom(diagnosis)
 			if diagnosis.Fixability == domain.FixabilityCodeFixable {
 				if c.evidenceGate == nil {
 					c.evidenceGate = NewEvidenceGate(nil)
@@ -860,20 +903,43 @@ func (c *RemediationCoordinator) drive(
 					// R6/R7/AC5：可纠正的 citation classification 元数据差异回喂同一
 					// 循环（evidence_correction challenge），模型修正后重新走 gate；
 					// 不终态化，也不静默改写结论。
+					// 同时把差异写入 submitted 行的 correction metadata（权威 stored
+					// classification），gate 判定独立记录在 gate_outcome，供审计证明
+					// 纠正发生过；本轮不产生 accepted decision，decision 链接为空。
+					submitted.Correction = submittedCorrectionFromMismatches(mismatches)
+					submitted.GateOutcome = submittedGateOutcome(decision)
+					if err := c.appendSubmittedDiagnosis(ctx, runID, submitted, false); err != nil {
+						return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+					}
 					if err := c.challengeEvidenceCorrections(ctx, budget, runID, usage, mismatches, conversation); err != nil {
 						return err
 					}
 					continue
 				}
+				submitted.GateOutcome = submittedGateOutcome(decision)
 				if !decision.PlanningEligible {
-					// gate 硬性拒绝（缺直接证据 / 时间或相关性未决 / 真矛盾）：结论
-					// 保留在 assessment 中，但沿用既有 insufficient-evidence 阻塞
-					// 路径，不进入 planning（hard gate 语义不变；exhaustion
-					// proposal 属于后续增量）。
+					if resilientStateFrom(ctx) != nil {
+						// R6/R8：failed fact check 保留 agent 的 fixability/confidence，
+						// 持久化 pre-gate submission 后以 structured challenge 回到同一
+						// resilient loop；不得创建改写后的 accepted decision。
+						if err := c.appendSubmittedDiagnosis(ctx, runID, submitted, false); err != nil {
+							return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+						}
+						if err := c.challengeFactCheck(ctx, budget, runID, usage, decision, conversation); err != nil {
+							return err
+						}
+						continue
+					}
+					// legacy mode 保留原有 rollout 行为；resilient_v1 永不走此改写。
 					diagnosis.Fixability = domain.FixabilityInsufficientEvidence
 				}
 			}
 			if err := c.appendDecision(ctx, runID, diagnosis); err != nil {
+				return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+			}
+			// D4：把 submitted 行与刚创建的 accepted decision 关联（audit
+			// submitted→accepted join）；无对应 decision 时保持 NULL。
+			if err := c.appendSubmittedDiagnosis(ctx, runID, submitted, true); err != nil {
 				return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 			}
 			done, err := c.routeDiagnosis(
@@ -921,6 +987,14 @@ func (c *RemediationCoordinator) drive(
 				continue
 			}
 			protocolFailures = 0
+			if tracker := resilientStateFrom(ctx); tracker != nil {
+				// R18/D6：resilient_v1 下 stop 不直接终态化；先要求并校验
+				// exhaustion proposal（模型下一轮返回 exhaustion envelope）。
+				if err := c.requestExhaustionProposal(ctx, budget, runID, usage, conversation, "stop"); err != nil {
+					return err
+				}
+				continue
+			}
 			// 将模型的 stop 转成结构化 diagnosis，保证人工建议进入 review chain，
 			// 同时保留 blocked_manual_review 的原有终态和安全 terminal reason。
 			stopDiagnosis := &DiagnosisOutput{
@@ -966,6 +1040,14 @@ func (c *RemediationCoordinator) challengePendingDockerRefinement(
 		return false, false, nil
 	}
 	if version <= *challengedVersion {
+		if tracker := resilientStateFrom(ctx); tracker != nil {
+			// R18/D6：resilient_v1 下 Docker refinement 耗尽不直接终态化；
+			// 先要求 exhaustion proposal（challenged=true 让主循环继续）。
+			if err := c.requestExhaustionProposal(ctx, budget, runID, usage, conversation, "docker_refinement_exhausted"); err != nil {
+				return false, true, err
+			}
+			return true, false, nil
+		}
 		effect := modelEffect(usage)
 		effect.TerminalReason = "insufficient_evidence"
 		exhausted, err := c.transitionBudgeted(
@@ -1040,6 +1122,77 @@ func (c *RemediationCoordinator) challengeEvidenceCorrections(
 	return nil
 }
 
+// challengeFactCheck 把 non-metadata fact-gate rejection 作为统一的
+// evidence_correction challenge 回到 resilient loop。相同服务端 fingerprint
+// 连续三次无进展才请求 exhaustion proof；不同缺口/证据集合会重置计数。
+func (c *RemediationCoordinator) challengeFactCheck(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	usage domain.ModelResult,
+	decision domain.EvidenceGateDecision,
+	conversation *AgentConversation,
+) error {
+	tracker := resilientStateFrom(ctx)
+	if tracker == nil {
+		return fmt.Errorf("fact-check challenge requires resilient run state")
+	}
+	exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+	if err != nil || exhausted {
+		return err
+	}
+	tracker.factCheckAttempts++
+	fingerprint := domain.FailureFingerprint{
+		FailedActionRef: strings.Join(append(append([]string(nil), decision.Reasons...), decision.MissingEvidence...), "\x00"),
+		Capability:      "provider_evidence",
+		ErrorCode:       "fact_check_rejected",
+	}.Key()
+	if fingerprint == tracker.lastFactCheckFingerprint {
+		tracker.factCheckNoProgress++
+	} else {
+		tracker.lastFactCheckFingerprint = fingerprint
+		tracker.factCheckNoProgress = 1
+	}
+	if tracker.factCheckNoProgress >= maxConsecutiveProtocolFailures {
+		return c.requestExhaustionProposalAfterRecorded(ctx, budget, runID, conversation, "fact_check_no_progress")
+	}
+	challenge, err := NewRecoveryChallenge(
+		domain.RecoveryChallengeKindEvidenceCorrection,
+		domain.RecoverySeverityRecoverable,
+		"fact_check_rejected",
+		"evidenceAssessment",
+		tracker.recoveryCapabilities(),
+		[]string{"rehydrate_evidence", "use_alternative", "revise_materiality"},
+		tracker.factCheckAttempts,
+		budget.remaining(),
+		factCheckChallengeMessage(decision),
+	)
+	if err != nil {
+		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(fmt.Errorf("build fact-check challenge: %w", err)))
+	}
+	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+		Kind: string(challenge.Kind), Action: "correct_fact_check", OutcomeRef: "challenge:fact_check_rejected",
+	})
+	if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
+		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+	}
+	conversation.AppendRecoveryChallenge(challenge)
+	return nil
+}
+
+func factCheckChallengeMessage(decision domain.EvidenceGateDecision) string {
+	parts := append([]string(nil), decision.Reasons...)
+	if len(decision.MissingEvidence) > 0 {
+		parts = append(parts, "missing: "+strings.Join(decision.MissingEvidence, ", "))
+	}
+	if len(decision.Contradictions) > 0 {
+		parts = append(parts, "contradictions: "+strings.Join(decision.Contradictions, ", "))
+	}
+	return "The submitted code_fixable diagnosis failed the service fact check: " + strings.Join(parts, "; ") +
+		". The diagnosis fixability and confidence were not rewritten. Re-read owned evidence, correct factual citations, " +
+		"or revise which unresolved facts are material to the causal chain, then submit a new diagnosis."
+}
+
 // evidenceCorrectionMessage 生成 evidence_correction challenge 的服务端固定
 // 文案：逐条列出 evidence ID 与持久化权威分类（均非凭据），并说明该差异是
 // 可纠正元数据，不改变 fixability/confidence（R7）。
@@ -1105,9 +1258,19 @@ func (c *RemediationCoordinator) routeDiagnosis(
 			}
 			// 没有因果闭环，也没有明确 tool request 时，重放同一 prompt 不会
 			// 增加 evidence；此时保留完整终态 diagnosis 并交给人工复核。
+			if tracker := resilientStateFrom(ctx); tracker != nil {
+				// R18/D6：resilient_v1 下空 insufficient_evidence 不直接终态化；
+				// 先要求 exhaustion proposal。
+				return false, c.requestExhaustionProposal(ctx, budget, runID, usage, conversation, "insufficient_evidence")
+			}
 			return true, c.blockForInsufficientEvidence(ctx, budget, runID, usage, diag.Fixability)
 		}
 		if *collectLoops >= c.maxCollectLoops {
+			if tracker := resilientStateFrom(ctx); tracker != nil {
+				// R18/D6：resilient_v1 下 collect-loop 耗尽不直接终态化；
+				// 先要求 exhaustion proposal。
+				return false, c.requestExhaustionProposal(ctx, budget, runID, usage, conversation, "collect_loop_exhausted")
+			}
 			return true, c.blockForInsufficientEvidence(ctx, budget, runID, usage, diag.Fixability)
 		}
 		*collectLoops++
@@ -1356,20 +1519,28 @@ func (c *RemediationCoordinator) runTool(
 		inv.EvidenceIDs = res.EvidenceIDs
 		effect = toolResultEffect(res)
 	}
+	// resilient_v1 为每次真实工具执行生成 capability-bound action ref。先将
+	// invocation audit 持久化成功，再把 observation/action ref 暴露给模型；
+	// 否则 action 不具备可用于 exhaustion proof 的 durable recovery authority。
+	tracker := resilientStateFrom(ctx)
+	if tracker != nil {
+		res.ActionRef = tracker.recordToolAction(req.ToolName, res.EvidenceIDs)
+		inv.InvocationID = res.ActionRef
+	}
+	if recordErr := c.store.RecordToolInvocation(ctx, runID, inv); recordErr != nil && tracker != nil {
+		return false, res, c.fail(ctx, runID, phase, markPersistenceFailure(fmt.Errorf("record tool invocation: %w", recordErr)))
+	}
 	if conversation != nil {
 		conversation.AppendToolResult(*req, res, err)
 	}
 	// (5) resilient_v1：成功的 evidence.read 把证据 ID 记入进程内 checkpoint
 	// evidence index，随下一次强制 AppendCheckpoint 持久化（D3/R15）；不解码
-	// payload 或凭据。legacy 下 resilientStateFrom 为 nil，本调用是 no-op。
-	if tracker := resilientStateFrom(ctx); tracker != nil && err == nil && req.ToolName == ToolEvidenceRead {
+	// payload 或凭据。legacy 下 tracker 为 nil，本调用是 no-op。
+	if tracker != nil && err == nil && req.ToolName == ToolEvidenceRead {
 		if page, ok := res.Payload.(domain.EvidenceReadPage); ok {
 			tracker.recordEvidenceRead(page)
 		}
 	}
-	// Best-effort audit record; a storage error here does not change the model's
-	// decision path and is surfaced on the next transition instead.
-	_ = c.store.RecordToolInvocation(ctx, runID, inv)
 	if runDeadlineExceeded {
 		exhausted, budgetErr := c.recordElapsedOperation(ctx, budget, runID, phase, effect)
 		return exhausted, res, budgetErr
@@ -1425,6 +1596,42 @@ func (c *RemediationCoordinator) handleTurnError(
 	if errors.Is(cause, ErrInvalidEnvelope) {
 		if protocolFailures != nil {
 			*protocolFailures = *protocolFailures + 1
+		}
+		if tracker := resilientStateFrom(ctx); tracker != nil {
+			attempt := 1
+			if protocolFailures != nil && *protocolFailures > 0 {
+				attempt = *protocolFailures
+			}
+			if phase == domain.RunStateDiagnosing && attempt >= maxConsecutiveProtocolFailures {
+				return false, c.requestExhaustionProposalAfterRecorded(
+					ctx, budget, runID, conversation, "protocol_no_progress",
+				)
+			}
+			correction := ProtocolCorrectionFor(phase, cause)
+			challenge, buildErr := NewRecoveryChallenge(
+				domain.RecoveryChallengeKindProtocolCorrection,
+				domain.RecoverySeverityRecoverable,
+				correction.Code,
+				"agentEnvelope",
+				tracker.recoveryCapabilities(),
+				[]string{"correct_request"},
+				attempt,
+				budget.remaining(),
+				correction.Message,
+			)
+			if buildErr != nil {
+				return true, c.fail(ctx, runID, phase, markPersistenceFailure(fmt.Errorf("build protocol recovery challenge: %w", buildErr)))
+			}
+			tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+				Kind: string(challenge.Kind), Action: "correct_envelope", OutcomeRef: "challenge:" + challenge.ReasonCode,
+			})
+			if checkpointErr := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonRecovery); checkpointErr != nil {
+				return true, c.fail(ctx, runID, phase, markPersistenceFailure(checkpointErr))
+			}
+			if conversation != nil {
+				conversation.AppendRecoveryChallenge(challenge)
+			}
+			return false, nil
 		}
 		if protocolFailures != nil && *protocolFailures >= maxConsecutiveProtocolFailures {
 			if err := c.transition(ctx, runID, phase, domain.RunStateBlockedManualReview, domain.Effect{

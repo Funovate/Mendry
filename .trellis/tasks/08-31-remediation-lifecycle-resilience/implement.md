@@ -56,8 +56,9 @@ Progress markers: `[x]` = delivered slice (2026-08-31, first pass). Remaining Ph
       optimistic sequence, run/series/context validation, and bounded JSON
       decoding. `adapter/postgres/checkpoint_store.go` + `CheckpointStore`;
       append+snapshot upsert in one transaction; load rejects wrong
-      identity/schema/hash/unbacked sequence. Pending review integration-DB
-      execution (tests skip without a reachable PostgreSQL).
+      identity/schema/hash/unbacked sequence. Verified against the development
+      PostgreSQL database through the complete remediation adapter test package
+      after applying migrations 16 and 17.
 - [x] Implement hybrid checkpoint triggers and provider-neutral conversation
       reconstruction; keep optional provider-native continuation process-local.
       Slice 5a (2026-09-01) delivered the forced+recovery trigger set and
@@ -138,9 +139,9 @@ Progress markers: `[x]` = delivered slice (2026-08-31, first pass). Remaining Ph
 
 ## Phase 2: Diagnosis Vertical Slice
 
-Progress markers: `[x]` = delivered increment (2026-09-02, INC-2270 core). Item 3 is
-marked only for the fact-gate/evidence-correction part; protocol/tool/context/
-budget challenge feedback beyond the fact gate remains later increments.
+Progress markers: `[x]` = delivered increment; `[ ]` = partially delivered or
+pending full acceptance coverage. Fact-gate and protocol recovery are delivered;
+tool/context challenge unification and full lifecycle restart coverage remain open.
 
 - [x] Remove mandatory provider/Docker/repository ordering from diagnosis
       prompts and express goal, trusted locators, capabilities, constraints, and
@@ -165,12 +166,16 @@ budget challenge feedback beyond the fact gate remains later increments.
       `EvidenceAssessment` and merges gate missing-evidence/contradiction
       metadata only. `Evaluate`/`Apply` now return the correctable
       `[]CitationClassificationMismatch` (evidence ID + stored authoritative
-      classification) alongside the decision. Hard gate semantics (missing
-      direct evidence cap 0.39, unresolved time/correlation and genuine material
-      contradictions cap 0.69, planning eligibility) are unchanged; the
-      coordinator routes a hard-rejected `code_fixable` through the existing
-      insufficient-evidence terminal path without entering planning.
-- [x] Feed fact-gate, protocol, tool, context, and budget challenges back into
+      classification) alongside the decision. In `resilient_v1`, every failed
+      `code_fixable` fact check now persists the original submission and returns
+      a structured challenge to the same loop; repeated identical no-progress
+      decisions request an exhaustion proposal instead of rewriting fixability.
+      Missing direct evidence and genuine material contradictions remain hard
+      fact issues. Time, host identity, request correlation, and primary-source
+      coverage are retained as audit facts but are no longer universal planning
+      prerequisites when direct evidence and causal closure establish that the
+      gaps are non-material. Legacy mode retains its rollout routing.
+- [ ] Feed fact-gate, protocol, tool, context, and budget challenges back into
       the same conversation and checkpoint after strategy changes.
       Delivered (2026-09-02, fact-gate/evidence-correction part only): the
       diagnosis case after `EvidenceGate.Apply` appends a bounded
@@ -179,16 +184,154 @@ budget challenge feedback beyond the fact gate remains later increments.
       sanitized message) and continues the loop (AC5); the challenged model turn
       is charged to the budget; resilient_v1 additionally records a
       `CheckpointRecovery{kind: evidence_correction, action: correct_citation}`
-      and forces a recovery checkpoint (D2). Protocol/tool/context/budget
-      challenge feedback beyond the fact gate remains later increments.
-- [ ] Replace direct terminal paths for `stop`, empty
+      and forces a recovery checkpoint (D2). Repeated malformed envelopes in
+      `resilient_v1` now use `protocol_correction` checkpoints and normalize
+      no-progress to an exhaustion request rather than direct manual review.
+      Tool-failure and context-rehydration observations still need migration to
+      the common `RecoveryChallengeV1` envelope before this aggregate item can
+      be marked complete.
+- [x] Replace direct terminal paths for `stop`, empty
       `insufficient_evidence`, Docker refinement, and collect-loop limits with
       exhaustion proposals and service validation.
-- [ ] Persist submitted diagnoses, accepted diagnoses, gate decisions, and
+      Delivered (2026-09-03, feature-gated to `agentLoopMode=resilient_v1`):
+      new `domain.ExhaustionProposalV1` (D6 JSON: unresolvedGoal /
+      attemptedPaths{capability,outcomeRefs} / untriedCapabilities{capability,
+      reasonCode unavailable|irrelevant|unsafe|budget_prohibited,evidenceRefs} /
+      bestConclusion / handoff; bounded validation, known D1 capability classes,
+      no inner schemaVersion — the envelope carries it) plus
+      `RecoveryChallengeKindExhaustion`. New pure application validator
+      `ValidateExhaustionProposal` checks structural bounds, coverage of every
+      advertised catalog capability, and capability-bound action refs generated
+      only for real persisted tool invocations. Migration 17 persists each
+      service-issued `outcome_ref` together with `tool_name`, coarse outcome,
+      sanitized error code, and bounded evidence IDs; continuation rehydrates
+      that same ref, so the binding survives process loss. Recovery challenge
+      refs and
+      evidence from another capability cannot prove an attempted path. Untried
+      `irrelevant` reasons require owned evidence; `unavailable`/`unsafe` require
+      matching service policy state; `budget_prohibited` validates model call,
+      model cost, tool, elapsed, and capability-specific byte dimensions.
+      Incomplete proofs return a recoverable exhaustion challenge listing the
+      uncovered capability/recovery class (AC8/AC9/R20). Coordinator
+      wiring is gated by `resilientStateFrom(ctx) != nil`: `stop`, empty
+      `insufficient_evidence`, Docker-refinement exhaustion, and collect-loop
+      exhaustion now append a bounded D6 proposal request
+      (`conversation.AppendExhaustionProposalRequest`, kind exhaustion,
+      reasonCode exhaustion_proof_required) with a forced recovery checkpoint
+      (D2) before re-prompting; a strictly decoded `exhaustion` envelope is
+      service-validated, an accepted proof persists a bounded proposal-derived
+      decision and transitions to `blocked_manual_review` with terminal reason
+      `exhaustion_proof`, and an incomplete/malformed proposal returns a
+      recoverable challenge (or protocol correction) and the loop continues.
+      Review hardening (2026-09-03): the exhaustion intercept also honors the
+      mandatory Tencent detail evidence gate — while `tencentDetailGateClosed`,
+      an exhaustion envelope is rejected with `required_direct_evidence` exactly
+      like diagnosis/stop, so a proof cannot bypass the gate to hand off.
+      Budgeting reuses `recordSameStateBudget`/`transitionBudgeted` unchanged;
+      only the global hard ceiling yields `budget_exhausted`. The mode gate also
+      keeps `legacy` byte-for-byte: legacy default-mode coordinator tests
+      (`TestCoordinator_StopReachesBlockedManualReview`,
+      `TestCoordinator_InsufficientEvidenceBoundedLoop`,
+      `TestCoordinator_InsufficientEvidenceWithoutCollectionStopsImmediately`,
+      `TestCoordinator_BlocksRepeatedDiagnosisWithPendingDockerRefinement`, the
+      causal-closure and stop-without-suggestion tests) pass unchanged and were
+      not edited; legacy `handleTurnError` terminalization and direct
+      stop/insufficient routing remain unchanged. In `resilient_v1`, repeated
+      malformed envelopes now checkpoint protocol recovery and request a
+      service-validated exhaustion proof instead of directly terminalizing.
+      Existing resilient-mode tests that used terminal
+      `insufficient_evidence` were updated to `unsafe_to_automate` (a D6 policy
+      blocker that retains its direct terminal) so they keep asserting their
+      checkpoint/soft-budget/continuation behavior without the new exhaustion
+      turn; new tests cover the validator matrix and the resilient coordinator
+      flows (stop->proposal->accept, incomplete->challenge->retry, insufficient,
+      collect-loop, docker-refinement recovery via a narrower query, repeated
+      malformed recovery, and malformed proposal -> protocol correction).
+- [x] Persist submitted diagnoses, accepted diagnoses, gate decisions, and
       bounded correction metadata without raw model turns.
+      Delivered (2026-09-03, D4 audit slice): migration `000017_submitted_diagnosis`
+      adds the `remediation_submitted_diagnosis` audit table and additive durable
+      outcome-ref/evidence columns on `remediation_tool_invocation` (per-run
+      sequence, original pre-gate fixability/confidence/reasoning/citations/
+      missing/contradictions/next-action, correction_kind/evidence/count/
+      corrected, gate_outcome, nullable decision_id FK, semantic comments on
+      every table/column, named CHECKs incl. fixability enum, confidence
+      [0,1], bounded reasoning/arrays/next-action, correction-kind allowlist
+      and corrected-requires-kind). Domain `SubmittedDiagnosis` +
+      `SubmittedDiagnosisCorrection`/`SubmittedEvidenceClassification` with
+      bounded `Validate`; companion port `domain.SubmittedDiagnosisStore`
+      (`AppendSubmittedDiagnosis`/`ListSubmittedDiagnoses`/`LatestDecisionID`)
+      keeps the frozen `RunStore` unchanged. `adapter/postgres` implements the
+      port on `RunStore` with transactional append, series-lock-serialized
+      sequence allocation, numeric confidence, JSONB correction evidence,
+      same-run decision validation, run-FK validation, and fail-closed mapping.
+      Checked-in sqlc artifacts are synchronized with the query contract and
+      compile under the full backend suite; byte-idempotent `generate-check`
+      remains pending because the pinned Go 1.26/sqlc toolchain could not reach
+      `sum.golang.org` in this environment. Coordinator wiring (both modes; gated behind store
+      capability) captures the pre-gate envelope and requires the submitted row
+      to persist. Store capability, validation, latest-decision lookup, or
+      append failure is a persistence blocker rather than a best-effort
+      omission. PostgreSQL serializes sequence allocation with the existing
+      series row lock, verifies decision ownership against the same run, and
+      enforces correction kind/count/evidence consistency.
+      Correction metadata is recorded when
+      `CitationClassificationMismatch`s exist (kind `evidence_correction`,
+      stored classifications, corrected=true) or with gate_outcome
+      planning_eligible/rejected; the accepted `remediation_decision` row is
+      linked via `LatestDecisionID` after `appendDecision` (frozen
+      `AppendDecision` returns no ID; the mismatch-challenge turn stays
+      unlinked); `handleExhaustionEnvelope` persists an accepted-proof row with
+      correction kind exhaustion linked to its decision. The durable
+      `remediation_tool_invocation` row also stores the service-issued action ref,
+      bounded evidence IDs, coarse outcome, and sanitized error code before that
+      ref is exposed to the model; audit failure is a persistence blocker and
+      continuation rehydrates the same authority. Hard-rejected
+      `code_fixable` keeps the model's ORIGINAL fixability/confidence in the
+      submitted row (INC-2270 audit core); resilient mode challenges the same
+      loop and never persists a silently rewritten diagnosis. Legacy rollout
+      routing remains unchanged. No raw model turn/prompt/conversation text is
+      persisted. Tests: domain bounds/consistency matrix, store integration
+      round-trip + concurrent monotonic sequence + decision link + omit-raw-text,
+      coordinator hard-reject/mismatch/exhaustion/legacy-routing/omit-raw-text
+      cases; migration source test extended to 17 embedded versions. The full
+      remediation PostgreSQL adapter package passes against the development
+      database at schema version 17, including checkpoint/evidence continuation
+      and concurrent audit sequence coverage.
 - [ ] Pass the `INC-2270`, code-first-to-logs, continuation rehydration, malformed
       envelope, no-progress, and hard-blocker test matrix before enabling the
       feature flag for any project.
+      AC1-AC6 and AC8 diagnosis regressions are green. The named AC7 test covers
+      diagnosis-boundary reconstruction only; AC7's required before/after crash
+      windows at every lifecycle phase remain in Phase 3, so this aggregate
+      acceptance item is intentionally not marked complete.
+
+      Diagnosis subset delivered (2026-09-04): additive regression matrix
+      `backend/internal/modules/remediation/application/inc2270_regression_test.go`
+      (test-only; no production behavior or existing test changed) maps named
+      `TestINC2270Regression_AC1..AC8_*` tests 1:1 to AC1-AC8 using the existing
+      fakes (`newCoordinator`/`sourceWiredCoordinator`, scripted models, fake
+      stores), plus `TestINC2270Regression_FixtureLoaded` which loads
+      `research/inc-2270-replay.json` (skips when the file is absent) and asserts
+      both canonical replay contracts: attempt 1 (silent gate rewrite →
+      structured challenge + preserved causal/fixability proposal, AC1/AC5) and
+      attempt 2 (provider-detail loss → same-series `evidence.read` rehydration,
+      AC2). No-progress and hard-blocker behavior is exercised through the AC4/
+      AC6/AC8 flows and the existing legacy stop/insufficient tests. `go test
+      ./...`, race, vet, build, gofmt, and `git diff --check` stay green.
+
+      | AC | Test | Core assertion |
+      |----|------|----------------|
+      | AC1 | `TestINC2270Regression_AC1_TrustedLocatorsLeadCodeFirstAndCorrectionEntersPlanning` | First turn carries trusted stack/path/line/rawTime + evidence ID; agent inspects the exact deployed code first (no forced Docker-first order); classification challenge corrected; `code_fixable` preserved; enters planning without manual review |
+      | AC2 | `TestINC2270Regression_AC2_ContinuationRehydratesEarlierProviderDetailByID` | Later attempt re-reads earlier provider detail by ID via `evidence.read` (index not degraded to runtime-only); tampered cursor cannot forge offset/expiry |
+      | AC3 | `TestINC2270Regression_AC3_AmbiguousCodeFirstSwitchesToRuntimeThenBackToRepository` | Ambiguous code-first → SSH inspect failure → refined query → back to repository; run stays active |
+      | AC4 | `TestINC2270Regression_AC4_ConnectorFailureKeepsAlternativeToolAndRunActive` | Log-API failure returns a safe retryable observation; repository/evidence.read alternatives remain advertised; run never terminalizes |
+      | AC5 | `TestINC2270Regression_AC5_CitationClassificationMismatchIsCorrectedNotContradicted` | Mismatch corrected through the loop; 0.9 confidence and zero contradiction preserved |
+      | AC6 | `TestINC2270Regression_AC6_RecoverableLoopFailuresPreserveDiagnosisClass` | Malformed envelope, oversized observation, provider-native continuation loss all recover with `code_fixable` intact (never degraded to `insufficient_evidence`) |
+      | AC7 | `TestINC2270Regression_AC7_RestartReconstructsFromDurableCheckpoint` | Restart at a phase boundary reconstructs from the latest durable checkpoint with no opaque provider session |
+      | AC8 | `TestINC2270Regression_AC8_IncompleteExhaustionProposalRejectedWithChallenge` | Early/incomplete proposal rejected; challenge lists every uncovered capability/recovery class; complete proof accepted with `exhaustion_proof` |
+
+      Existing coverage reused without modification: `TestCoordinator_EvidenceCorrectionChallengeThenPlanning` (AC1/AC5), `TestCoordinatorContinueRendersSameSeriesEvidenceIndex` + `evidence_read_test.go` (AC2), Docker refinement + `TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead` (AC3), `TestCoordinator_ConnectorFailureIsModelVisibleAndSafe` / `TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn` (AC4), `TestResilient_ContinuationReconstructsFromDurableCheckpoint` (AC7), `TestCoordinator_ResilientIncompleteExhaustionProposalChallengesAndRetries` + `TestValidateExhaustionProposal` (AC8).
 
 ## Phase 3: Remaining Lifecycle
 

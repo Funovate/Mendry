@@ -15,6 +15,11 @@ import (
 // 镜像并在 domain Validate 处再次兜底）。
 const maxResilientEvidenceIndex = 256
 
+// maxResilientActionRefs 是进程内 capability-bound action/evidence ref 的
+// 条目上限；exhaustion proof 只能引用真实工具动作或已准入证据，不能引用
+// recovery challenge 冒充调查动作。
+const maxResilientActionRefs = 256
+
 // 以下本地常量镜像 domain checkpoint 的字段级 rune 上限（domain 常量未导出）；
 // boundedContinuationText 只做渲染裁剪，持久化边界仍由 domain Validate 兜底。
 const (
@@ -52,9 +57,25 @@ type resilientRunState struct {
 	// evidenceCorrectionAttempts 是本次 run 已回喂的 evidence_correction
 	// challenge 次数，用作 challenge Attempt 字段的进度计数。
 	evidenceCorrectionAttempts int
-	nextActions                []string
-	conversation               *AgentConversation
-	analysisOnly               bool
+	// factCheckAttempts 记录 non-metadata failed fact checks；只有相同服务
+	// fingerprint 连续无进展达到上限才转为 exhaustion proposal。
+	factCheckAttempts        int
+	factCheckNoProgress      int
+	lastFactCheckFingerprint string
+	nextActions              []string
+	conversation             *AgentConversation
+	analysisOnly             bool
+	// exhaustionProposalAttempts 是本次 run 已请求的 exhaustion proposal
+	// 次数，用作 exhaustion challenge 的 Attempt 字段进度计数。
+	exhaustionProposalAttempts int
+	// actionRefsByCapability 把真实工具动作及其结果 evidence IDs 绑定到
+	// D1 capability class。exhaustion validator 按 capability 校验，禁止用
+	// recovery challenge 或另一类工具的 ref 冒充已尝试路径。
+	actionRefsByCapability map[string][]string
+	// evidenceRefs 是当前 run/series 已准入的证据身份集合，供 untried
+	// materiality 原因引用；它与已尝试 action refs 保持不同权威边界。
+	evidenceRefs   []string
+	actionSequence int
 }
 
 // newResilientRunState 在 runQueued 成功 claim（queued→preparing_context）
@@ -64,11 +85,12 @@ type resilientRunState struct {
 // checkpoint 重建块（AC7 种子）。
 func newResilientRunState(store domain.CheckpointStore, run domain.Run, reconstruction string) *resilientRunState {
 	return &resilientRunState{
-		store:           store,
-		run:             run,
-		observedVersion: run.Version + 1,
-		reconstruction:  reconstruction,
-		lastSoftSignal:  softWithinAllocation,
+		store:                  store,
+		run:                    run,
+		observedVersion:        run.Version + 1,
+		reconstruction:         reconstruction,
+		lastSoftSignal:         softWithinAllocation,
+		actionRefsByCapability: make(map[string][]string),
 	}
 }
 
@@ -211,6 +233,94 @@ func (t *resilientRunState) recordEvidenceRead(page domain.EvidenceReadPage) {
 		Locator:     locator,
 		ContentHash: page.ContentHash,
 	})
+}
+
+// recordEvidenceRefs 把当前 series 已准入的 evidence IDs 记入独立集合。
+// 这些 refs 可以支持 untried capability 的 factual/materiality 说明，但不能
+// 证明对应 capability 已执行。
+func (t *resilientRunState) recordEvidenceRefs(refs []string) {
+	if t == nil {
+		return
+	}
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || containsExhaustionRef(t.evidenceRefs, ref) {
+			continue
+		}
+		if len(t.evidenceRefs) >= maxResilientActionRefs {
+			return
+		}
+		t.evidenceRefs = append(t.evidenceRefs, ref)
+	}
+}
+
+// recordToolAction 为一次真实工具调用生成模型可见 action ref，并把该 ref 与
+// 工具结果 evidence IDs 绑定到工具对应的 D1 capability。失败或拒绝的调用也
+// 是真实尝试，因此仍有 action ref；未知工具 class 不参与 exhaustion coverage。
+func (t *resilientRunState) recordToolAction(toolName string, evidenceIDs []string) string {
+	if t == nil {
+		return ""
+	}
+	capability := toolCapabilityClass(toolName)
+	if capability == "" {
+		return ""
+	}
+	t.actionSequence++
+	actionRef := fmt.Sprintf("action:%s:%d", capability, t.actionSequence)
+	t.bindCapabilityRefs(capability, append([]string{actionRef}, evidenceIDs...))
+	t.recordEvidenceRefs(evidenceIDs)
+	return actionRef
+}
+
+// recordPriorToolAction 恢复 predecessor attempt 的持久化工具身份。continuation
+// brief 会显示 invocation ID；已有 evidence IDs 同时保持可重读证据身份。
+func (t *resilientRunState) recordPriorToolAction(invocation domain.ToolInvocation) {
+	if t == nil {
+		return
+	}
+	capability := toolCapabilityClass(invocation.ToolName)
+	if capability == "" {
+		return
+	}
+	refs := append([]string(nil), invocation.EvidenceIDs...)
+	if strings.TrimSpace(invocation.InvocationID) != "" {
+		refs = append([]string{invocation.InvocationID}, refs...)
+	}
+	t.bindCapabilityRefs(capability, refs)
+	t.recordEvidenceRefs(invocation.EvidenceIDs)
+}
+
+func (t *resilientRunState) bindCapabilityRefs(capability string, refs []string) {
+	if t.actionRefsByCapability == nil {
+		t.actionRefsByCapability = make(map[string][]string)
+	}
+	current := t.actionRefsByCapability[capability]
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || containsExhaustionRef(current, ref) {
+			continue
+		}
+		if len(current) >= maxResilientActionRefs {
+			break
+		}
+		current = append(current, ref)
+	}
+	t.actionRefsByCapability[capability] = current
+}
+
+// exhaustionValidationContext 返回服务权威的 capability/action、evidence、
+// recovery 与预算快照。返回值复制内部集合，validator 不能修改 tracker。
+func (t *resilientRunState) exhaustionValidationContext(catalog *ToolCatalog, remaining map[string]int64) ExhaustionValidationContext {
+	context := ExhaustionValidationContext{
+		CatalogCapabilities: catalogCapabilityClasses(catalog),
+		ActionRefs:          make(map[string][]string, len(t.actionRefsByCapability)),
+		EvidenceRefs:        append([]string(nil), t.evidenceRefs...),
+		RemainingBudget:     copyBudget(remaining),
+	}
+	for capability, refs := range t.actionRefsByCapability {
+		context.ActionRefs[capability] = append([]string(nil), refs...)
+	}
+	return context
 }
 
 // softBudgetRecovery 把一次已持久化的模型/工具消耗镜像记入 soft-budget

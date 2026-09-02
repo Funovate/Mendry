@@ -191,7 +191,7 @@ func validateEnvelopeForPhase(phase domain.RunState, kind string) error {
 	valid := false
 	switch phase {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
-		valid = kind == "requestTool" || kind == "diagnosis" || kind == "stop"
+		valid = kind == "requestTool" || kind == "diagnosis" || kind == "stop" || kind == "exhaustion"
 	case domain.RunStatePlanning:
 		valid = kind == "requestTool" || kind == "planCandidates"
 	default:
@@ -274,8 +274,9 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"true, classify the actual fixability, and record the unmatched test policy as an audit " +
 			"finding or recommended next action. Use insufficient_evidence only when missing material " +
 			"evidence prevents causal explanation or a safe fixability classification. Missing direct fault " +
-			"evidence or unresolved time/host/source " +
-			"coverage is insufficient_evidence, not a code-fixable plan. " +
+			"evidence remains a fact-gate issue. Unresolved time, host identity, request correlation, or source " +
+			"coverage must be recorded with whether the gap is material to this causal chain; none is a universal " +
+			"prerequisite for every code fix. " +
 			"Tool guidance (no ordering is required): for an SSH source, ssh.inspect may list " +
 			"the hinted logPath directory first to discover actual file names; never assume " +
 			"logPath is a file to tail. " +

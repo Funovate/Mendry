@@ -38,6 +38,11 @@ const (
 	// reserve_touched）对应的 recoverable challenge class；它永不直接产生
 	// budget_exhausted 硬终态。
 	RecoveryChallengeKindBudget RecoveryChallengeKind = "budget"
+	// RecoveryChallengeKindExhaustion 是 D6 exhaustion proof 流程对应的
+	// challenge class：模型 stop / 空 insufficient_evidence / Docker refinement
+	// 或 collect-loop 耗尽时要求并校验 exhaustion proposal，不完整证明作为
+	// recoverable challenge 回喂同一循环。
+	RecoveryChallengeKindExhaustion RecoveryChallengeKind = "exhaustion"
 )
 
 // IsKnown 报告 kind 是否属于 D5 允许值。
@@ -46,7 +51,7 @@ func (k RecoveryChallengeKind) IsKnown() bool {
 	case RecoveryChallengeKindEvidenceCorrection, RecoveryChallengeKindProtocolCorrection,
 		RecoveryChallengeKindToolFailure, RecoveryChallengeKindContextRehydration,
 		RecoveryChallengeKindValidationRevision, RecoveryChallengeKindPublicationRetry,
-		RecoveryChallengeKindBudget:
+		RecoveryChallengeKindBudget, RecoveryChallengeKindExhaustion:
 		return true
 	default:
 		return false

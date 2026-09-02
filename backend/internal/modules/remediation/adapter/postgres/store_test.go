@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -658,16 +659,21 @@ func TestRunStore_RecordToolInvocation(t *testing.T) {
 
 	t.Run("records invocations with correct sequence", func(t *testing.T) {
 		err := store.RecordToolInvocation(ctx, run.RunID, domain.ToolInvocation{
-			ToolName: "repository.read_file",
-			Phase:    domain.RunStateDiagnosing,
+			InvocationID: "action:repository:1",
+			ToolName:     "repository.read_file",
+			Phase:        domain.RunStateDiagnosing,
+			EvidenceIDs:  []string{"ev-repo-1"},
 		})
 		if err != nil {
 			t.Fatalf("RecordToolInvocation failed: %v", err)
 		}
 
 		err = store.RecordToolInvocation(ctx, run.RunID, domain.ToolInvocation{
-			ToolName: "evidence.search",
-			Phase:    domain.RunStateDiagnosing,
+			InvocationID: "action:provider_evidence:1",
+			ToolName:     "evidence.search",
+			Phase:        domain.RunStateDiagnosing,
+			EvidenceIDs:  []string{"ev-provider-1"},
+			Error:        "connector_timeout",
 		})
 		if err != nil {
 			t.Fatalf("second RecordToolInvocation failed: %v", err)
@@ -678,7 +684,15 @@ func TestRunStore_RecordToolInvocation(t *testing.T) {
 			t.Fatalf("Get failed: %v", err)
 		}
 		if len(agg.ToolInvocations) != 2 {
-			t.Errorf("expected 2 invocations, got %d", len(agg.ToolInvocations))
+			t.Fatalf("expected 2 invocations, got %d", len(agg.ToolInvocations))
+		}
+		first, second := agg.ToolInvocations[0], agg.ToolInvocations[1]
+		if first.InvocationID != "action:repository:1" || !reflect.DeepEqual(first.EvidenceIDs, []string{"ev-repo-1"}) {
+			t.Fatalf("first invocation authority = %#v", first)
+		}
+		if second.InvocationID != "action:provider_evidence:1" || second.Error != "connector_timeout" ||
+			!reflect.DeepEqual(second.EvidenceIDs, []string{"ev-provider-1"}) {
+			t.Fatalf("second invocation authority = %#v", second)
 		}
 	})
 }
@@ -718,7 +732,8 @@ func TestRunStore_RecordToolInvocationOmitsRawPayloads(t *testing.T) {
 	if len(agg.ToolInvocations) != 1 {
 		t.Fatalf("tool invocations = %d, want 1", len(agg.ToolInvocations))
 	}
-	if got := agg.ToolInvocations[0]; got.ToolName != "repository.read_file" || got.Phase != domain.RunStateDiagnosing || got.ResultSummary != "error" {
+	if got := agg.ToolInvocations[0]; got.ToolName != "repository.read_file" || got.Phase != domain.RunStateDiagnosing ||
+		got.ResultSummary != "error" || got.Error != "error" {
 		t.Fatalf("sanitized invocation = %#v", got)
 	}
 }
@@ -956,7 +971,9 @@ func TestRunStore_ContinuationEvidenceSameSeriesReuse(t *testing.T) {
 		t.Fatalf("evidence run ownership = %s, want %s", evidence.RunID, root.RunID)
 	}
 
-	// child attempt 在同一 series 中创建。
+	// child attempt 在同一 series 中创建；请求 context version 2 前先推进
+	// incident 的权威版本，避免用不存在的上下文创建 continuation。
+	setIncidentContextVersion(t, pool, root.IncidentID, 2)
 	child, err := store.CreateNextAttempt(ctx, nextAttemptInput(root, domain.TriggerReasonManualContinue, 2))
 	if err != nil {
 		t.Fatalf("CreateNextAttempt: %v", err)
@@ -1084,7 +1101,14 @@ func TestRunStore_ContinuationEvidenceIndexSameSeries(t *testing.T) {
 		t.Fatalf("AppendEvidence runtime: %v", err)
 	}
 
-	// pre-run normalized_alert 证据（run_id IS NULL）同样进入索引。
+	// pre-run normalized_alert 证据（run_id IS NULL）同样进入索引。它从
+	// incident 快照 baseline，因此先把 incident 对齐到 series 并推进 child
+	// 将使用的 context version。
+	if _, err := pool.Exec(ctx,
+		`UPDATE incidents SET version = 2, lifecycle_generation = $2, deployed_commit = $3 WHERE id = $1`,
+		root.IncidentID, root.LifecycleGeneration, root.DeployedCommit); err != nil {
+		t.Fatalf("align continuation incident baseline: %v", err)
+	}
 	preRun := runtimeEvidenceInput(root, projectID, environmentID, sourceID, "pre-run alert")
 	preRun.RunID = ""
 	preRun.Provider = "webhook"

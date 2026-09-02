@@ -755,6 +755,9 @@ func (s *RunStore) RecordToolInvocation(ctx context.Context, runID string, t dom
 	defer tx.Rollback(ctx)
 
 	q := remediationdb.New(tx)
+	if _, err := q.LockRemediationSeriesForRun(ctx, rid); err != nil {
+		return fmt.Errorf("lock invocation series: %w", err)
+	}
 
 	invocations, err := q.GetRemediationToolInvocationsByRunID(ctx, rid)
 	if err != nil {
@@ -773,18 +776,39 @@ func (s *RunStore) RecordToolInvocation(ctx context.Context, runID string, t dom
 	}
 
 	_, err = q.CreateRemediationToolInvocation(ctx, remediationdb.CreateRemediationToolInvocationParams{
-		RunID:      rid,
-		Sequence:   int32(len(invocations) + 1),
-		ToolName:   t.ToolName,
-		Phase:      string(t.Phase),
-		DurationMs: durationMs,
-		Outcome:    outcome,
+		RunID:       rid,
+		Sequence:    int32(len(invocations) + 1),
+		ToolName:    t.ToolName,
+		Phase:       string(t.Phase),
+		DurationMs:  durationMs,
+		Outcome:     outcome,
+		OutcomeRef:  t.InvocationID,
+		EvidenceIds: cloneStrings(t.EvidenceIDs),
+		ErrorCode:   sanitizeToolErrorCode(t.Error),
 	})
 	if err != nil {
 		return fmt.Errorf("create invocation: %w", err)
 	}
 
 	return tx.Commit(ctx)
+}
+
+func sanitizeToolErrorCode(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) > 128 {
+		return "error"
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') ||
+			char == '_' || char == '-' || char == '.' {
+			continue
+		}
+		return "error"
+	}
+	return value
 }
 
 // Transition advances a run from one state to another with optimistic locking
@@ -1329,14 +1353,22 @@ func mapPlans(rows []remediationdb.RemediationPlan) []domain.RepairPlanCandidate
 func mapInvocations(rows []remediationdb.RemediationToolInvocation) []domain.ToolInvocation {
 	out := make([]domain.ToolInvocation, 0, len(rows))
 	for _, r := range rows {
+		invocationID := uuidString(r.ID)
+		if r.OutcomeRef.Valid && r.OutcomeRef.String != "" {
+			invocationID = r.OutcomeRef.String
+		}
 		inv := domain.ToolInvocation{
-			InvocationID:  uuidString(r.ID),
+			InvocationID:  invocationID,
 			ToolName:      r.ToolName,
 			Phase:         domain.RunState(r.Phase),
 			ResultSummary: r.Outcome,
+			EvidenceIDs:   cloneStrings(r.EvidenceIds),
 			InvokedAt:     r.InvokedAt.Time,
 		}
-		if r.Outcome == "error" {
+		if r.ErrorCode.Valid && r.ErrorCode.String != "" {
+			inv.Error = r.ErrorCode.String
+		} else if r.Outcome == "error" {
+			// Historical rows predate error_code and only preserve coarse outcome.
 			inv.Error = r.Outcome
 		}
 		out = append(out, inv)

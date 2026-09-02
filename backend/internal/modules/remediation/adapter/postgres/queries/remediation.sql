@@ -144,6 +144,37 @@ SELECT * FROM remediation_decision
 WHERE run_id = $1
 ORDER BY sequence ASC;
 
+-- name: GetLatestRemediationDecisionID :one
+SELECT id FROM remediation_decision
+WHERE run_id = $1
+ORDER BY sequence DESC
+LIMIT 1;
+
+-- name: CreateRemediationSubmittedDiagnosis :one
+INSERT INTO remediation_submitted_diagnosis (
+    run_id,
+    sequence,
+    fixability_class,
+    confidence_score,
+    reasoning,
+    contradictions,
+    missing_evidence,
+    evidence_citations,
+    recommended_next_action,
+    correction_kind,
+    correction_evidence,
+    correction_count,
+    corrected,
+    gate_outcome,
+    decision_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+RETURNING *;
+
+-- name: GetRemediationSubmittedDiagnosesByRunID :many
+SELECT * FROM remediation_submitted_diagnosis
+WHERE run_id = $1
+ORDER BY sequence ASC;
+
 -- name: CreateRemediationPlan :one
 INSERT INTO remediation_plan (
     run_id,
@@ -187,8 +218,11 @@ INSERT INTO remediation_tool_invocation (
     tool_name,
     phase,
     duration_ms,
-    outcome
-) VALUES ($1, $2, $3, $4, $5, $6)
+    outcome,
+    outcome_ref,
+    evidence_ids,
+    error_code
+) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))
 RETURNING *;
 
 -- name: GetRemediationToolInvocationsByRunID :many
