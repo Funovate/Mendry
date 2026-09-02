@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "SSH adapter exec options, credential isolation, and frozen-port rules."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Chinese comments, package docs, gofmt/vet/test gates."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "SSH completion logs must omit private-key bytes and temp key paths."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Policy rejection vs adapter failure boundaries."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Inspect command crosses parser, adapter, conversation, and operator logs."}

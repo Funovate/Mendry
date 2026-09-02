@@ -31,6 +31,16 @@ func formatQueryArg(arg any) string {
 		return "NULL"
 	}
 	switch value := arg.(type) {
+	case *string:
+		if value == nil {
+			return "NULL"
+		}
+		return quotePostgresString(*value)
+	case *time.Time:
+		if value == nil {
+			return "NULL"
+		}
+		return quotePostgresString(value.UTC().Format(time.RFC3339Nano))
 	case bool:
 		return formatBoolLiteral(value)
 	case int:

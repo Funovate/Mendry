@@ -46,7 +46,8 @@ the advisory before changing versions; do not run a forced audit fix.
 - Server capabilities, not hidden controls alone, define displayed actions.
 - Loading, empty, unauthenticated, not-configured, and error states are distinct.
 - Secret values are cleared and never appear in response state or rendered text.
-- Project rename and credential edit stay on the same project key and secret ID.
+- Project rename happens in the sidebar switcher, not Configuration. The
+  project key and secret ID stay unchanged after rename or credential edit.
 - Incomplete Git replacement drafts disable Save instead of sending name-only.
 - `ssh_private_key` E2E asserts file import and paste POST bodies, a rejected
   non-PEM file with no secrets write, a name-only PATCH that omits `value`,

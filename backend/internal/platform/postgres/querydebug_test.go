@@ -35,12 +35,18 @@ WHERE p.project_key = 'demo-key'
 }
 
 func TestFormatQueryArgCoversCommonDriverValues(t *testing.T) {
+	service := "service"
+	now := time.Date(2026, time.August, 18, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name string
 		arg  any
 		want string
 	}{
 		{name: "nil", arg: nil, want: "NULL"},
+		{name: "nil string pointer", arg: (*string)(nil), want: "NULL"},
+		{name: "string pointer", arg: &service, want: "'service'"},
+		{name: "nil time pointer", arg: (*time.Time)(nil), want: "NULL"},
+		{name: "time pointer", arg: &now, want: "'2026-08-18T12:00:00Z'"},
 		{name: "false", arg: false, want: "FALSE"},
 		{name: "int", arg: 42, want: "42"},
 		{name: "quoted string", arg: "O'Reilly", want: "'O''Reilly'"},

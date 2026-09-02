@@ -516,7 +516,7 @@ func TestDynamicCatalogExposesNoToolsOutsideModelOperationPhases(t *testing.T) {
 	}
 }
 
-func TestCatalogAdvertisesSSHInspectInsteadOfEvidenceTools(t *testing.T) {
+func TestCatalogAdvertisesSSHInspectAndEvidenceReadOnly(t *testing.T) {
 	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, &fakeInspectPort{}, nil, nil)
 	catalog, err := gateway.BuildCatalog(context.Background(), "run-1", domain.RunStateDiagnosing,
 		domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
@@ -527,17 +527,22 @@ func TestCatalogAdvertisesSSHInspectInsteadOfEvidenceTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCatalog() error = %v", err)
 	}
-	var sawInspect, sawEvidence bool
+	var sawInspect, sawRead, sawSearch bool
 	for _, definition := range catalog.DefinitionsForPhase(domain.RunStateDiagnosing) {
 		switch definition.Name {
 		case application.ToolSSHInspect:
 			sawInspect = true
+		case application.ToolEvidenceRead:
+			sawRead = true
 		case application.ToolEvidenceSearch, application.ToolEvidenceContext:
-			sawEvidence = true
+			sawSearch = true
 		}
 	}
-	if !sawInspect || sawEvidence {
-		t.Fatalf("SSH catalog inspect=%t evidence=%t definitions=%#v", sawInspect, sawEvidence, catalog.DefinitionsForPhase(domain.RunStateDiagnosing))
+	// SSH source 广告 ssh.inspect 与只读持久化重读 evidence.read；
+	// evidence.search/context 仍是 cloud 日志窗口工具，不进入 SSH 分支。
+	if !sawInspect || !sawRead || sawSearch {
+		t.Fatalf("SSH catalog inspect=%t read=%t search=%t definitions=%#v",
+			sawInspect, sawRead, sawSearch, catalog.DefinitionsForPhase(domain.RunStateDiagnosing))
 	}
 }
 

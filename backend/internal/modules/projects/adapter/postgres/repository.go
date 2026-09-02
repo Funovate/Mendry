@@ -697,7 +697,7 @@ func (r *Repository) LookupWebhookToken(ctx context.Context, hash []byte) (appli
 	if !row.ProjectID.Valid || !row.SourceID.Valid {
 		return application.WebhookIngress{}, application.ErrNotFound
 	}
-	return application.WebhookIngress{ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID)}, nil
+	return application.WebhookIngress{ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID), Provider: domain.WebhookProvider(row.WebhookProvider)}, nil
 }
 
 func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, hash, ciphertext, nonce []byte, actorUserID, auditID string, rotated bool) error {

@@ -18,9 +18,11 @@ Dependency direction is:
 
 ```text
 Authenticated HTTP -> incident application -> incident domain
-POST /hooks/{token} -> hooks application -> IngestInbound / CreateInbound
+POST /hooks/{token} -> hooks application -> validate token -> 202 accepted
                          |
-                         +-> repository contract <- PostgreSQL adapter -> sqlc
+                         +-> background Normalize -> IngestInbound / CreateInbound
+                                                   |
+                                                   +-> repository contract <- PostgreSQL adapter -> sqlc
 ```
 
 ### 2. Signatures
@@ -197,3 +199,34 @@ if err != nil {
 }
 writeIncident(writer, request, http.StatusOK, incident)
 ```
+
+## Webhook Automatic Remediation Gate
+
+After an open occurrence and its optional evidence writer succeed in the
+enriched inbound path (detached background work after the synchronous `202`), the
+webhook path invokes the existing automatic remediation seam with the updated
+incident context version. The compatibility `IngestInbound` path continues to
+support root creation; the enriched webhook path is the one that enables
+continuation after evidence persistence.
+
+Rules:
+
+- Synchronous webhook acceptance stays limited to valid token/provider/body
+  checks; the response is `202` and never waits for remediation.
+- A new or reopened qualifying `P1/P2` incident keeps exactly one automatic root
+  attempt for its series key, including under concurrent duplicate delivery;
+  `Trigger.Emit` sees the transactionally created `queued` root and does not
+  create a second attempt.
+- A repeated open-fingerprint observation goes through the remediation-owned
+  automatic gate after the incident/evidence write commits: no series → root;
+  queued/active or usable terminal → no-op; retryable failed with a newer
+  context version and below the automatic ceiling → one linked next attempt;
+  everything else → auditable no-op.
+- The gate never uses the webhook payload as a command, retry authorization
+  token, or credential source, and never persists raw webhook bodies.
+- Evidence-writer failure must not start a child attempt; gate storage failures
+  go to the existing safe background failure reporter and never change the
+  already returned HTTP response.
+- `Info`, closed/recovered incidents, lifecycle-generation changes, and changed
+  deployed commits follow the existing fingerprint and series identity rules
+  unchanged.

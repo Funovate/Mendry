@@ -40,6 +40,7 @@ type service interface {
 	PutConfigurationRemediationPolicy(context.Context, authdomain.User, string, domain.RemediationPolicy) (domain.RemediationPolicy, error)
 	RotateWebhookToken(context.Context, authdomain.User, string) (string, error)
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
+	ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error)
 	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
 	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
 	ListAuditEvents(context.Context, authdomain.User, string, int32) (application.ListResult[domain.AuditEvent], error)
@@ -78,6 +79,7 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfiguration)))
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration/{component}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfigurationComponent)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/webhook-token", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.rotateWebhookToken)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/containers", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHContainers)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/repository/refs", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeRepositoryRefs)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/models", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMModels)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/chat", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMChat)))
@@ -112,6 +114,13 @@ type updateSecretRequest struct {
 type repositoryRefsRequest struct {
 	RemoteURL          string `json:"remoteUrl"`
 	Transport          string `json:"transport"`
+	CredentialSecretID string `json:"credentialSecretId"`
+}
+
+type sshContainersRequest struct {
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	User               string `json:"user"`
 	CredentialSecretID string `json:"credentialSecretId"`
 }
 
@@ -169,6 +178,18 @@ type repositoryRefsResponse struct {
 type gitBranchResponse struct {
 	Name   string `json:"name"`
 	Commit string `json:"commit"`
+}
+
+type dockerContainerResponse struct {
+	Name   string `json:"name"`
+	ID     string `json:"id"`
+	Image  string `json:"image"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+}
+
+type sshContainersResponse struct {
+	Containers []dockerContainerResponse `json:"containers"`
 }
 
 type sourceRequest struct {
@@ -513,6 +534,30 @@ func (h *Handler) probeRepositoryRefs(writer nethttp.ResponseWriter, request *ne
 		return
 	}
 	writeJSON(writer, request, nethttp.StatusOK, mapRepositoryRefs(refs))
+}
+
+func (h *Handler) probeSSHContainers(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload sshContainersRequest
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	containers, err := h.service.ProbeSSHContainers(request.Context(), principal, request.PathValue("projectKey"), payload.Host, payload.Port, payload.User, payload.CredentialSecretID)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	response := sshContainersResponse{Containers: make([]dockerContainerResponse, 0, len(containers))}
+	for _, container := range containers {
+		response.Containers = append(response.Containers, dockerContainerResponse{
+			Name: container.Name, ID: container.ID, Image: container.Image,
+			State: container.State, Status: container.Status,
+		})
+	}
+	writeJSON(writer, request, nethttp.StatusOK, response)
 }
 
 func (h *Handler) probeLLMModels(writer nethttp.ResponseWriter, request *nethttp.Request) {
@@ -867,6 +912,8 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "git_unreachable", Message: "The Git remote could not be read."})
 	case errors.Is(err, application.ErrLLMUnreachable):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "llm_unreachable", Message: "The LLM provider could not be reached."})
+	case errors.Is(err, application.ErrDockerUnavailable):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "docker_unavailable", Message: "The remote Docker inventory could not be read."})
 	default:
 		httpserver.WriteInternalError(writer, request, err)
 	}

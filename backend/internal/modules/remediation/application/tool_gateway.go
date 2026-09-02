@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -70,14 +71,18 @@ func RejectionCode(err error) (ToolRejectionCode, bool) {
 // Payload 保留 adapter 已经裁剪且不含凭据的 domain value，之后由
 // AgentConversation 再次裁剪并作为下一轮的 model observation。
 type ToolResult struct {
-	Tool           string
-	Summary        string
-	BytesRetrieved int64
-	EvidenceIDs    []string
-	Payload        any
+	Tool               string
+	Summary            string
+	BytesRetrieved     int64
+	EvidenceIDs        []string
+	RefinementRequired bool
+	RefinementReason   string
+	Payload            any
 }
 
 // ExecuteToolObserved 包装唯一 tool 执行入口并发出有序、安全的 request/result observation。
+// SSH/Docker 成功结果先投影为 canonical evidence 并持久化，再进入 observer；
+// 投影或持久化失败时返回稳定错误且不暴露原始输出。
 func (g *ToolGateway) ExecuteToolObserved(
 	ctx context.Context,
 	run RunIdentity,
@@ -91,6 +96,17 @@ func (g *ToolGateway) ExecuteToolObserved(
 ) (ToolResult, error) {
 	started := time.Now()
 	result, err := g.ExecuteTool(ctx, phase, ref, scope, tool, params)
+	if err == nil && isRuntimeEvidenceTool(tool) {
+		canonical, evidenceID, persistErr := g.persistRuntimeEvidence(ctx, run, scope, phase, "", tool, result)
+		if persistErr != nil {
+			result = ToolResult{}
+			err = persistErr
+		} else {
+			result.Payload = canonical
+			result.EvidenceIDs = []string{evidenceID}
+			applyCanonicalDockerCoverage(tool, canonical, &result)
+		}
+	}
 	observation := ToolObservation{
 		Run: run, Phase: phase, Sequence: sequence, Tool: tool,
 		Duration: time.Since(started), Outcome: "success", Bytes: result.BytesRetrieved,
@@ -114,6 +130,22 @@ func (g *ToolGateway) ExecuteToolObserved(
 	return result, err
 }
 
+func applyCanonicalDockerCoverage(tool string, canonical any, result *ToolResult) {
+	if tool != ToolDockerLogs || result == nil {
+		return
+	}
+	var coverage struct {
+		RefinementRequired bool   `json:"refinementRequired"`
+		CoverageReason     string `json:"coverageReason"`
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil || json.Unmarshal(encoded, &coverage) != nil {
+		return
+	}
+	result.RefinementRequired = coverage.RefinementRequired
+	result.RefinementReason = coverage.CoverageReason
+}
+
 // ToolGateway validates and routes model tool requests to the read-only ports.
 // It is the sole execution entry point for tool requests and enforces, before
 // any adapter call:
@@ -133,6 +165,7 @@ type ToolGateway struct {
 	tencentDetailPort domain.TencentCLSDetailPort
 	dynamicRuntime    domain.DynamicToolRuntimePort
 	policyResolver    domain.ToolPolicyResolver
+	runtimeWriter     RuntimeEvidenceWriter
 
 	maxReadBytes   int64
 	maxTreeEntries int
@@ -171,6 +204,13 @@ func (g *ToolGateway) SetDockerEvidencePort(port domain.DockerEvidencePort) {
 // pre-diagnosis evidence gate 使用。
 func (g *ToolGateway) SetTencentCLSDetailPort(port domain.TencentCLSDetailPort) {
 	g.tencentDetailPort = port
+}
+
+// SetRuntimeEvidenceWriter 在 composition root 注入 canonical runtime evidence
+// writer。没有 writer 时，observed SSH/Docker 工具 fail closed：成功输出必须先
+// 持久化才能被模型引用，未持久化的原始结果不会进入模型或 observer。
+func (g *ToolGateway) SetRuntimeEvidenceWriter(writer RuntimeEvidenceWriter) {
+	g.runtimeWriter = writer
 }
 
 // AdvertisedTools returns the read tool identifiers available in the given
@@ -295,7 +335,7 @@ func toolParameterSchema(tool string) map[string]interface{} {
 		}, "evidenceId")
 	case ToolSSHInspect:
 		return object(map[string]interface{}{
-			"command": stringProperty("Inspect command to parse and execute. List the hinted logPath directory and discover actual file names before reading; the harness never auto-tails logPath."),
+			"command": stringProperty("Read-only inspect command to parse and execute. List the hinted logPath directory and discover actual file names before reading; the harness never auto-tails logPath. Successful results are persisted as citable evidence."),
 		}, "command")
 	case ToolDockerLogs:
 		return object(map[string]interface{}{
@@ -331,7 +371,7 @@ var toolDescriptions = map[string]string{
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
 	ToolEvidenceRead:       "Re-read a bounded page of persisted trusted evidence by evidence ID within this remediation series. Use the returned opaque cursor to page remaining content.",
-	ToolSSHInspect:         "Inspect the SSH host with an allowlisted command. List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath.",
+	ToolSSHInspect:         "Inspect the SSH host with a read-only command (host identity, network, process, file, system log, and read-only Docker forms). List the hinted logPath directory first and discover actual file names before reading; the harness never auto-tails logPath. Successful results are persisted as citable evidence.",
 	ToolDockerLogs:         "Read bounded stdout and stderr from the configured Docker container. The container identity comes from saved project configuration.",
 	ToolTencentCLSDetail:   "Required for Tencent CLS webhooks: fetch the current incident's validated public detail record. This tool takes no URL and must succeed before diagnosis or stop.",
 	ToolSourceSearchTools:  "Find and activate approved MCP tools for the current remediation phase.",

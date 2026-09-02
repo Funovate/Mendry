@@ -42,8 +42,10 @@ Do not add a generic component abstraction for a one-off layout.
   or `ssh_private_key` textarea) and the outgoing request.
 - After a successful secret write, clear the input, file picker, and import
   error, then render only returned metadata.
-- Project identity edits are capability-gated by `manageConfiguration`. The
-  project key is always read-only. Viewers see name and key without edit controls.
+- Project identity edits live in the authenticated shell project switcher and
+  are capability-gated by `manageConfiguration`. The project key is always
+  read-only in the topbar. Viewers see the current name without an edit control.
+  Configuration remains environment, Git, source, trigger, and LLM only.
 - Extend `CredentialField` and `GitCredentialField` for create and edit. Do not
   add a third credential editor. `SshPrivateKeyDraftField` is a shared textarea
   plus file input used by those two editors, not a third editor. Create and
@@ -140,3 +142,21 @@ of required gates and the absence of the entered secret from rendered text.
 - Treating `SshPrivateKeyDraftField` as a third credential editor, or leaving
   an SSH create form open when the source kind or Git transport changes.
 - Nesting route-owned business forms inside the app composition layer.
+
+## Evidence-Aware Configuration Controls
+
+When editing the project source or trigger controls for remediation evidence:
+
+- A signed webhook uses a native provider control with `Generic webhook` and
+  `Tencent Cloud CLS alert`. The Tencent choice explains that `DetailUrl` and
+  multidimensional results are retrieved by the trusted backend adapter; it
+  never renders a free-form URL fetch control or asks for `TopicId`.
+- An SSH source uses a deployment control for `Host process` or `Docker`. Docker
+  mode loads a bounded backend inventory through an explicit refresh and a
+  native select. Each option shows exact name, image, and runtime status,
+  including stopped/restarting entries; there is no free-form container name
+  field or raw Docker output in browser state.
+- Changing host, port, user, credential, deployment kind, or refresh identity
+  clears stale container options and selection. Save is disabled until Docker
+  has a returned exact name. Review/overview uses the saved name, never the
+  ephemeral container ID.

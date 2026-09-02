@@ -389,7 +389,8 @@ SELECT changed_environment.id AS environment_id,
 FROM changed_environment, changed_repository, changed_source, changed_trigger, changed_llm;
 
 -- name: LookupWebhookToken :one
-SELECT trigger.project_id, source.id AS source_id
+SELECT trigger.project_id, source.id AS source_id,
+       COALESCE(trigger.config->>'provider', 'generic')::text AS webhook_provider
 FROM project_triggers AS trigger
 JOIN project_sources AS source
     ON source.project_id = trigger.project_id
@@ -542,6 +543,9 @@ WITH changed_source AS (
            'project.configuration.updated', 'project', sqlc.arg(project_id),
            'Project collection source configuration updated.',
            jsonb_build_object('sourceKind', changed_source.kind)
+           || CASE WHEN changed_source.kind = 'ssh' THEN
+                  jsonb_build_object('deploymentKind', COALESCE(changed_source.config->'deployment'->>'kind', 'host'))
+              ELSE '{}'::jsonb END
     FROM changed_source
  )
 SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
@@ -576,6 +580,9 @@ WITH changed_trigger AS (
            'project.configuration.updated', 'project', sqlc.arg(project_id),
            'Project trigger configuration updated.',
            jsonb_build_object('triggerKind', changed_trigger.kind)
+           || CASE WHEN changed_trigger.kind = 'signed_webhook' THEN
+                  jsonb_build_object('provider', COALESCE(changed_trigger.config->>'provider', 'generic'))
+              ELSE '{}'::jsonb END
     FROM changed_trigger
  )
 SELECT id, kind, signing_secret_id, config, enabled, version,

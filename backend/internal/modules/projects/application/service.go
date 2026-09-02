@@ -23,6 +23,7 @@ var (
 	ErrConfigurationNotFound = errors.New("project configuration not found")
 	ErrGitUnreachable        = errors.New("git remote is unreachable")
 	ErrLLMUnreachable        = errors.New("LLM provider is unreachable")
+	ErrDockerUnavailable     = errors.New("Docker inventory is unavailable")
 )
 
 const (
@@ -66,6 +67,7 @@ type Repository interface {
 type WebhookIngress struct {
 	ProjectID string
 	SourceID  string
+	Provider  domain.WebhookProvider
 }
 
 type Cipher interface {
@@ -86,6 +88,22 @@ type LLMModelLister interface {
 	ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string) error
 }
 
+// ContainerProbeRequest 是 admin-only Docker inventory probe 的无命令请求。
+// credential reference 由受信 adapter 解析；它不会携带明文 SSH credential。
+type ContainerProbeRequest struct {
+	ProjectID          string
+	Host               string
+	Port               int
+	User               string
+	CredentialSecretID string
+}
+
+// ContainerProbePort 通过固定的只读 SSH/Docker inventory 操作发现容器。
+// 实现不得接受模型命令或返回原始 SSH/Docker 输出。
+type ContainerProbePort interface {
+	ListContainers(context.Context, ContainerProbeRequest) ([]domain.DockerContainer, error)
+}
+
 type LLMModels struct {
 	Models []string
 }
@@ -95,6 +113,7 @@ type Options struct {
 	Cipher     Cipher
 	Git        GitRefLister
 	LLM        LLMModelLister
+	Containers ContainerProbePort
 	NewID      func() (string, error)
 	// PublicURL 是派生完整入站地址的部署级基址；空值不得静默拼接。
 	PublicURL       string
@@ -106,6 +125,7 @@ type Service struct {
 	cipher          Cipher
 	git             GitRefLister
 	llm             LLMModelLister
+	containers      ContainerProbePort
 	idGenerator     func() (string, error)
 	publicURL       string
 	newWebhookToken func() (string, error)
@@ -124,7 +144,7 @@ func NewService(options Options) (*Service, error) {
 		tokenGenerator = defaultWebhookToken
 	}
 	return &Service{
-		repository: options.Repository, cipher: options.Cipher, git: options.Git, llm: options.LLM,
+		repository: options.Repository, cipher: options.Cipher, git: options.Git, llm: options.LLM, containers: options.Containers,
 		idGenerator: options.NewID, publicURL: options.PublicURL, newWebhookToken: tokenGenerator,
 	}, nil
 }
@@ -662,6 +682,39 @@ func (s *Service) ProbeRepositoryRefs(ctx context.Context, principal authdomain.
 		return RepositoryRefs{}, ErrGitUnreachable
 	}
 	return ParseGitLsRemote(output)
+}
+
+// ProbeSSHContainers 返回有界的 Docker inventory；容器名是唯一可持久化的选择器。
+// 项目服务只负责成员/credential 所有权校验，SSH/Docker 命令由受信 adapter 执行。
+func (s *Service) ProbeSSHContainers(ctx context.Context, principal authdomain.User, projectKey, host string, port int, user, secretID string) ([]domain.DockerContainer, error) {
+	if s.containers == nil {
+		return nil, ErrDockerUnavailable
+	}
+	project, err := s.requireAdmin(ctx, principal, projectKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := domain.ValidateSSHContainerProbe(host, port, user, secretID); err != nil {
+		return nil, ErrInvalidInput
+	}
+	encrypted, err := s.repository.GetEncryptedSecret(ctx, project.ID, secretID)
+	if err != nil {
+		return nil, ErrDockerUnavailable
+	}
+	if encrypted.Kind != domain.SecretSSHPrivateKey {
+		return nil, ErrInvalidInput
+	}
+	containers, err := s.containers.ListContainers(ctx, ContainerProbeRequest{
+		ProjectID: project.ID, Host: strings.TrimSpace(host), Port: port,
+		User: strings.TrimSpace(user), CredentialSecretID: secretID,
+	})
+	if err != nil {
+		return nil, ErrDockerUnavailable
+	}
+	if len(containers) > 100 {
+		containers = containers[:100]
+	}
+	return append([]domain.DockerContainer(nil), containers...), nil
 }
 
 func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User, projectKey, baseURL, secretID string) (LLMModels, error) {

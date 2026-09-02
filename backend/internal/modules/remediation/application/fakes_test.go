@@ -311,6 +311,28 @@ func (f *fakeInspectPort) Inspect(_ context.Context, scope domain.EvidenceScope,
 	return domain.SSHInspectResult{Command: req.Command, ExitCode: 0, Stdout: "ok"}, nil
 }
 
+// fakeRuntimeEvidenceWriter 记录 AppendEvidence 调用；可按序注入失败，并统计
+// 每次写入的 canonical payload 与 ownership，供持久化顺序/幂等断言使用。
+type fakeRuntimeEvidenceWriter struct {
+	evidence []domain.StoredEvidence
+	errs     []error
+}
+
+func (w *fakeRuntimeEvidenceWriter) AppendEvidence(_ context.Context, evidence domain.StoredEvidence) (domain.StoredEvidence, error) {
+	if len(w.errs) > 0 {
+		err := w.errs[0]
+		w.errs = w.errs[1:]
+		if err != nil {
+			return domain.StoredEvidence{}, err
+		}
+	}
+	if evidence.EvidenceID == "" {
+		evidence.EvidenceID = fmt.Sprintf("ev-runtime-%d", len(w.evidence)+1)
+	}
+	w.evidence = append(w.evidence, evidence)
+	return evidence, nil
+}
+
 // scriptedModel is a fake LLMProviderPort that replays canned envelope JSON in
 // order, letting a test drive the coordinator through any state path.
 type scriptedModel struct {
@@ -427,11 +449,30 @@ func insufficientWithoutCollectionEnvelope() string {
 		`"recommendedNextAction":"manual review"}}`
 }
 
+func insufficientWithClosedCausalClosureEnvelope() string {
+	return `{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{` +
+		`"fixability":"insufficient_evidence","confidence":0.8,"causalReasoning":"fault invocation explains the alert but test approval is unknown",` +
+		`"contradictions":[],"missingEvidence":["approved test identity"],"evidenceCitations":["ev-1"],` +
+		`"recommendedNextAction":"verify test authorization","testSuspected":true,"testPolicyMatched":false,` +
+		`"causalClosure":{"explainsOriginalSymptom":true,"explanation":"runtime fault invocation produced the observed panic"}}}`
+}
+
 func planEnvelope() string {
 	return `{"schemaVersion":"v1","kind":"planCandidates","planCandidates":{` +
 		`"candidates":[{"planId":"p1","evidenceRefs":["ev-1"],"affectedFiles":["main.go"],` +
 		`"intendedBehavior":"add nil check","risk":"ordinary","rollbackStrategy":"revert"}],` +
 		`"recommendedId":"p1","rationale":"simplest fix","suggestedDiff":"diff --git a/main.go"}}`
+}
+
+// mismatchedClassificationEnvelope 返回带错误 classification 声明的 diagnosis：
+// fakeEvidenceResolver 的存储权威分类是 direct_fault，模型声明
+// correlated_supporting 触发 R7 的 evidence_correction challenge 路径。
+func mismatchedClassificationEnvelope(fixability string) string {
+	return fmt.Sprintf(`{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{`+
+		`"fixability":%q,"confidence":0.9,"causalReasoning":"root cause",`+
+		`"contradictions":[],"missingEvidence":[],"evidenceCitations":[{"evidenceId":"ev-1","classification":"correlated_supporting"}],`+
+		`"recommendedNextAction":"next","alertQuality":"enriched",`+
+		`"causalClosure":{"explainsOriginalSymptom":true,"explanation":"root cause explains the alert"}}}`, fixability)
 }
 
 func requestToolEnvelope(tool, path string) string {

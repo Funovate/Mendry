@@ -239,7 +239,6 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	t.Setenv("FAKE_DOCKER_INSPECT", dockerInspectFixture(id, "checkout-api", "registry.example/checkout:v1", "running"))
 	t.Setenv("FAKE_DOCKER_STDOUT", "panic: nil pointer\n")
 	t.Setenv("FAKE_DOCKER_STDERR", "stack frame\n")
-	t.Setenv("FAKE_DOCKER_WINDOW_LINES", "386130")
 	reader := newDockerReader(t, fakeSSH, "checkout-api")
 	start := time.Date(2026, 8, 24, 7, 0, 0, 0, time.UTC)
 	end := start.Add(20 * time.Minute)
@@ -253,7 +252,8 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDockerLogs() error = %v", err)
 	}
-	if result.Container.ID != id || result.Stdout != "panic: nil pointer\n" || result.Stderr != "stack frame\n" || result.Truncated || result.WindowLines != 386130 || result.FilteredLines != 0 {
+	if result.Container.ID != id || result.Stdout != "panic: nil pointer\n" || result.Stderr != "stack frame\n" ||
+		result.Truncated || result.CoverageLimited || result.RefinementRequired || result.WindowLines != -1 || result.FilteredLines != 0 {
 		t.Fatalf("Docker logs result = %#v", result)
 	}
 	commandBytes, err := os.ReadFile(commands)
@@ -284,14 +284,22 @@ func TestReaderDockerLogsUseBoundedTimeTailAndBytes(t *testing.T) {
 	if !bounded.Truncated || bounded.BytesRetrieved != 32 || len(bounded.Stdout) != 32 {
 		t.Fatalf("bounded Docker logs result = %#v", bounded)
 	}
+	if !bounded.CoverageLimited || !bounded.RefinementRequired || bounded.CoverageReason != "byte_limit" {
+		t.Fatalf("bounded Docker coverage = %#v", bounded)
+	}
+	commandBytes, err = os.ReadFile(commands)
+	if err != nil {
+		t.Fatalf("read final command log: %v", err)
+	}
+	if got := strings.Count(string(commandBytes), "docker logs --since"); got != 2 {
+		t.Fatalf("Docker log read count = %d, want one scan per request: %q", got, commandBytes)
+	}
 }
 
 func TestReaderDockerLogsPatternFiltersBeforeTailAndReportsCoverage(t *testing.T) {
 	fakeSSH := writeDockerSSH(t)
 	commands := filepath.Join(t.TempDir(), "commands.txt")
 	t.Setenv("FAKE_DOCKER_COMMANDS", commands)
-	t.Setenv("FAKE_DOCKER_WINDOW_LINES", "386130")
-	t.Setenv("FAKE_DOCKER_FILTERED_LINES", "1")
 	t.Setenv("FAKE_DOCKER_STDOUT", "panic: nil pointer\ngoroutine 1 [running]:\nframe\n")
 	t.Setenv("FAKE_DOCKER_STDERR", "")
 	id := strings.Repeat("8", 64)
@@ -310,7 +318,7 @@ func TestReaderDockerLogsPatternFiltersBeforeTailAndReportsCoverage(t *testing.T
 	if err != nil {
 		t.Fatalf("filtered ReadDockerLogs() error = %v", err)
 	}
-	if result.WindowLines != 386130 || result.FilteredLines != 1 || !strings.Contains(result.Stdout, "goroutine 1") {
+	if result.WindowLines != -1 || result.FilteredLines != 1 || result.CoverageLimited || result.RefinementRequired || !strings.Contains(result.Stdout, "goroutine 1") {
 		t.Fatalf("filtered Docker logs result = %#v", result)
 	}
 	commandBytes, err := os.ReadFile(commands)
@@ -323,16 +331,14 @@ func TestReaderDockerLogsPatternFiltersBeforeTailAndReportsCoverage(t *testing.T
 			filteredCommands = append(filteredCommands, line)
 		}
 	}
-	if len(filteredCommands) != 2 {
-		t.Fatalf("filtered command count = %d, commands=%q", len(filteredCommands), commandBytes)
+	if len(filteredCommands) != 1 {
+		t.Fatalf("filtered command count = %d, want one scan; commands=%q", len(filteredCommands), commandBytes)
 	}
 	if !strings.Contains(filteredCommands[0], "grep -E -A 2 -B 1 -- 'panic.*nil pointer' | tail -42") {
 		t.Fatalf("filtered read command = %q", filteredCommands[0])
 	}
-	for _, command := range filteredCommands {
-		if strings.Contains(command, "--tail 42") || strings.Count(command, "'panic.*nil pointer'") != 1 {
-			t.Fatalf("filtered command applied tail before grep or quoted pattern incorrectly: %q", command)
-		}
+	if strings.Contains(filteredCommands[0], "--tail 42") || strings.Count(filteredCommands[0], "'panic.*nil pointer'") != 1 {
+		t.Fatalf("filtered command applied tail before grep or quoted pattern incorrectly: %q", filteredCommands[0])
 	}
 }
 
@@ -384,7 +390,8 @@ func TestReaderDockerLogsUsesFilterForLargeEarlyWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unfiltered ReadDockerLogs() error = %v", err)
 	}
-	if strings.Contains(unfiltered.Stdout, "TriggerNilPointerFault") || unfiltered.WindowLines != fixtureLines || unfiltered.Truncated {
+	if strings.Contains(unfiltered.Stdout, "TriggerNilPointerFault") || unfiltered.WindowLines != -1 || unfiltered.Truncated ||
+		!unfiltered.CoverageLimited || !unfiltered.RefinementRequired || unfiltered.CoverageReason != "tail_limit" {
 		t.Fatalf("unfiltered Docker logs = %#v, want only the fixture tail", unfiltered)
 	}
 
@@ -395,11 +402,81 @@ func TestReaderDockerLogsUsesFilterForLargeEarlyWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered ReadDockerLogs() error = %v", err)
 	}
-	if filtered.Truncated || len(filtered.Stdout) > 1<<20 || filtered.WindowLines != fixtureLines || filtered.FilteredLines != 1 ||
+	if filtered.Truncated || filtered.CoverageLimited || filtered.RefinementRequired || len(filtered.Stdout) > 1<<20 || filtered.WindowLines != -1 || filtered.FilteredLines != 1 ||
 		!strings.Contains(filtered.Stdout, "panic TriggerNilPointerFault") ||
 		!strings.Contains(filtered.Stdout, "goroutine 1 [running]:") ||
 		!strings.Contains(filtered.Stdout, "runtime frame") {
 		t.Fatalf("filtered Docker logs = %#v, want early panic and context within the byte cap", filtered)
+	}
+}
+
+func TestReaderDockerLogsUsesSingleValidatedJSONFileScan(t *testing.T) {
+	id := strings.Repeat("b", 64)
+	directory := filepath.Join(t.TempDir(), id)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatalf("create Docker log directory: %v", err)
+	}
+	logPath := filepath.Join(directory, id+"-json.log")
+	fixture, err := os.Create(logPath)
+	if err != nil {
+		t.Fatalf("create Docker JSON fixture: %v", err)
+	}
+	start := time.Date(2026, 8, 28, 8, 6, 0, 0, time.UTC)
+	for index := 0; index < 5000; index++ {
+		message := fmt.Sprintf("noise-%d\n", index)
+		if index == 100 {
+			message = "panic TriggerNilPointerFault: invalid memory address\n"
+		} else if index == 101 {
+			message = "goroutine 42 [running]:\n"
+		} else if index == 102 {
+			message = "net/http.(*conn).serve.func1()\n"
+		}
+		encoded, encodeErr := json.Marshal(map[string]interface{}{
+			"log": message, "stream": "stderr", "time": start.Add(time.Duration(index) * time.Millisecond),
+		})
+		if encodeErr != nil {
+			_ = fixture.Close()
+			t.Fatalf("encode Docker JSON line %d: %v", index, encodeErr)
+		}
+		if _, err := fixture.Write(append(encoded, '\n')); err != nil {
+			_ = fixture.Close()
+			t.Fatalf("write Docker JSON line %d: %v", index, err)
+		}
+	}
+	if err := fixture.Close(); err != nil {
+		t.Fatalf("close Docker JSON fixture: %v", err)
+	}
+
+	fakeSSH, dockerBin := writeExecutingDockerSSH(t)
+	commands := filepath.Join(t.TempDir(), "commands.txt")
+	t.Setenv("FAKE_DOCKER_BIN_DIR", dockerBin)
+	t.Setenv("FAKE_DOCKER_ID", id)
+	t.Setenv("FAKE_DOCKER_LOG_PATH", logPath)
+	t.Setenv("FAKE_DOCKER_COMMANDS", commands)
+	reader := newDockerReader(t, fakeSSH, "checkout-api")
+	result, err := reader.ReadDockerLogs(context.Background(), domain.EvidenceScope{
+		ProjectID: dockerTestProjectID, SourceID: dockerTestSourceID,
+		TimeRange: domain.TimeRange{Start: start, End: start.Add(10 * time.Second)},
+	}, domain.DockerLogQuery{
+		Since: start, Until: start.Add(10 * time.Second), Tail: 20, MaxBytes: 1 << 20,
+		Pattern: "TriggerNilPointerFault", ContextAfter: 2,
+	})
+	if err != nil {
+		t.Fatalf("ReadDockerLogs() error = %v", err)
+	}
+	if result.Truncated || result.CoverageLimited || result.RefinementRequired || result.WindowLines != -1 || result.FilteredLines != 1 ||
+		!strings.Contains(result.Stderr, "panic TriggerNilPointerFault") ||
+		!strings.Contains(result.Stderr, "goroutine 42") ||
+		!strings.Contains(result.Stderr, "net/http.(*conn).serve.func1") {
+		t.Fatalf("Docker JSON logs result = %#v", result)
+	}
+	commandBytes, err := os.ReadFile(commands)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	commandText := string(commandBytes)
+	if strings.Contains(commandText, "docker logs") || strings.Count(commandText, "grep -F") != 1 || !strings.Contains(commandText, logPath) {
+		t.Fatalf("Docker JSON fast path commands = %q", commandText)
 	}
 }
 
@@ -414,6 +491,24 @@ func TestDockerLogsCommandOmitsZeroContextFlags(t *testing.T) {
 	}
 	if !strings.Contains(command, "grep -E -- 'panic|fatal' | tail -2000") {
 		t.Fatalf("zero context command = %q", command)
+	}
+}
+
+func TestValidDockerJSONLogPathRequiresExactContainerOwnership(t *testing.T) {
+	id := strings.Repeat("c", 64)
+	valid := "/var/lib/docker/containers/" + id + "/" + id + "-json.log"
+	if !validDockerJSONLogPath(valid, id) {
+		t.Fatalf("valid Docker JSON path rejected: %s", valid)
+	}
+	for _, invalid := range []string{
+		"var/lib/docker/containers/" + id + "/" + id + "-json.log",
+		"/var/lib/docker/containers/other/" + id + "-json.log",
+		"/var/lib/docker/containers/" + id + "/other-json.log",
+		valid + "\n/etc/shadow",
+	} {
+		if validDockerJSONLogPath(invalid, id) {
+			t.Fatalf("invalid Docker JSON path accepted: %q", invalid)
+		}
 	}
 }
 
@@ -490,7 +585,11 @@ case "$1" in
     printf '{"ID":"%s","Names":"checkout-api","Image":"registry.example/checkout:v1","State":"running","Status":"Up 1 minute"}\n' "$FAKE_DOCKER_ID"
     ;;
   inspect)
-    printf '{"id":"%s","name":"/checkout-api","image":"registry.example/checkout:v1","state":"running","status":"Up 1 minute"}\n' "$FAKE_DOCKER_ID"
+    if [ -n "${FAKE_DOCKER_LOG_PATH:-}" ]; then
+      printf '{"id":"%s","name":"/checkout-api","image":"registry.example/checkout:v1","state":"running","status":"Up 1 minute","logPath":"%s","logDriver":"json-file"}\n' "$FAKE_DOCKER_ID" "$FAKE_DOCKER_LOG_PATH"
+    else
+      printf '{"id":"%s","name":"/checkout-api","image":"registry.example/checkout:v1","state":"running","status":"Up 1 minute"}\n' "$FAKE_DOCKER_ID"
+    fi
     ;;
   logs)
     tail_lines=
@@ -521,6 +620,9 @@ remote=
 for argument in "$@"; do
   remote=$argument
 done
+if [ -n "${FAKE_DOCKER_COMMANDS:-}" ]; then
+  printf '%s\n' "$remote" >> "$FAKE_DOCKER_COMMANDS"
+fi
 PATH="$FAKE_DOCKER_BIN_DIR:$PATH" sh -c "$remote"
 `
 	if err := os.WriteFile(sshPath, []byte(sshScript), 0o755); err != nil {
@@ -544,8 +646,6 @@ case "$remote" in
   *"docker ps -a --no-trunc --format"*) printf '%s\n' "${FAKE_DOCKER_INVENTORY:-}" ;;
   *"docker ps -a --no-trunc --filter"*) printf '%s\n' "${FAKE_DOCKER_PS:-}" ;;
   *"docker inspect --type=container"*) printf '%s\n' "${FAKE_DOCKER_INSPECT:-}" ;;
-  *"docker logs --since"*"grep -E"*"wc -l"*) printf '%s\n' "${FAKE_DOCKER_FILTERED_LINES:-0}" ;;
-  *"docker logs --since"*"wc -l"*) printf '%s\n' "${FAKE_DOCKER_WINDOW_LINES:-0}" ;;
   *"docker logs --since"*) printf '%s' "${FAKE_DOCKER_STDOUT:-}"; printf '%s' "${FAKE_DOCKER_STDERR:-}" >&2 ;;
   *) printf 'unexpected remote command: %s\n' "$remote" >&2; exit 97 ;;
 esac

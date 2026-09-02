@@ -24,7 +24,7 @@ func (p *dockerGatewayPort) ReadDockerLogs(_ context.Context, _ domain.EvidenceS
 	return p.result, nil
 }
 
-func TestDockerCatalogAdvertisesTypedLogsWithoutGenericInspect(t *testing.T) {
+func TestDockerCatalogAdvertisesTypedLogsAndGenericInspect(t *testing.T) {
 	port := &dockerGatewayPort{result: domain.DockerLogResult{
 		Container:      domain.DockerContainerIdentity{Name: "checkout-api", ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		Stdout:         "panic: nil pointer\n",
@@ -53,13 +53,19 @@ func TestDockerCatalogAdvertisesTypedLogsWithoutGenericInspect(t *testing.T) {
 	}
 	definitions := catalog.DefinitionsForPhase(domain.RunStateDiagnosing)
 	var dockerDefinition *domain.ToolDefinition
+	var sawInspect bool
 	for index := range definitions {
 		switch definitions[index].Name {
 		case application.ToolDockerLogs:
 			dockerDefinition = &definitions[index]
 		case application.ToolSSHInspect:
-			t.Fatalf("Docker catalog advertised generic SSH inspect: %#v", definitions)
+			// Docker deployment 必须同时广告 typed logs 与 generic inspect：
+			// inspect 用于主机/网络/进程证据（如 INC-2267 的 hostname -I / ip addr show）。
+			sawInspect = true
 		}
+	}
+	if !sawInspect {
+		t.Fatalf("Docker catalog omitted generic ssh.inspect: %#v", definitions)
 	}
 	if dockerDefinition == nil {
 		t.Fatalf("Docker catalog omitted typed logs: %#v", definitions)
@@ -192,7 +198,9 @@ func TestDockerFilteredSummaryReportsCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered Docker logs = %v", err)
 	}
-	if !strings.Contains(result.Summary, "window_lines=386130") || !strings.Contains(result.Summary, "returned_lines=2") || !strings.Contains(result.Summary, "filtered=1") || !strings.Contains(result.Summary, "truncated=false") {
+	if !strings.Contains(result.Summary, "window_lines=386130") || !strings.Contains(result.Summary, "returned_lines=2") ||
+		!strings.Contains(result.Summary, "filtered=1") || !strings.Contains(result.Summary, "truncated=false") ||
+		!strings.Contains(result.Summary, "coverage_limited=false") || !strings.Contains(result.Summary, "refinement_required=false") {
 		t.Fatalf("filtered Docker summary = %q", result.Summary)
 	}
 }
@@ -202,13 +210,19 @@ func TestDockerObservationIncludesCoverageFields(t *testing.T) {
 	conversation.AppendToolResult(application.RequestTool{ToolName: application.ToolDockerLogs}, application.ToolResult{
 		Tool: application.ToolDockerLogs,
 		Payload: domain.DockerLogResult{
-			Stdout:        "panic\nframe\n",
-			WindowLines:   386130,
-			FilteredLines: 1,
+			Stdout:             "panic\nframe\n",
+			WindowLines:        -1,
+			FilteredLines:      1,
+			CoverageLimited:    true,
+			RefinementRequired: true,
+			CoverageReason:     "tail_limit",
 		},
 	}, nil)
 	continuation := conversation.NativeContinuation("diagnose")
-	for _, want := range []string{"\"window_lines\":386130", "\"returned_lines\":2", "\"filtered\":1"} {
+	for _, want := range []string{
+		`"window_lines":-1`, `"returned_lines":2`, `"filtered":1`,
+		`"coverage_limited":true`, `"refinement_required":true`, `"coverage_reason":"tail_limit"`,
+	} {
 		if !strings.Contains(continuation, want) {
 			t.Fatalf("Docker continuation missing %q: %s", want, continuation)
 		}

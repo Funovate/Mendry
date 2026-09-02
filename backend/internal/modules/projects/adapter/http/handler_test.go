@@ -184,6 +184,9 @@ func (f *fakeService) RotateWebhookToken(_ context.Context, _ authdomain.User, p
 func (*fakeService) ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (projectapplication.RepositoryRefs, error) {
 	return projectapplication.RepositoryRefs{DefaultBranch: "main", DeployedCommit: "0123456789abcdef0123456789abcdef01234567", Branches: []projectapplication.GitRef{{Name: "main", Commit: "0123456789abcdef0123456789abcdef01234567"}}}, nil
 }
+func (*fakeService) ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error) {
+	return []domain.DockerContainer{{Name: "app", ID: "0123456789abcdef", Image: "example/app:latest", State: "running", Status: "Up 1 minute"}}, nil
+}
 func (*fakeService) ProbeLLMModels(context.Context, authdomain.User, string, string, string) (projectapplication.LLMModels, error) {
 	return projectapplication.LLMModels{Models: []string{"gpt-4.1", "gpt-5.6"}}, nil
 }

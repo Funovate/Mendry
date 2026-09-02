@@ -14,7 +14,8 @@ import (
 
 // ExecuteToolObservedWithCatalog 是 dynamic runtime 对应的 observed 执行入口，
 // 发出与 legacy gateway 相同的 credential-free observation，包括 policy rejection
-// 与安全 connector failure classification。
+// 与安全 connector failure classification。SSH/Docker 成功结果先持久化为 canonical
+// evidence 并替换 ToolResult payload 与证据 ID，再进入 observer 和 conversation。
 func (g *ToolGateway) ExecuteToolObservedWithCatalog(
 	ctx context.Context,
 	run RunIdentity,
@@ -29,6 +30,23 @@ func (g *ToolGateway) ExecuteToolObservedWithCatalog(
 ) (ToolResult, error) {
 	started := timeNow()
 	result, err := g.ExecuteToolWithCatalog(ctx, phase, ref, scope, catalog, tool, params)
+	if err == nil && isRuntimeEvidenceTool(tool) {
+		catalogVersion := ""
+		if catalog != nil {
+			catalogVersion = catalog.Version()
+		}
+		canonical, evidenceID, persistErr := g.persistRuntimeEvidence(ctx, run, scope, phase, catalogVersion, tool, result)
+		if persistErr != nil {
+			// 原始成功输出不得进入 observer 或 conversation：持久化失败就是
+			// 稳定、不可重试的 runtime evidence persistence 失败。
+			result = ToolResult{}
+			err = persistErr
+		} else {
+			result.Payload = canonical
+			result.EvidenceIDs = []string{evidenceID}
+			applyCanonicalDockerCoverage(tool, canonical, &result)
+		}
+	}
 	observation := ToolObservation{
 		Run: run, Phase: phase, Sequence: sequence, Tool: tool,
 		Duration: timeSince(started), Outcome: "success", Bytes: result.BytesRetrieved,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,45 +51,199 @@ func (r *Reader) ReadDockerLogs(ctx context.Context, scope domain.EvidenceScope,
 	if err != nil {
 		return domain.DockerLogResult{}, err
 	}
+	if result, ok := r.readDockerJSONFileLogs(ctx, cfg, container, query); ok {
+		return result, nil
+	}
 	remoteCommand := dockerLogsCommand(container.ID, query)
 	stdout, stderr, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, int(query.MaxBytes))
 	if err != nil {
 		return domain.DockerLogResult{}, err
 	}
-	windowLines, err := r.countDockerLogLines(ctx, cfg, container.ID, query, "")
-	if err != nil {
-		return domain.DockerLogResult{}, err
-	}
-	filteredLines := int64(0)
-	if query.Pattern != "" {
-		filteredLines, err = r.countDockerLogLines(ctx, cfg, container.ID, query, query.Pattern)
-		if err != nil {
-			return domain.DockerLogResult{}, err
-		}
-	}
+	returnedLines := countRuntimeLogLines(stdout) + countRuntimeLogLines(stderr)
+	coverageLimited := truncated || returnedLines >= int64(query.Tail)
 	return domain.DockerLogResult{
 		Container: container, Stdout: stdout, Stderr: stderr,
-		Truncated: truncated, BytesRetrieved: int64(len(stdout) + len(stderr)),
-		WindowLines: windowLines, FilteredLines: filteredLines,
+		Truncated: truncated, CoverageLimited: coverageLimited,
+		RefinementRequired: coverageLimited, CoverageReason: dockerCoverageReason(truncated, coverageLimited),
+		BytesRetrieved: int64(len(stdout) + len(stderr)), WindowLines: -1,
+		FilteredLines: countRuntimePatternMatches(stdout+stderr, query.Pattern),
+		Query: domain.DockerLogQueryMeta{
+			Since: query.Since, Until: query.Until, Tail: query.Tail, Pattern: query.Pattern,
+		},
 	}, nil
 }
 
-// CountDockerLogLines 返回 incident window 中的总行数，或 query.Pattern 非空时
-// 返回匹配行数。计数通过固定的 docker logs/grep/wc -l pipeline 完成，不能读取任意命令。
-func (r *Reader) CountDockerLogLines(ctx context.Context, scope domain.EvidenceScope, query domain.DockerLogQuery) (int64, error) {
-	if err := validateDockerLogQuery(scope, query); err != nil {
-		return 0, err
+type dockerJSONLogLocation struct {
+	ID     string `json:"id"`
+	Path   string `json:"logPath"`
+	Driver string `json:"logDriver"`
+}
+
+type dockerJSONLogLine struct {
+	Log    string    `json:"log"`
+	Stream string    `json:"stream"`
+	Time   time.Time `json:"time"`
+}
+
+// readDockerJSONFileLogs 对 json-file 使用一次固定 grep 扫描，绕过 Docker
+// daemon 对超大日志执行的多次顺序读取。路径只接受当前容器 inspect 返回且与
+// exact container ID 匹配的绝对 json-file 路径。
+func (r *Reader) readDockerJSONFileLogs(
+	ctx context.Context,
+	cfg SourceConfig,
+	container domain.DockerContainerIdentity,
+	query domain.DockerLogQuery,
+) (domain.DockerLogResult, bool) {
+	location, err := r.resolveDockerJSONLogLocation(ctx, cfg, container.ID)
+	if err != nil || location.Driver != "json-file" || !validDockerJSONLogPath(location.Path, container.ID) {
+		return domain.DockerLogResult{}, false
 	}
-	cfg, closer, err := r.openDocker(ctx, scope)
+	raw, diagnostics, truncated, err := r.runDockerCommand(
+		ctx, cfg, dockerJSONLogsCommand(location.Path, query), int(query.MaxBytes),
+	)
+	if err != nil || strings.TrimSpace(diagnostics) != "" {
+		return domain.DockerLogResult{}, false
+	}
+	stdout, stderr, _, filteredLines, tailLimited, err := decodeDockerJSONLogOutput(raw, query, truncated)
 	if err != nil {
-		return 0, err
+		return domain.DockerLogResult{}, false
 	}
-	defer closer()
-	container, err := r.resolveDockerContainer(ctx, cfg)
+	coverageLimited := truncated || tailLimited
+	return domain.DockerLogResult{
+		Container: container, Stdout: stdout, Stderr: stderr,
+		Truncated: truncated, CoverageLimited: coverageLimited,
+		RefinementRequired: coverageLimited, CoverageReason: dockerCoverageReason(truncated, tailLimited),
+		BytesRetrieved: int64(len(stdout) + len(stderr)), WindowLines: -1, FilteredLines: filteredLines,
+		Query: domain.DockerLogQueryMeta{
+			Since: query.Since, Until: query.Until, Tail: query.Tail, Pattern: query.Pattern,
+		},
+	}, true
+}
+
+func (r *Reader) resolveDockerJSONLogLocation(ctx context.Context, cfg SourceConfig, containerID string) (dockerJSONLogLocation, error) {
+	format := `{"id":{{json .Id}},"logPath":{{json .LogPath}},"logDriver":{{json .HostConfig.LogConfig.Type}}}`
+	remoteCommand := "docker inspect --type=container --format " + shellQuote(format) + " " + shellQuote(containerID)
+	stdout, _, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, maxDockerRuntimeBytes)
 	if err != nil {
-		return 0, err
+		return dockerJSONLogLocation{}, err
 	}
-	return r.countDockerLogLines(ctx, cfg, container.ID, query, query.Pattern)
+	if truncated {
+		return dockerJSONLogLocation{}, fmt.Errorf("Docker log location output exceeded limit")
+	}
+	var location dockerJSONLogLocation
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &location); err != nil || location.ID != containerID {
+		return dockerJSONLogLocation{}, fmt.Errorf("Docker log location is invalid")
+	}
+	return location, nil
+}
+
+func validDockerJSONLogPath(value, containerID string) bool {
+	clean := path.Clean(strings.TrimSpace(value))
+	if clean == "." || !path.IsAbs(clean) || strings.ContainsAny(clean, "\r\n") {
+		return false
+	}
+	return path.Base(clean) == containerID+"-json.log" && path.Base(path.Dir(clean)) == containerID
+}
+
+func dockerJSONLogsCommand(logPath string, query domain.DockerLogQuery) string {
+	command := "grep -F"
+	for _, prefix := range dockerLogMinutePrefixes(query.Since, query.Until) {
+		command += " -e " + shellQuote(`"time":"`+prefix)
+	}
+	command += " -- " + shellQuote(logPath)
+	if query.Pattern != "" {
+		command += " | " + dockerGrepCommand(query)
+	}
+	return command + " | tail -" + strconv.Itoa(query.Tail+1)
+}
+
+func dockerLogMinutePrefixes(since, until time.Time) []string {
+	cursor := since.UTC().Truncate(time.Minute)
+	last := until.UTC().Truncate(time.Minute)
+	prefixes := make([]string, 0, int(last.Sub(cursor)/time.Minute)+1)
+	for !cursor.After(last) {
+		prefixes = append(prefixes, cursor.Format("2006-01-02T15:04:"))
+		cursor = cursor.Add(time.Minute)
+	}
+	return prefixes
+}
+
+func decodeDockerJSONLogOutput(raw string, query domain.DockerLogQuery, truncated bool) (string, string, int64, int64, bool, error) {
+	rows := make([]dockerJSONLogLine, 0, query.Tail+1)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "--" {
+			continue
+		}
+		var row dockerJSONLogLine
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			if truncated {
+				continue
+			}
+			return "", "", 0, 0, false, fmt.Errorf("Docker JSON log output is invalid")
+		}
+		if row.Time.Before(query.Since) || !row.Time.Before(query.Until) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	tailLimited := len(rows) > query.Tail
+	if tailLimited {
+		rows = rows[len(rows)-query.Tail:]
+	}
+	var stdout, stderr strings.Builder
+	filteredLines := int64(0)
+	matcher, _ := regexp.Compile(query.Pattern)
+	for _, row := range rows {
+		if matcher != nil && matcher.MatchString(row.Log) {
+			filteredLines++
+		}
+		if row.Stream == "stderr" {
+			stderr.WriteString(row.Log)
+		} else {
+			stdout.WriteString(row.Log)
+		}
+	}
+	return stdout.String(), stderr.String(), int64(len(rows)), filteredLines, tailLimited, nil
+}
+
+func dockerCoverageReason(byteLimited, tailLimited bool) string {
+	switch {
+	case byteLimited:
+		return "byte_limit"
+	case tailLimited:
+		return "tail_limit"
+	default:
+		return ""
+	}
+}
+
+func countRuntimeLogLines(output string) int64 {
+	if output == "" {
+		return 0
+	}
+	count := int64(strings.Count(output, "\n"))
+	if !strings.HasSuffix(output, "\n") {
+		count++
+	}
+	return count
+}
+
+func countRuntimePatternMatches(output, pattern string) int64 {
+	if pattern == "" {
+		return 0
+	}
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		return 0
+	}
+	var count int64
+	for _, line := range strings.Split(output, "\n") {
+		if matcher.MatchString(line) {
+			count++
+		}
+	}
+	return count
 }
 
 func dockerLogsCommand(containerID string, query domain.DockerLogQuery) string {
@@ -98,6 +253,11 @@ func dockerLogsCommand(containerID string, query domain.DockerLogQuery) string {
 		// 无 filter 时保持旧命令的字节级兼容。
 		return base + " --tail " + fmt.Sprintf("%d", query.Tail) + " " + shellQuote(containerID)
 	}
+	return base + " " + shellQuote(containerID) + " 2>&1 | " + dockerGrepCommand(query) +
+		" | tail -" + strconv.Itoa(query.Tail)
+}
+
+func dockerGrepCommand(query domain.DockerLogQuery) string {
 	grepCommand := "grep -E"
 	if query.ContextAfter > 0 {
 		grepCommand += " -A " + strconv.Itoa(query.ContextAfter)
@@ -105,30 +265,7 @@ func dockerLogsCommand(containerID string, query domain.DockerLogQuery) string {
 	if query.ContextBefore > 0 {
 		grepCommand += " -B " + strconv.Itoa(query.ContextBefore)
 	}
-	return base + " " + shellQuote(containerID) + " 2>&1 | " + grepCommand +
-		" -- " + shellQuote(query.Pattern) + " | tail -" + strconv.Itoa(query.Tail)
-}
-
-func (r *Reader) countDockerLogLines(ctx context.Context, cfg SourceConfig, containerID string, query domain.DockerLogQuery, pattern string) (int64, error) {
-	remoteCommand := "docker logs --since " + shellQuote(query.Since.UTC().Format(time.RFC3339Nano)) +
-		" --until " + shellQuote(query.Until.UTC().Format(time.RFC3339Nano)) +
-		" " + shellQuote(containerID) + " 2>&1"
-	if pattern != "" {
-		remoteCommand += " | grep -E -- " + shellQuote(pattern)
-	}
-	remoteCommand += " | wc -l"
-	stdout, _, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, maxDockerRuntimeBytes)
-	if err != nil {
-		return 0, err
-	}
-	if truncated {
-		return 0, fmt.Errorf("Docker log line count exceeded limit")
-	}
-	count, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
-	if err != nil || count < 0 {
-		return 0, fmt.Errorf("Docker log line count is invalid")
-	}
-	return count, nil
+	return grepCommand + " -- " + shellQuote(query.Pattern)
 }
 
 func (r *Reader) openDocker(ctx context.Context, scope domain.EvidenceScope) (SourceConfig, func(), error) {

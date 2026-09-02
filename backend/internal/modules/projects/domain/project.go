@@ -390,7 +390,47 @@ func ValidateWebhookTokenColumns(hash, ciphertext, nonce []byte) error {
 	return fmt.Errorf("webhook token columns must be all present or all empty")
 }
 
-type sshConfig struct {
+// SSHDeploymentKind identifies the configured runtime that owns the evidence.
+type SSHDeploymentKind string
+
+const (
+	SSHDeploymentHost   SSHDeploymentKind = "host"
+	SSHDeploymentDocker SSHDeploymentKind = "docker"
+)
+
+// SSHDeployment is the non-secret deployment selector for an SSH source.
+// ContainerName is durable identity; a runtime container ID is deliberately
+// not part of project configuration.
+type SSHDeployment struct {
+	Kind          SSHDeploymentKind `json:"kind"`
+	ContainerName string            `json:"containerName,omitempty"`
+}
+
+// DockerContainer 是 Docker inventory 返回的无凭据运行时身份。
+// ID 只用于本次 probe/运行时证据，不能作为持久化选择器。
+type DockerContainer struct {
+	Name   string
+	ID     string
+	Image  string
+	State  string
+	Status string
+}
+
+// SSHSourceConfig is the normalized, non-secret SSH source contract.
+// Version-1 JSON is accepted and returned as schema version 2 with a host
+// deployment.
+type SSHSourceConfig struct {
+	SchemaVersion int           `json:"schemaVersion"`
+	Host          string        `json:"host"`
+	Port          int           `json:"port"`
+	User          string        `json:"user"`
+	ProjectFolder string        `json:"projectFolder"`
+	LogPath       string        `json:"logPath"`
+	Mode          string        `json:"mode"`
+	Deployment    SSHDeployment `json:"deployment"`
+}
+
+type sshConfigV1 struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Host          string `json:"host"`
 	Port          int    `json:"port"`
@@ -398,6 +438,22 @@ type sshConfig struct {
 	ProjectFolder string `json:"projectFolder"`
 	LogPath       string `json:"logPath"`
 	Mode          string `json:"mode"`
+}
+
+type sshDeploymentV2 struct {
+	Kind          SSHDeploymentKind `json:"kind"`
+	ContainerName *string           `json:"containerName"`
+}
+
+type sshConfigV2 struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	Host          string          `json:"host"`
+	Port          int             `json:"port"`
+	User          string          `json:"user"`
+	ProjectFolder string          `json:"projectFolder"`
+	LogPath       string          `json:"logPath"`
+	Mode          string          `json:"mode"`
+	Deployment    sshDeploymentV2 `json:"deployment"`
 }
 
 type cloudConfig struct {
@@ -416,10 +472,174 @@ type mcpConfig struct {
 	QueryScope      string            `json:"queryScope"`
 }
 
-type webhookConfig struct {
+// WebhookProvider identifies the trusted adapter selected for a signed
+// webhook. Provider behavior is never inferred from callback text.
+type WebhookProvider string
+
+const (
+	WebhookProviderGeneric    WebhookProvider = "generic"
+	WebhookProviderTencentCLS WebhookProvider = "tencent_cls"
+)
+
+// SignedWebhookConfig is the normalized, non-secret signed webhook contract.
+// Version-1 JSON is accepted and returned as schema version 2 with a generic
+// provider.
+type SignedWebhookConfig struct {
+	SchemaVersion    int             `json:"schemaVersion"`
+	Provider         WebhookProvider `json:"provider"`
+	EventTypes       []string        `json:"eventTypes"`
+	DeduplicationKey string          `json:"deduplicationKey"`
+}
+
+type webhookConfigV1 struct {
 	SchemaVersion    int      `json:"schemaVersion"`
 	EventTypes       []string `json:"eventTypes"`
 	DeduplicationKey string   `json:"deduplicationKey"`
+}
+
+type webhookConfigV2 struct {
+	SchemaVersion    int             `json:"schemaVersion"`
+	Provider         WebhookProvider `json:"provider"`
+	EventTypes       []string        `json:"eventTypes"`
+	DeduplicationKey string          `json:"deduplicationKey"`
+}
+
+// ParseSSHSourceConfig strictly decodes a project SSH source and normalizes
+// legacy schema version 1 to the version-2 host deployment contract.
+func ParseSSHSourceConfig(raw json.RawMessage) (SSHSourceConfig, error) {
+	version, err := configSchemaVersion(raw)
+	if err != nil {
+		return SSHSourceConfig{}, fmt.Errorf("SSH source config is invalid: %w", err)
+	}
+	switch version {
+	case 1:
+		var value sshConfigV1
+		if err := decodeStrict(raw, &value); err != nil || !validSSHSourceFields(value.Host, value.Port, value.User, value.ProjectFolder, value.LogPath, value.Mode) {
+			return SSHSourceConfig{}, fmt.Errorf("SSH source config is invalid")
+		}
+		return SSHSourceConfig{
+			SchemaVersion: 2,
+			Host:          value.Host,
+			Port:          value.Port,
+			User:          value.User,
+			ProjectFolder: value.ProjectFolder,
+			LogPath:       value.LogPath,
+			Mode:          value.Mode,
+			Deployment:    SSHDeployment{Kind: SSHDeploymentHost},
+		}, nil
+	case 2:
+		var value sshConfigV2
+		if err := decodeStrict(raw, &value); err != nil || !validSSHSourceFields(value.Host, value.Port, value.User, value.ProjectFolder, value.LogPath, value.Mode) || !validSSHDeployment(value.Deployment) {
+			return SSHSourceConfig{}, fmt.Errorf("SSH source config is invalid")
+		}
+		deployment := SSHDeployment{Kind: value.Deployment.Kind}
+		if value.Deployment.ContainerName != nil {
+			deployment.ContainerName = *value.Deployment.ContainerName
+		}
+		return SSHSourceConfig{
+			SchemaVersion: 2,
+			Host:          value.Host,
+			Port:          value.Port,
+			User:          value.User,
+			ProjectFolder: value.ProjectFolder,
+			LogPath:       value.LogPath,
+			Mode:          value.Mode,
+			Deployment:    deployment,
+		}, nil
+	default:
+		return SSHSourceConfig{}, fmt.Errorf("SSH source config is invalid")
+	}
+}
+
+// ParseSignedWebhookConfig strictly decodes a project signed webhook and
+// normalizes legacy schema version 1 to the version-2 generic provider.
+func ParseSignedWebhookConfig(raw json.RawMessage) (SignedWebhookConfig, error) {
+	version, err := configSchemaVersion(raw)
+	if err != nil {
+		return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid: %w", err)
+	}
+	switch version {
+	case 1:
+		var value webhookConfigV1
+		if err := decodeStrict(raw, &value); err != nil || !validWebhookFields(value.EventTypes, value.DeduplicationKey) {
+			return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid")
+		}
+		return SignedWebhookConfig{
+			SchemaVersion:    2,
+			Provider:         WebhookProviderGeneric,
+			EventTypes:       append([]string(nil), value.EventTypes...),
+			DeduplicationKey: value.DeduplicationKey,
+		}, nil
+	case 2:
+		var value webhookConfigV2
+		if err := decodeStrict(raw, &value); err != nil || !oneOf(string(value.Provider), string(WebhookProviderGeneric), string(WebhookProviderTencentCLS)) || !validWebhookFields(value.EventTypes, value.DeduplicationKey) {
+			return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid")
+		}
+		return SignedWebhookConfig{
+			SchemaVersion:    2,
+			Provider:         value.Provider,
+			EventTypes:       append([]string(nil), value.EventTypes...),
+			DeduplicationKey: value.DeduplicationKey,
+		}, nil
+	default:
+		return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid")
+	}
+}
+
+func configSchemaVersion(raw []byte) (int, error) {
+	if len(raw) == 0 || len(raw) > 65536 {
+		return 0, fmt.Errorf("configuration JSON size is invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var value struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if err := decoder.Decode(&value); err != nil {
+		return 0, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("configuration JSON must contain one object")
+	}
+	return value.SchemaVersion, nil
+}
+
+func validSSHSourceFields(host string, port int, user, projectFolder, logPath, mode string) bool {
+	return bounded(host, 1, 255) && port >= 1 && port <= 65535 && bounded(user, 1, 128) &&
+		bounded(projectFolder, 1, 2048) && bounded(logPath, 1, 2048) && oneOf(mode, "tail", "snapshot")
+}
+
+// ValidateSSHContainerProbe 校验 admin-only Docker inventory probe 的连接草稿。
+// probe 只接受项目管理员提供的已保存 SSH credential reference，不接受远端命令。
+func ValidateSSHContainerProbe(host string, port int, user, credentialSecretID string) error {
+	if !bounded(host, 1, 255) || strings.ContainsAny(host, "\r\n") ||
+		port < 1 || port > 65535 || !bounded(user, 1, 128) || strings.ContainsAny(user, "\r\n") ||
+		validateRequiredUUIDv7(credentialSecretID) != nil {
+		return fmt.Errorf("SSH container probe configuration is invalid")
+	}
+	return nil
+}
+
+func validSSHDeployment(value sshDeploymentV2) bool {
+	switch value.Kind {
+	case SSHDeploymentHost:
+		return value.ContainerName == nil
+	case SSHDeploymentDocker:
+		return value.ContainerName != nil && bounded(*value.ContainerName, 1, 255)
+	default:
+		return false
+	}
+}
+
+func validWebhookFields(eventTypes []string, deduplicationKey string) bool {
+	if len(eventTypes) == 0 || len(eventTypes) > 32 || !bounded(deduplicationKey, 1, 255) {
+		return false
+	}
+	for _, eventType := range eventTypes {
+		if !bounded(eventType, 1, 80) {
+			return false
+		}
+	}
+	return true
 }
 
 type ruleConfig struct {
@@ -431,10 +651,7 @@ type ruleConfig struct {
 func validateSourceConfig(kind string, raw json.RawMessage) error {
 	switch kind {
 	case "ssh":
-		var value sshConfig
-		if err := decodeStrict(raw, &value); err != nil || value.SchemaVersion != 1 || !bounded(value.Host, 1, 255) ||
-			value.Port < 1 || value.Port > 65535 || !bounded(value.User, 1, 128) || !bounded(value.ProjectFolder, 1, 2048) ||
-			!bounded(value.LogPath, 1, 2048) || !oneOf(value.Mode, "tail", "snapshot") {
+		if _, err := ParseSSHSourceConfig(raw); err != nil {
 			return fmt.Errorf("SSH source config is invalid")
 		}
 	case "cloud":
@@ -466,15 +683,8 @@ func validateSourceConfig(kind string, raw json.RawMessage) error {
 func validateTriggerConfig(kind string, raw json.RawMessage) error {
 	switch kind {
 	case "signed_webhook":
-		var value webhookConfig
-		if err := decodeStrict(raw, &value); err != nil || value.SchemaVersion != 1 || len(value.EventTypes) == 0 ||
-			len(value.EventTypes) > 32 || !bounded(value.DeduplicationKey, 1, 255) {
+		if _, err := ParseSignedWebhookConfig(raw); err != nil {
 			return fmt.Errorf("signed webhook config is invalid")
-		}
-		for _, eventType := range value.EventTypes {
-			if !bounded(eventType, 1, 80) {
-				return fmt.Errorf("signed webhook event type is invalid")
-			}
 		}
 	case "custom_rule":
 		var value ruleConfig

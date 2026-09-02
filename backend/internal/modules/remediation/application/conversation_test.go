@@ -30,22 +30,29 @@ func TestRedactConversationValueRedactsTypedFileContent(t *testing.T) {
 	}
 }
 
-func TestBoundedConversationValueKeepsRawInspectOutput(t *testing.T) {
+func TestBoundedConversationValueRedactsInspectOutput(t *testing.T) {
 	value := domain.SSHInspectResult{
 		Command: "cd -- '/srv/app' && 'ls' '/var/log'", ExitCode: 0,
 		Stdout: "password=hunter2\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----\n/tmp/fixthe-sshlog-abc/id\n",
-		Stderr: "sk-not-redacted-on-inspect",
+		Stderr: "bearer sk-secretvalue",
 	}
 	encoded, err := json.Marshal(boundedConversationValue(value, 4096))
 	if err != nil {
 		t.Fatalf("marshal inspect payload: %v", err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, "password=hunter2") || !strings.Contains(text, "sk-not-redacted-on-inspect") {
-		t.Fatalf("inspect payload lost raw output: %s", text)
+	// canonical runtime evidence 的同一套脱敏也作用于 conversation 边界：
+	// 凭据形态文本、PEM 私钥块与临时 key 路径都不进入模型上下文。
+	for _, secret := range []string{"hunter2", "sk-secretvalue", "BEGIN OPENSSH PRIVATE KEY", "/tmp/fixthe-sshlog-abc/id"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("inspect payload leaked %q: %s", secret, text)
+		}
 	}
-	if strings.Contains(text, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(text, "/tmp/fixthe-sshlog-abc/id") {
-		t.Fatalf("inspect payload leaked private key material: %s", text)
+	if !strings.Contains(text, "password=[redacted]") || !strings.Contains(text, "[redacted]") {
+		t.Fatalf("inspect payload was not redacted: %s", text)
+	}
+	if !strings.Contains(text, "'ls' '/var/log'") {
+		t.Fatalf("inspect payload lost reconstructed command: %s", text)
 	}
 }
 
@@ -188,6 +195,113 @@ func TestNativeContinuationDeliversStrictToolObservationOnce(t *testing.T) {
 	if third := conversation.NativeContinuation("planning"); strings.Contains(third, "tool_observation") {
 		t.Fatalf("planning continuation repeated tool observation: %q", third)
 	}
+}
+
+func TestAppendToolResultOffersOneCorrectiveRequest(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	request := RequestTool{ToolName: ToolRepoReadFile, Parameters: map[string]interface{}{"path": ""}}
+
+	conversation.AppendToolResult(request, ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolRepoReadFile})
+	first := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"code":"invalid_arguments"`, `"recoveryAction":"correct_request"`, `"failureAttempt":1`, `"retriesRemaining":1`} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first corrective observation missing %q: %s", want, first)
+		}
+	}
+
+	conversation.AppendToolResult(request, ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: ToolRepoReadFile})
+	second := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"recoveryAction":"use_fallback"`, `"failureAttempt":2`, `"retriesRemaining":0`} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("repeated corrective observation missing %q: %s", want, second)
+		}
+	}
+}
+
+func TestAppendToolResultOffersOneTransientRetry(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	err := &domain.ToolRuntimeError{Code: "connector_timeout", Retryable: true}
+
+	conversation.AppendToolResult(RequestTool{ToolName: ToolDockerLogs}, ToolResult{}, err)
+	first := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"retryable":true`, `"recoveryAction":"retry_transient"`, `"failureAttempt":1`, `"retriesRemaining":1`} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("transient observation missing %q: %s", want, first)
+		}
+	}
+
+	conversation.AppendToolResult(RequestTool{ToolName: ToolDockerLogs}, ToolResult{}, err)
+	second := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"recoveryAction":"use_fallback"`, `"failureAttempt":2`, `"retriesRemaining":0`} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("repeated transient observation missing %q: %s", want, second)
+		}
+	}
+}
+
+func TestAppendToolResultNonRetryableFailureUsesFallback(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	conversation.AppendToolResult(
+		RequestTool{ToolName: ToolDockerLogs}, ToolResult{},
+		&domain.ToolRuntimeError{Code: "authorization", Retryable: false},
+	)
+
+	observation := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"retryable":false`, `"recoveryAction":"use_fallback"`, `"failureAttempt":1`, `"retriesRemaining":0`} {
+		if !strings.Contains(observation, want) {
+			t.Fatalf("non-retryable observation missing %q: %s", want, observation)
+		}
+	}
+}
+
+func TestDockerLogRefinementStateRequiresANewerCompleteResult(t *testing.T) {
+	conversation := NewAgentConversation("bootstrap")
+	conversation.AppendToolResult(RequestTool{ToolName: ToolDockerLogs}, ToolResult{
+		Tool: ToolDockerLogs, RefinementRequired: true, RefinementReason: "tail_limit",
+		Payload: domain.DockerLogResult{CoverageLimited: true, RefinementRequired: true, CoverageReason: "tail_limit"},
+	}, nil)
+	version, reason, pending := conversation.PendingDockerLogRefinement()
+	if version != 1 || reason != "tail_limit" || !pending {
+		t.Fatalf("pending refinement = %d/%q/%t", version, reason, pending)
+	}
+
+	conversation.AppendDockerLogRefinement(reason)
+	refinement := lastConversationLine(conversation.ContextText())
+	for _, want := range []string{`"code":"docker_log_refinement_required"`, `"reason":"tail_limit"`, "exact alert event time"} {
+		if !strings.Contains(refinement, want) {
+			t.Fatalf("refinement observation missing %q: %s", want, refinement)
+		}
+	}
+
+	conversation.AppendToolResult(RequestTool{ToolName: ToolDockerLogs}, ToolResult{
+		Tool: ToolDockerLogs, Payload: domain.DockerLogResult{Stdout: "panic\n"},
+	}, nil)
+	version, reason, pending = conversation.PendingDockerLogRefinement()
+	if version != 1 || reason != "" || pending {
+		t.Fatalf("completed refinement = %d/%q/%t", version, reason, pending)
+	}
+}
+
+func TestCorrectableToolErrorCodes(t *testing.T) {
+	tests := map[string]bool{
+		"invalid_arguments":       true,
+		"path_out_of_scope":       true,
+		"not_found":               true,
+		"connector_not_found":     true,
+		"authorization":           false,
+		"connector_authorization": false,
+		"budget_exceeded":         false,
+	}
+	for code, want := range tests {
+		if got := correctableToolErrorCode(code); got != want {
+			t.Errorf("correctableToolErrorCode(%q) = %t, want %t", code, got, want)
+		}
+	}
+}
+
+func lastConversationLine(text string) string {
+	lines := strings.Split(text, "\n")
+	return lines[len(lines)-1]
 }
 
 func TestNativeContinuationKeepsNativeToolResultOnlyInHistory(t *testing.T) {

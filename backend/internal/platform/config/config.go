@@ -17,6 +17,7 @@ const (
 	EnvironmentKey              = "FIXTHE_ENVIRONMENT"
 	LogLevelKey                 = "FIXTHE_LOG_LEVEL"
 	LogFormatKey                = "FIXTHE_LOG_FORMAT"
+	LogFileKey                  = "FIXTHE_LOG_FILE"
 	ShutdownKey                 = "FIXTHE_SHUTDOWN_TIMEOUT"
 	HTTPAddressKey              = "FIXTHE_HTTP_ADDR"
 	HTTPReadHeaderKey           = "FIXTHE_HTTP_READ_HEADER_TIMEOUT"
@@ -28,6 +29,7 @@ const (
 	HTTPRequestDebugKey         = "FIXTHE_HTTP_REQUEST_DEBUG"
 	PublicURLKey                = "FIXTHE_PUBLIC_URL"
 	AuthSessionTTLKey           = "FIXTHE_AUTH_SESSION_TTL"
+	WebhookAITimeoutKey         = "FIXTHE_WEBHOOK_AI_TIMEOUT"
 	RemediationModelTimeoutKey  = "FIXTHE_REMEDIATION_MODEL_TIMEOUT"
 	EncryptionKey               = "FIXTHE_ENCRYPTION_KEY"
 	BootstrapAdminPasswordKey   = "FIXTHE_BOOTSTRAP_ADMIN_PASSWORD"
@@ -69,6 +71,7 @@ type Common struct {
 	Environment     string
 	LogLevel        string
 	LogFormat       string
+	LogFile         string
 	ShutdownTimeout time.Duration
 }
 
@@ -91,12 +94,18 @@ type API struct {
 	Common      Common
 	HTTP        HTTP
 	Auth        Auth
+	WebhookAI   WebhookAI
 	Remediation Remediation
 	Encryption  Encryption
 	// PublicURL 是派生公开 webhook 入站地址的部署级基址。
 	PublicURL  string
 	PostgreSQL PostgreSQL
 	Redis      Redis
+}
+
+// WebhookAI 包含 webhook AI 归一化调用的资源边界。
+type WebhookAI struct {
+	NormalizationTimeout time.Duration
 }
 
 // Remediation 包含自动修复模型调用的部署级资源边界。
@@ -199,6 +208,10 @@ func LoadAPI(lookup Lookup) (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	webhookAITimeout, err := durationValue(lookup, WebhookAITimeoutKey, 60*time.Second, 100*time.Millisecond, 10*time.Minute)
+	if err != nil {
+		return API{}, err
+	}
 	remediationModelTimeout, err := durationValue(lookup, RemediationModelTimeoutKey, 5*time.Minute, 30*time.Second, 20*time.Minute)
 	if err != nil {
 		return API{}, err
@@ -213,7 +226,13 @@ func LoadAPI(lookup Lookup) (API, error) {
 		return API{}, err
 	}
 
-	return API{Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL}, Remediation: Remediation{ModelTurnTimeout: remediationModelTimeout}, Encryption: Encryption{Key: encryptionKey}, PublicURL: publicURL, PostgreSQL: postgresConfig, Redis: redisConfig}, nil
+	return API{
+		Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL},
+		WebhookAI:   WebhookAI{NormalizationTimeout: webhookAITimeout},
+		Remediation: Remediation{ModelTurnTimeout: remediationModelTimeout},
+		Encryption:  Encryption{Key: encryptionKey}, PublicURL: publicURL,
+		PostgreSQL: postgresConfig, Redis: redisConfig,
+	}, nil
 }
 
 func publicURLValue(lookup Lookup) (string, error) {
@@ -324,6 +343,10 @@ func LoadCommon(lookup Lookup) (Common, error) {
 	if err != nil {
 		return Common{}, err
 	}
+	logFile := stringValue(lookup, LogFileKey, "")
+	if len(logFile) > 4096 || strings.ContainsAny(logFile, "\x00\r\n") {
+		return Common{}, fieldError(LogFileKey, "must be empty or a single-line path up to 4096 bytes")
+	}
 
 	shutdownTimeout, err := durationValue(lookup, ShutdownKey, 15*time.Second, time.Second, 2*time.Minute)
 	if err != nil {
@@ -334,6 +357,7 @@ func LoadCommon(lookup Lookup) (Common, error) {
 		Environment:     environment,
 		LogLevel:        logLevel,
 		LogFormat:       logFormat,
+		LogFile:         logFile,
 		ShutdownTimeout: shutdownTimeout,
 	}, nil
 }

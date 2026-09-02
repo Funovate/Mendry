@@ -230,6 +230,9 @@ type BoundaryOptions struct {
 	Logger            *slog.Logger
 	MaxBodyBytes      int64
 	CORSAllowedOrigin string
+	// RequestDebug 打开后由 AccessLog 把完整请求/响应挂到 completed 记录；
+	// 零值保持现有默认关闭路径，既有 Boundary 测试无需改动。
+	RequestDebug bool
 }
 
 // Boundary 按固定顺序组装 request ID、access log、recovery、CORS、body limit
@@ -249,7 +252,7 @@ func Boundary(options BoundaryOptions) (http.Handler, error) {
 	handler = LimitBody(options.MaxBodyBytes, handler)
 	handler = CORS(options.CORSAllowedOrigin, handler)
 	handler = Recover(options.Logger, handler)
-	handler = AccessLog(options.Logger, options.MaxBodyBytes, handler)
+	handler = AccessLog(options.Logger, options.MaxBodyBytes, options.RequestDebug, handler)
 	handler = WithRequestID(handler)
 	return handler, nil
 }

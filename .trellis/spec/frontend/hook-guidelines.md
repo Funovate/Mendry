@@ -29,9 +29,22 @@ consumers need the same behavior or the hook encodes a shared boundary.
 - Use `setQueryData` for a complete mutation response that can deterministically update a list or record.
 - Use invalidation when the response does not contain enough data for a correct cache update.
 - Render mutation error and pending state in the owning feature.
+- Remediation start/continue mutations invalidate the project-scoped incident
+  remediation query after the server acknowledges the action; the continue
+  endpoint returns a durable queued attempt before its long-running coordinator
+  work, so the owning component must use `mutate` and never await model or
+  connector execution in the click handler. The response does not carry the
+  full review payload, so `setQueryData` is not appropriate. Submit
+  `generation`, `runId`, and `version` read from the review response, never from
+  component state.
+- Render the `Continue analysis` control only when the server response says
+  `continuationAvailable` (write capability AND eligible terminal state); on
+  conflict/forbidden/unsupported responses disable further stale clicks while
+  preserving the returned safe message.
 - Secret plaintext remains form-local and is cleared in `onSuccess`.
-- Project rename replaces the matching `projects` item and invalidates
-  configuration. Secret update replaces the matching secrets-list item.
+- Project rename lives in `layouts/ProjectSwitcher`. It replaces the matching
+  `projects` item and invalidates configuration. Secret update replaces the
+  matching secrets-list item.
 
 ```tsx
 queryClient.setQueryData<ListResult<ProjectMember>>(

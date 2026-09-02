@@ -246,6 +246,13 @@ func (c *RemediationCoordinator) SetTencentCLSDetailPort(port domain.TencentCLSD
 	c.toolGateway.SetTencentCLSDetailPort(port)
 }
 
+// SetRuntimeEvidenceWriter 在 composition root 注入 canonical runtime evidence
+// writer。SSH inspect 与 Docker logs 的成功结果必须先持久化，才能作为可引用的
+// evidence ID 进入模型上下文；没有 writer 时 observed 工具 fail closed。
+func (c *RemediationCoordinator) SetRuntimeEvidenceWriter(writer RuntimeEvidenceWriter) {
+	c.toolGateway.SetRuntimeEvidenceWriter(writer)
+}
+
 func newRemediationCoordinator(
 	store domain.RunStore,
 	repoPort domain.RepositoryReadPort,
@@ -773,6 +780,8 @@ func (c *RemediationCoordinator) drive(
 	}
 
 	collectLoops := 0
+	causalClosureReassessed := false
+	challengedDockerRefinementVersion := 0
 	protocolFailures := 0
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStateDiagnosing); err != nil || exhausted {
@@ -827,22 +836,50 @@ func (c *RemediationCoordinator) drive(
 				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
 				continue
 			}
+			challenged, terminal, err := c.challengePendingDockerRefinement(
+				ctx, budget, runID, usage, conversation, &challengedDockerRefinementVersion,
+			)
+			if err != nil || terminal {
+				return err
+			}
+			if challenged {
+				continue
+			}
 			protocolFailures = 0
 			diagnosis := env.Diagnosis
 			if diagnosis.Fixability == domain.FixabilityCodeFixable {
 				if c.evidenceGate == nil {
 					c.evidenceGate = NewEvidenceGate(nil)
 				}
-				gated, _, gateErr := c.evidenceGate.Apply(ctx, runID, diagnosis)
+				gated, decision, mismatches, gateErr := c.evidenceGate.Apply(ctx, runID, diagnosis)
 				if gateErr != nil {
 					return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(fmt.Errorf("evaluate evidence gate: %w", gateErr)))
 				}
 				diagnosis = gated
+				if len(mismatches) > 0 {
+					// R6/R7/AC5：可纠正的 citation classification 元数据差异回喂同一
+					// 循环（evidence_correction challenge），模型修正后重新走 gate；
+					// 不终态化，也不静默改写结论。
+					if err := c.challengeEvidenceCorrections(ctx, budget, runID, usage, mismatches, conversation); err != nil {
+						return err
+					}
+					continue
+				}
+				if !decision.PlanningEligible {
+					// gate 硬性拒绝（缺直接证据 / 时间或相关性未决 / 真矛盾）：结论
+					// 保留在 assessment 中，但沿用既有 insufficient-evidence 阻塞
+					// 路径，不进入 planning（hard gate 语义不变；exhaustion
+					// proposal 属于后续增量）。
+					diagnosis.Fixability = domain.FixabilityInsufficientEvidence
+				}
 			}
 			if err := c.appendDecision(ctx, runID, diagnosis); err != nil {
 				return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 			}
-			done, err := c.routeDiagnosis(ctx, budget, runID, ref, scope, catalog, diagnosis, usage, &collectLoops, conversation)
+			done, err := c.routeDiagnosis(
+				ctx, budget, runID, ref, scope, catalog, diagnosis, usage,
+				&collectLoops, &causalClosureReassessed, conversation,
+			)
 			if err != nil {
 				return err
 			}
@@ -859,6 +896,15 @@ func (c *RemediationCoordinator) drive(
 					return err
 				}
 				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				continue
+			}
+			challenged, terminal, err := c.challengePendingDockerRefinement(
+				ctx, budget, runID, usage, conversation, &challengedDockerRefinementVersion,
+			)
+			if err != nil || terminal {
+				return err
+			}
+			if challenged {
 				continue
 			}
 			if env.Stop == nil || strings.TrimSpace(env.Stop.RecommendedNextAction) == "" {
@@ -889,7 +935,7 @@ func (c *RemediationCoordinator) drive(
 			// The model deliberately gives up; a human must take over.
 			effect := modelEffect(usage)
 			effect.TerminalReason = "blocked_manual_review"
-			exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect)
+			exhausted, err = c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect)
 			if err != nil || exhausted {
 				return err
 			}
@@ -907,6 +953,107 @@ func (c *RemediationCoordinator) drive(
 	}
 }
 
+func (c *RemediationCoordinator) challengePendingDockerRefinement(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	usage domain.ModelResult,
+	conversation *AgentConversation,
+	challengedVersion *int,
+) (bool, bool, error) {
+	version, reason, pending := conversation.PendingDockerLogRefinement()
+	if !pending {
+		return false, false, nil
+	}
+	if version <= *challengedVersion {
+		effect := modelEffect(usage)
+		effect.TerminalReason = "insufficient_evidence"
+		exhausted, err := c.transitionBudgeted(
+			ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateBlockedManualReview, effect,
+		)
+		if err != nil || exhausted {
+			return false, true, err
+		}
+		return false, true, c.notifyTerminal(
+			ctx, runID, domain.RunStateBlockedManualReview, domain.FixabilityInsufficientEvidence,
+		)
+	}
+	*challengedVersion = version
+	exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+	if err != nil || exhausted {
+		return true, exhausted, err
+	}
+	conversation.AppendDockerLogRefinement(reason)
+	return true, false, nil
+}
+
+// challengeEvidenceCorrections 把 gate 发现的可纠正 citation classification
+// 差异（R7）作为 recoverable evidence_correction challenge 回喂同一循环，并
+// 在 resilient_v1 下记录 recovery checkpoint。该模型轮次仍按正常 diagnosis
+// 计入预算；消息只含 evidence ID 与持久化权威分类，不携带模型输出或凭据。
+// legacy run（无 resilient state）同样收到 challenge：R7 不区分模式，且
+// domain gate 的 mismatch 解耦已经改变了 legacy 的结果路径。
+func (c *RemediationCoordinator) challengeEvidenceCorrections(
+	ctx context.Context,
+	budget *runBudget,
+	runID string,
+	usage domain.ModelResult,
+	mismatches []CitationClassificationMismatch,
+	conversation *AgentConversation,
+) error {
+	exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+	if err != nil || exhausted {
+		return err
+	}
+	attempt := 1
+	available := []string{"repository", "provider_evidence", "runtime_logs", "ssh_inspect"}
+	if tracker := resilientStateFrom(ctx); tracker != nil {
+		tracker.evidenceCorrectionAttempts++
+		attempt = tracker.evidenceCorrectionAttempts
+		available = tracker.recoveryCapabilities()
+	}
+	challenge, err := NewRecoveryChallenge(
+		domain.RecoveryChallengeKindEvidenceCorrection,
+		domain.RecoverySeverityRecoverable,
+		"citation_classification_mismatch",
+		"evidenceCitations",
+		available,
+		[]string{"correct_citation"},
+		attempt,
+		budget.remaining(),
+		evidenceCorrectionMessage(mismatches),
+	)
+	if err != nil {
+		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(fmt.Errorf("build evidence correction challenge: %w", err)))
+	}
+	if tracker := resilientStateFrom(ctx); tracker != nil {
+		// D2 recovery-triggered checkpoint：策略变化（evidence metadata 修正）
+		// 后强制持久化 working memory，供重启/续跑重建。
+		tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+			Kind: string(challenge.Kind), Action: "correct_citation", OutcomeRef: "challenge:" + challenge.ReasonCode,
+		})
+		if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
+			return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
+		}
+	}
+	conversation.AppendRecoveryChallenge(challenge)
+	return nil
+}
+
+// evidenceCorrectionMessage 生成 evidence_correction challenge 的服务端固定
+// 文案：逐条列出 evidence ID 与持久化权威分类（均非凭据），并说明该差异是
+// 可纠正元数据，不改变 fixability/confidence（R7）。
+func evidenceCorrectionMessage(mismatches []CitationClassificationMismatch) string {
+	parts := make([]string, 0, len(mismatches))
+	for _, mismatch := range mismatches {
+		parts = append(parts, mismatch.EvidenceID+" is stored as "+string(mismatch.StoredClassification))
+	}
+	return "Citation classification metadata does not match the persisted authoritative classification: " +
+		strings.Join(parts, "; ") +
+		". Re-read the evidence by evidenceId and return the stored classification in evidenceCitations. " +
+		"A classification mismatch is correctable metadata and does not by itself change fixability or confidence."
+}
+
 // routeDiagnosis applies the fixability routing rules. It returns done=true when
 // the run reached a terminal state, or done=false when it moved through a
 // bounded collect-more-context loop and diagnosis should be re-run.
@@ -920,6 +1067,7 @@ func (c *RemediationCoordinator) routeDiagnosis(
 	diag *DiagnosisOutput,
 	usage domain.ModelResult,
 	collectLoops *int,
+	causalClosureReassessed *bool,
 	conversation *AgentConversation,
 ) (bool, error) {
 	switch diag.Fixability {
@@ -944,8 +1092,19 @@ func (c *RemediationCoordinator) routeDiagnosis(
 
 	case domain.FixabilityInsufficientEvidence:
 		if diag.CollectMoreContext == nil || len(diag.CollectMoreContext.ToolCalls) == 0 {
-			// insufficient_evidence 是完整终态 diagnosis。没有明确 tool request 时重放
-			// 同一 prompt 不会增加 evidence，analysis-only continuation 尤其不能空转。
+			if diagnosisNeedsCausalClosureReassessment(diag) && !*causalClosureReassessed {
+				// 因果闭环与证据不足不能同时作为最终结论。先消耗一次正常模型预算
+				// 强制复核缺失项的 materiality；复核仍失败时才进入人工交接。
+				*causalClosureReassessed = true
+				exhausted, err := c.recordSameStateBudget(ctx, budget, runID, domain.RunStateDiagnosing, modelEffect(usage))
+				if err != nil || exhausted {
+					return true, err
+				}
+				conversation.AppendCausalClosureReassessment()
+				return false, nil
+			}
+			// 没有因果闭环，也没有明确 tool request 时，重放同一 prompt 不会
+			// 增加 evidence；此时保留完整终态 diagnosis 并交给人工复核。
 			return true, c.blockForInsufficientEvidence(ctx, budget, runID, usage, diag.Fixability)
 		}
 		if *collectLoops >= c.maxCollectLoops {
@@ -966,6 +1125,10 @@ func (c *RemediationCoordinator) routeDiagnosis(
 		return true, c.fail(ctx, runID, domain.RunStateDiagnosing,
 			fmt.Errorf("unknown fixability %q", diag.Fixability))
 	}
+}
+
+func diagnosisNeedsCausalClosureReassessment(diag *DiagnosisOutput) bool {
+	return diag != nil && diag.CausalClosure != nil && diag.CausalClosure.ExplainsOriginalSymptom
 }
 
 func (c *RemediationCoordinator) blockForInsufficientEvidence(

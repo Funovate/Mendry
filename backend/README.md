@@ -41,7 +41,10 @@ record scannable; use JSON when complete trace, span, request, and stable event
 identifiers are needed.
 `test`, `staging`, and `production` default to JSON; set
 `FIXTHE_LOG_FORMAT=console` or `FIXTHE_LOG_FORMAT=json` to override the
-environment default explicitly.
+environment default explicitly. Set `FIXTHE_LOG_FILE=./logs/fixthe.log` to
+append the same records to a private local file while retaining stdout. The
+parent directory is created automatically; rotate or remove the file through
+the local process supervisor when needed.
 
 ```bash
 cp .env.example .env
@@ -191,8 +194,10 @@ evidence profile, query scope, and capabilities. Trigger configuration stores
 webhook event types/deduplication key or a custom match expression/grouping window.
 These records survive restart. This milestone still does not connect to SSH, Cloud,
 or MCP, execute custom rules, or poll logs. Signed webhook ingress is live:
-`POST /hooks/{token}` accepts the alert body without a Session and opens or
-updates a `P2` incident. Authenticated `POST observations` remains the
+`POST /hooks/{token}` accepts the alert body without a Session, validates the
+token, and returns `202 {"accepted":true}` before AI fingerprint extraction.
+Normalization, Observation persistence, and `P2` incident ingestion continue
+in the API process background. Authenticated `POST observations` remains the
 temporary connector/development ingestion boundary.
 
 Set `FIXTHE_PUBLIC_URL` to the absolute public origin used to display

@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend layer index and mandatory development guidance."}
+{"file":".trellis/spec/backend/remediation-adapter-guidelines.md","reason":"Remediation ports, adapters, tool authority, and credential boundaries."}
+{"file":".trellis/spec/backend/remediation-evidence-guidelines.md","reason":"Evidence provenance, correlation, persistence, and disclosure contracts."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Checkpoint/recovery migrations and transactional store requirements."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Recoverable versus terminal error semantics."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend test and verification requirements."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend layer index and mandatory development guidance."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Recovery and manual-review UI behavior."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Additive review API schema and frontend type validation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"End-to-end data flow across persistence, coordinator, HTTP API, and UI."}

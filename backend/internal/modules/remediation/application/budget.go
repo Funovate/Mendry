@@ -160,8 +160,8 @@ func toolResultEffect(result ToolResult) domain.Effect {
 	switch {
 	case strings.HasPrefix(result.Tool, "repository."):
 		effect.RepositoryBytes = result.BytesRetrieved
-	case strings.HasPrefix(result.Tool, "evidence."), result.Tool == ToolSSHInspect:
-		// inspect 输出计入 evidence 预算，避免 SSH 读取绕过共享 run bound。
+	case strings.HasPrefix(result.Tool, "evidence."), result.Tool == ToolSSHInspect, result.Tool == ToolDockerLogs:
+		// inspect/Docker 输出计入 evidence 预算，避免 SSH/远端读取绕过共享 run bound。
 		effect.EvidenceBytes = result.BytesRetrieved
 	}
 	return effect

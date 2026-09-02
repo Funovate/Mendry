@@ -118,7 +118,7 @@ func (c *ContextAssembler) AssembleInitialContextWithEvidenceObserved(
 	if source.Kind == "ssh" {
 		fmt.Fprintf(&b, "ssh inspect hints: host=%s user=%s projectFolder=%s logPath=%s\n", source.SSHHost, source.SSHUser, source.SSHProjectFolder, source.SSHLogPath)
 		if source.SSHDeploymentKind == "docker" {
-			fmt.Fprintf(&b, "ssh deployment: docker container=%s; use docker.logs for bounded stdout/stderr and let the adapter re-resolve the saved exact name. Never pass a container ID or use a generic Docker command.\n", source.SSHContainerName)
+			fmt.Fprintf(&b, "ssh deployment: docker container=%s; use docker.logs for bounded incident-window stdout/stderr (the adapter re-resolves the saved exact name) and ssh.inspect for read-only host/network/process diagnostics. Never pass a container ID to docker.logs.\n", source.SSHContainerName)
 		} else {
 			fmt.Fprint(&b, "logPath is a bootstrap hint for where logs often live, not a file that exists by name. Use ssh.inspect to ls that directory and discover actual file names before reading; the harness never auto-tails logPath.\n")
 		}

@@ -2,12 +2,15 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"fixthe/backend/internal/platform/errtrace"
@@ -129,11 +132,12 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-// AccessLog 为每个请求记录一次完成事件，并在请求失败（status >= 400）时额外
-// 记录一份脱敏、截断后的入参快照，用于还原报错现场。客户端关闭产生的 499
-// 属于预期 cancellation，只保留完成事件。
-// 日志使用 mux 匹配后的 route pattern，绝不使用可能携带敏感参数且高基数的原始 URL。
-func AccessLog(logger *slog.Logger, maxBodyBytes int64, next http.Handler) http.Handler {
+// AccessLog 为每个请求记录一次完成事件。默认只写身份字段；status >= 400 且
+// 不是客户端关闭 499 时，再写一份脱敏、截断后的 http.request.failed 入参快照。
+// requestDebug 打开后，未脱敏的请求/响应转储和 escaped path 挂在同一条
+// INFO completed 记录上，并跳过 failed 快照，避免明文和 [redacted] 各写一份。
+// 默认日志使用 mux 匹配后的 route pattern，不记录可能携带敏感参数且高基数的原始 URL。
+func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
@@ -144,29 +148,104 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, next http.Handler) http.
 			request.Body = capture
 		}
 
-		next.ServeHTTP(recorder, request)
+		// 关闭调试时保持原来的 statusRecorder 分配路径，避免每个请求都缓冲响应。
+		handlerWriter := http.ResponseWriter(recorder)
+		var capturedResponse *responseCapture
+		if requestDebug {
+			capturedResponse = newResponseCapture(recorder, maxBodyBytes)
+			handlerWriter = capturedResponse
+		}
+
+		next.ServeHTTP(handlerWriter, request)
 
 		route := request.Pattern
 		if route == "" {
 			route = "unmatched"
 		}
 
-		observability.Log(request.Context(), logger, slog.LevelInfo, observability.EventHTTPCompleted, "request completed",
+		attrs := []slog.Attr{
 			slog.String(observability.FieldComponent, "httpserver"),
 			slog.String(observability.FieldRequestID, RequestID(request.Context())),
 			slog.String("method", request.Method),
 			slog.String("route", route),
 			slog.Int("status", recorder.status),
 			slog.Int64(observability.FieldDurationMS, time.Since(started).Milliseconds()),
-		)
+		}
+		if requestDebug {
+			attrs = appendRequestDebugAttrs(attrs, request, capture, capturedResponse)
+		}
+		observability.Log(request.Context(), logger, slog.LevelInfo, observability.EventHTTPCompleted, "request completed", attrs...)
 
 		if recorder.internalError != nil {
 			logInternalError(request, logger, route, recorder.status, recorder.internalError, recorder.internalErrorStack)
 		}
-		if recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
+		if !requestDebug && recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
 			logFailureSnapshot(request, logger, route, recorder.status, capture)
 		}
 	})
+}
+
+func appendRequestDebugAttrs(attrs []slog.Attr, request *http.Request, capture *bodyCapture, response *responseCapture) []slog.Attr {
+	requestHeaders := http.Header(nil)
+	if request != nil {
+		requestHeaders = request.Header
+	}
+	attrs = append(attrs, slog.String(observability.FieldHTTPRequestHeaders, formatHeaderDump(requestHeaders)))
+	if request != nil && request.URL != nil {
+		attrs = append(attrs, slog.String(observability.FieldHTTPPath, request.URL.EscapedPath()))
+		if request.URL.RawQuery != "" {
+			attrs = append(attrs, slog.String(observability.FieldHTTPRequestQuery, request.URL.RawQuery))
+		}
+	}
+	if capture != nil {
+		if body := capture.bytes(); len(body) > 0 {
+			attrs = append(attrs, slog.String(observability.FieldHTTPRequest, string(body)))
+		}
+		if capture.truncated() {
+			attrs = append(attrs, slog.Bool(observability.FieldHTTPRequestTruncated, true))
+		}
+	}
+	responseHeaders := http.Header(nil)
+	if response != nil {
+		responseHeaders = response.Header()
+	}
+	attrs = append(attrs, slog.String(observability.FieldHTTPResponseHeaders, formatHeaderDump(responseHeaders)))
+	if response != nil {
+		if body := response.bytes(); len(body) > 0 {
+			attrs = append(attrs, slog.String(observability.FieldHTTPResponse, string(body)))
+		}
+		if response.truncated() {
+			attrs = append(attrs, slog.Bool(observability.FieldHTTPResponseTruncated, true))
+		}
+	}
+	return attrs
+}
+
+// formatHeaderDump 把 header 编成确定性的 Name: value 文本；同名多值各占一行。
+// 调试转储不丢 hop-by-hop header，也不脱敏 Cookie / Authorization / Set-Cookie。
+func formatHeaderDump(headers http.Header) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var builder strings.Builder
+	for _, name := range names {
+		canonical := http.CanonicalHeaderKey(name)
+		for _, value := range headers[name] {
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(canonical)
+			builder.WriteString(": ")
+			builder.WriteString(value)
+		}
+	}
+	return builder.String()
 }
 
 const maximumErrorCauses = 32
@@ -315,4 +394,53 @@ func (r *statusRecorder) Write(body []byte) (int, error) {
 // Unwrap 暴露底层 writer，使 http.ResponseController 仍可使用 Flush、Hijack 等能力。
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
+}
+
+// responseCapture 只在 request debug 打开时包装 statusRecorder，按 MaxBodyBytes
+// 缓冲响应体。关闭调试时不得构造它，以免每个请求都复制响应。
+type responseCapture struct {
+	*statusRecorder
+	buffer bytes.Buffer
+	limit  int64
+	cut    bool
+}
+
+func newResponseCapture(recorder *statusRecorder, limit int64) *responseCapture {
+	return &responseCapture{statusRecorder: recorder, limit: limit}
+}
+
+func (r *responseCapture) Write(body []byte) (int, error) {
+	n, err := r.statusRecorder.Write(body)
+	if n > 0 {
+		r.capture(body[:n])
+	}
+	return n, err
+}
+
+func (r *responseCapture) capture(body []byte) {
+	if r.limit <= 0 {
+		r.cut = true
+		return
+	}
+	remaining := r.limit - int64(r.buffer.Len())
+	if remaining <= 0 {
+		r.cut = true
+		return
+	}
+	if int64(len(body)) > remaining {
+		r.buffer.Write(body[:remaining])
+		r.cut = true
+		return
+	}
+	r.buffer.Write(body)
+}
+
+func (r *responseCapture) bytes() []byte { return r.buffer.Bytes() }
+
+func (r *responseCapture) truncated() bool { return r.cut }
+
+// Unwrap 只揭开 responseCapture 这一层，让后续 walker 仍能看到 statusRecorder
+// 的 status / internalError，再继续拿到 Flush / Hijack。
+func (r *responseCapture) Unwrap() http.ResponseWriter {
+	return r.statusRecorder
 }

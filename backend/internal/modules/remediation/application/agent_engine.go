@@ -235,11 +235,30 @@ func wrapEnvelopeError(op string, err error) error {
 
 // buildPrompt constructs the phase-specific instruction.
 func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
+	const toolRecoveryInstruction = "When a tool observation reports recoveryAction, follow it exactly: " +
+		"correct_request means inspect the sanitized parameters and tool schema, then issue one corrected request instead of replaying unchanged input; " +
+		"retry_transient means retry only while retriesRemaining is greater than zero; " +
+		"use_fallback or retriesRemaining zero means do not replay that tool/error failure. " +
+		"Use another bounded evidence tool or preserve the gap as missing evidence, and never make an actionable diagnosis depend on a failed, unpersisted tool result. "
 	switch phase {
 	case domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext:
-		return "Diagnose the incident from available evidence. Classify fixability, " +
-			"cite persisted evidence with its classification, and either request a read " +
-			"tool or return a diagnosis object. " + diagnosisWireContractInstruction + " " +
+		return "Diagnose the incident from available evidence. Objective: establish whether " +
+			"the original alert symptom has an evidence-backed causal explanation, classify " +
+			"fixability, and cite persisted evidence with its stored classification. Completion " +
+			"criteria: return one diagnosis envelope that satisfies the wire contract below and " +
+			"the service fact gate; or, when no material evidence remains collectible, a non-code " +
+			"or insufficient-evidence classification with a safe recommended next action. " +
+			"You may request any advertised bounded read tool in any useful order; there is no " +
+			"required first tool and no mandated sequence. Available capability classes: " +
+			"repository (list/read/search/history over the exact deployed code), " +
+			"provider_evidence (trusted provider detail and persisted evidence by ID), " +
+			"runtime_logs (Docker logs / evidence search and context), ssh_inspect (read-only " +
+			"host inspection). A stack, source path, function, or line in trusted provider " +
+			"detail is a strong code-localization hint, not a rule that skips runtime " +
+			"correlation: inspect the exact deployed source first, later, or between refined " +
+			"runtime queries as the causal question requires; runtime correlation is likewise " +
+			"not mandatory for every code fix. " +
+			diagnosisWireContractInstruction + " " +
 			"Include alertQuality, sourceCoverage, timeAssessment, correlation, causalClosure, " +
 			"causalReasoning, contradictions, materialContradictions, missingEvidence, " +
 			"evidenceCitations, recommendedNextAction, and any non-actionable hypotheses. " +
@@ -249,27 +268,34 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"causalClosure must explicitly say whether the original alert symptom is " +
 			"explained and why. A test-like title is only testSuspected unless an " +
 			"auditable structured test policy matches; continue investigating real fault " +
-			"evidence. Missing direct fault evidence or unresolved time/host/source " +
+			"evidence. Test authorization is a separate audit dimension: testPolicyMatched=false " +
+			"or unknown does not by itself make root-cause evidence insufficient. When runtime, " +
+			"request, and deployed-code evidence explains the original symptom, keep causalClosure " +
+			"true, classify the actual fixability, and record the unmatched test policy as an audit " +
+			"finding or recommended next action. Use insufficient_evidence only when missing material " +
+			"evidence prevents causal explanation or a safe fixability classification. Missing direct fault " +
+			"evidence or unresolved time/host/source " +
 			"coverage is insufficient_evidence, not a code-fixable plan. " +
-			"For an SSH source, use ssh.inspect: first ls the hinted logPath directory " +
-			"and discover actual file names before reading; never assume logPath is a file to tail. " +
+			"Tool guidance (no ordering is required): for an SSH source, ssh.inspect may list " +
+			"the hinted logPath directory first to discover actual file names; never assume " +
+			"logPath is a file to tail. " +
 			"When trusted Tencent CLS detail contains an error, stack, source path, or line number, " +
-			"treat it as an anchor and collect runtime corroboration before choosing a fix: for a " +
-			"Docker source request only docker.logs in the first collection turn and wait for its " +
-			"observation before requesting repository tools. AnalysisOriginal.time in the detail is the " +
+			"treat it as an anchor and use repository inspection and runtime collection in any " +
+			"order that closes causality. AnalysisOriginal.time in the detail is the " +
 			"UTC log-event time; use it directly as the since/until anchor with a narrow window around " +
 			"that time. docker.logs returns only the tail of the requested window, so inspect " +
-			"window_lines, returned_lines, filtered, and truncated before deciding that no failure is " +
-			"present; when window_lines is much larger than returned_lines, narrow the window or add a " +
-			"pattern. For a panic or stack anchor, request pattern with context_after to capture the " +
-			"following goroutine frames. Then map any provider path to a repository-relative path and " +
-			"request repository.read_file plus repository.search for the stable fault, message, or " +
-			"function. Do not repeatedly retry " +
+			"window_lines, returned_lines, filtered, truncated, coverage_limited, and refinement_required " +
+			"before deciding that no failure is present. window_lines=-1 means the connector deliberately " +
+			"skipped an additional full-log count. When refinement_required is true, narrow the window or add " +
+			"a pattern before returning a terminal diagnosis. For a panic or stack anchor, request pattern with context_after to capture the " +
+			"following goroutine frames. Map any provider path to a repository-relative path and " +
+			"use repository.read_file plus repository.search for the stable fault, message, or " +
+			"function. " + toolRecoveryInstruction + "Do not repeatedly retry " +
 			"a non-retryable detail failure; use available fallback tools and report the failure as " +
 			"missing evidence. " +
 			stopWireContractInstruction
 	case domain.RunStatePlanning:
-		return "The incident is code-fixable. Inspect the advertised repository tools whenever more code, dependency, or impact context is needed, then produce candidate repair plans with a recommended plan, rationale, risk classification, and a suggested unified diff. " + planningWireContractInstruction
+		return "The incident is code-fixable. Inspect the advertised repository tools whenever more code, dependency, or impact context is needed, then produce candidate repair plans with a recommended plan, rationale, risk classification, and a suggested unified diff. " + toolRecoveryInstruction + planningWireContractInstruction
 	default:
 		return "Process the current remediation phase."
 	}

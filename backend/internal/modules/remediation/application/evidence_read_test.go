@@ -350,7 +350,11 @@ func TestToolGateway_EvidenceReadAdvertisedForSSHDockerSource(t *testing.T) {
 					sawDocker = true
 				}
 			}
-			if !sawRead || sawSearch || sawInspect != (deployment == "host") || sawDocker != (deployment == "docker") {
+			// Docker deployment 同时广告 typed docker.logs 与 generic ssh.inspect
+			// （tool_catalog.go baseDefinitions 的 documented 行为：inspect 覆盖
+			// 主机/网络/进程证据，typed logs 覆盖 incident-window 收集）；host 只
+			// 广告 inspect。evidence.search/context 均不得出现在 SSH 分支。
+			if !sawRead || sawSearch || !sawInspect || sawDocker != (deployment == "docker") {
 				t.Fatalf("ssh/%s catalog read=%t search=%t inspect=%t docker=%t",
 					deployment, sawRead, sawSearch, sawInspect, sawDocker)
 			}

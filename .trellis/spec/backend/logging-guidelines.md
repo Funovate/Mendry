@@ -108,7 +108,9 @@ and its following stack or SQL are not interleaved with another slog record.
   command identity, captured stdout/stderr when present, and a
   low-cardinality `error_class` on failure. See
   [Outbound Git Requests](#outbound-git-requests).
-- Later adapters log bounded operation identity and outcome, not payloads.
+- Later adapters log bounded operation identity and outcome unless their
+  operator contract explicitly requires payload-level diagnosis, as Tencent
+  CLS does below.
 
 ## What NOT to Log
 
@@ -117,7 +119,7 @@ strings, request/response bodies, database arguments, user source, evidence, or
 arbitrary high-cardinality identifiers. A redacted string representation is
 defense in depth, not permission to pass a secret to the logger.
 
-There are five explicit exceptions:
+There are six explicit exceptions:
 
 - The failure-only request snapshot described in
   [Error Request Snapshots](#error-request-snapshots) covers a redacted,
@@ -132,21 +134,29 @@ There are five explicit exceptions:
   with PostgreSQL literals so the field can be copied into `psql`. The switch
   is independent of `FIXTHE_LOG_LEVEL`, does not change query levels, and
   never copies SQL onto spans or metrics. Bind values are not redacted.
-- `FIXTHE_HTTP_REQUEST_DEBUG=true` attaches the complete inbound request and
-  response to the existing INFO `http.request.completed` record. See
+- `FIXTHE_HTTP_REQUEST_DEBUG=true` attaches the complete inbound request,
+  escaped request path, and response to the existing INFO
+  `http.request.completed` record. See
   [Inbound HTTP Request Debug](#inbound-http-request-debug).
 - Private remediation logs may include bounded original failure diagnostics and
   the actual SSH remote command. This exception is limited to operator failure
   records and does not authorize model prompts, tool payloads, evidence bodies,
   stdout, or plaintext private-key bytes.
+- The trusted Tencent CLS adapter records bounded detail-page and
+  `GetAlertDetail` request/response bodies after provider-control redaction,
+  provider-safe URL identities, original connector errors after URL
+  sanitization, and the projected evidence payload. The deployment owner is
+  also the data owner and needs these private operator records to verify what
+  was fetched and what remediation actually received. Existing connector byte
+  ceilings remain the log-size boundary; credentials, callback material, and
+  unrelated headers are still excluded.
 
-Neither of the first two exceptions permits independently attaching headers,
+Outside these explicit exceptions, do not independently attach headers,
 cookies, response bodies, raw SQL, bind values, Redis key/value data, or
 success-path payloads. The query-debug switch is the only permission to log
 raw SQL or bind values, and it applies only to `db.query.text`. The HTTP
-request-debug switch is the only permission to log inbound headers, cookies,
-response bodies, or unredacted success-path payloads, and it applies only to
-`http.request.completed`.
+request-debug switch is the only general inbound HTTP permission to log
+headers, cookies, response bodies, or unredacted success-path payloads.
 
 PostgreSQL query records otherwise never contain raw SQL, bind values, returned
 rows, connection URLs, credentials, or database error messages. Query events
@@ -309,6 +319,8 @@ When on:
 - Fields:
   - `http.request_headers`: canonical `Name: value` lines, sorted by
     name, including `Cookie` and `Authorization`. Always present.
+  - `http.path`: raw escaped path from `url.EscapedPath()`, including for
+    unmatched routes. Always present and may contain secret path segments.
   - `http.request_query`: raw `url.RawQuery`. Omitted when empty.
   - `http.request` / `http.request_truncated`: raw request body. Empty
     bodies omit `http.request`. Truncated is set only when the captured
@@ -386,6 +398,7 @@ Completed dump fields when the switch is on:
 | JSON field | Required | Content |
 |---|---|---|
 | `http.request_headers` | always | Sorted canonical `Name: value` lines, including `Cookie` and `Authorization` |
+| `http.path` | always | Raw escaped request path, including for unmatched routes |
 | `http.request_query` | if `url.RawQuery` is non-empty | Raw query string, not a redacted map |
 | `http.request` | if captured request body is non-empty | Raw bytes as text |
 | `http.request_truncated` | only when the request capture hit `FIXTHE_HTTP_MAX_BODY_BYTES` | `true` |
@@ -394,8 +407,9 @@ Completed dump fields when the switch is on:
 | `http.response_truncated` | only when the response capture hit `FIXTHE_HTTP_MAX_BODY_BYTES` | `true` |
 
 Do not reuse failure-snapshot names (`request_body`, `request_query`,
-`body_truncated`) on the completed record. Do not log `request.URL.String()`.
-The route field stays the mux pattern.
+`body_truncated`) on the completed record. Do not log `request.URL.String()` or combine path and query into one field. The
+route field stays the mux pattern; `http.path` is permitted only inside this
+explicit unsafe debug contract.
 
 ### 4. Validation & Error Matrix
 
@@ -633,6 +647,9 @@ Progress events are metadata-only and visible at `INFO`:
 | `remediation.model_turn.completed` | phase, global run sequence, duration, envelope, usage, exact request/tool metrics, available cache usage, and outcome; failed turns add `error_class` and bounded `error_message` |
 | `remediation.tool.completed` | phase, global run sequence, tool, duration, bytes, rejection/outcome; failed calls add `error_class`, safe `error_code`, `retryable`, and bounded `error_message` |
 | `remediation.run.completed` | terminal state, duration, aggregate counters, outcome |
+| `tencent_cls.request.completed` | one detail-page or `GetAlertDetail` request with method, provider-safe URL identity, bounded request/response bodies, status, bytes, duration, and original failure diagnostics |
+| `tencent_cls.detail.completed` | trusted detail resolution outcome, error code/stage/retryability, original error type/message, HTTP status, bytes, and duration |
+| `tencent_cls.evidence.projected` | exact provider evidence payload projected for persistence and remediation context |
 
 `ModelTurnObservation.ErrorMessage` is populated for provider, protocol, and
 strict envelope decode failures. `ToolObservation.ErrorMessage` is populated
@@ -654,7 +671,31 @@ SSH evidence completion adds `ssh.command` with the actual remote command and
 uses `error_class=command` for an executed command failure. Source-loading
 failures without a command retain the ordinary outbound classification.
 
-Payload events are `DEBUG` only:
+Tencent CLS emits one `tencent_cls.request.completed` record for the detail-page
+GET and one for every fixed `GetAlertDetail` POST attempt. Each record contains the
+operation, method, a provider-safe URL identity, final URL identity after
+redirects when different, request body when present, status, bounded response
+body, duration, and sanitized failure diagnostics. Short-link capability paths,
+URL fragments, callback/webhook fields, and secret-bearing provider fields are
+removed before logging. Valid JSON is recursively control-redacted. A malformed
+non-JSON detail response is replaced by a bounded omission diagnostic; an HTML
+page containing callback/webhook/H5 shield/secret markers is omitted wholesale,
+while the expected marker-free SPA shell remains operator-visible after URL
+sanitization. Oversized responses retain the captured bounded prefix and set
+`http.response_truncated=true`. A provider `-1001` eventual-consistency retry
+emits one request record per attempt; `tencent_cls.detail.completed` then records
+the aggregate bytes and final outcome. Console output renders request and
+response bodies as physical blocks; JSON retains them as structured string
+fields. The final event also includes `error_code`, `error_stage`, `retryable`,
+original `error_type` / `error_message`, status, bytes, and duration.
+
+Successful or degraded projection emits `tencent_cls.evidence.projected` with
+the exact payload that crosses into evidence persistence and remediation
+context. This is deliberately an INFO private-operator event: confirming what
+the AI received is part of the product's diagnostic contract. These records do
+not attach request/response headers or provider control material.
+
+Remediation payload events are `DEBUG` only:
 `remediation.context.payload`, `remediation.model_turn.payload`, and
 `remediation.tool.payload`. Every present payload includes `run_id`, phase,
 `payload_kind`, `payload`, complete redacted `payload_bytes`,
@@ -687,6 +728,9 @@ owned by `observability.Log` and appear only when the context has a valid span.
 | Transition to `budget_exhausted` | `outcome=stopped` plus the deterministic exhausted dimension |
 | SSH command failure | Completion includes actual remote command, command class, exit/stderr diagnostic, and truncation marker when needed |
 | Tool adapter failure | INFO event distinguishes `error_class=adapter` from `error_class=policy`; model sees only the safe error object |
+| Tencent CLS `-1001` retry | One sanitized request record per POST attempt; final detail event aggregates bytes and reports success or retryable unavailable |
+| Tencent CLS malformed/control-bearing body | Omit malformed detail text or marker-bearing HTML; never log provider control values |
+| Tencent CLS detail failure | Request event includes provider-safe URL identity, bounded sanitized response, error stage and original message; final detail event preserves the same diagnosis |
 | Envelope unknown field | Strict decode still fails; model-turn log includes the concrete validation error |
 | Run failure | `remediation.run.completed` plus boundary-owned `remediation.failed`; stack only on the latter |
 | Nil observer / adapter logger | No-op compatibility, with lifecycle behavior unchanged |
@@ -715,6 +759,12 @@ owned by `observability.Log` and appear only when the context has a valid span.
 - Failure projection tests assert SSH command/stderr, tool code/retryability,
   policy-versus-adapter class, and model decode reasons at the completion event;
   adapter diagnostics must not appear in a later model message.
+- Tencent CLS logger tests assert one record per request/retry attempt, the
+  detail-page and `GetAlertDetail` records contain provider-safe URL identities
+  and sanitized captured response bodies, malformed/control-bearing bodies are
+  omitted, failures retain stage/original message, aggregate bytes include all
+  attempts, and projected evidence matches the payload handed to
+  persistence/remediation.
 - OpenAI/outbound tests assert exact serialized request/schema byte counts on
   every retry attempt and normalize nested OpenAI plus compatible top-level
   cache shapes, including absent and explicitly reported zero cases.

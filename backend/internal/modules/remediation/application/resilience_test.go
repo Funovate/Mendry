@@ -223,6 +223,60 @@ func TestResilient_CodeFixableCheckpointsAroundPlanning(t *testing.T) {
 	}
 }
 
+// TestResilient_EvidenceCorrectionRecordsRecoveryCheckpoint 证明 resilient_v1
+// 下，evidence_correction challenge 除回喂模型外还会强制一次 recovery
+// checkpoint，并在 checkpoint 的 recoveries 里留下 kind/action/outcomeRef
+// 定位记录（D2/D4）；run 修正后正常到达 diagnosis_ready_for_review。
+func TestResilient_EvidenceCorrectionRecordsRecoveryCheckpoint(t *testing.T) {
+	store := newFakeRunStore()
+	store.mode = domain.AgentLoopModeResilientV1
+	checkpoints := &fakeCheckpointStore{}
+	model := &scriptedModel{responses: []string{
+		mismatchedClassificationEnvelope("code_fixable"),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
+	coord.SetCheckpointStore(checkpoints)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview || store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s/%s, want diagnosis_ready_for_review", run.State, store.state)
+	}
+	if checkpoints.countReason(domain.CheckpointReasonRecovery) != 1 {
+		t.Fatalf("recovery checkpoints = %d, want 1", checkpoints.countReason(domain.CheckpointReasonRecovery))
+	}
+	var recorded domain.CheckpointRecovery
+	for _, checkpoint := range checkpoints.appends {
+		if checkpoint.Reason != domain.CheckpointReasonRecovery {
+			continue
+		}
+		if checkpoint.Phase != string(domain.RunStateDiagnosing) || checkpoint.RunID != run.RunID {
+			t.Fatalf("recovery checkpoint identity = phase %q run %q", checkpoint.Phase, checkpoint.RunID)
+		}
+		for _, recovery := range checkpoint.Recoveries {
+			if recovery.Kind == string(domain.RecoveryChallengeKindEvidenceCorrection) {
+				recorded = recovery
+			}
+		}
+	}
+	if recorded.Kind != string(domain.RecoveryChallengeKindEvidenceCorrection) ||
+		recorded.Action != "correct_citation" || !strings.Contains(recorded.OutcomeRef, "citation_classification_mismatch") {
+		t.Fatalf("checkpoint recovery record = %#v", recorded)
+	}
+	if !strings.Contains(model.turns[1].UserMessage, `"kind":"evidence_correction"`) {
+		t.Fatalf("second turn lacks evidence correction challenge: %s", model.turns[1].UserMessage)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1 (only the corrected diagnosis)", len(store.decisions))
+	}
+}
+
 // TestResilient_SoftBudgetSignalsFeedChallengeAndCheckpoint 证明 allocator 的
 // soft_crossed 与 reserve_touched 信号各自向 conversation 回喂一次 recoverable
 // budget challenge 并强制 recovery checkpoint，而 run 不会进入 budget_exhausted

@@ -79,6 +79,44 @@ func TestLoggerWritesQueryDebugJSONFields(t *testing.T) {
 	assertField(t, record, FieldDBQueryText, "SELECT private_column FROM incidents WHERE token = 'secret-bind-value'")
 }
 
+func TestConsoleRendersTencentCLSResponseAndEvidenceAsPhysicalBlocks(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := NewLogger(LoggerOptions{
+		Writer: &output, Level: "info", Format: "console",
+		Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+	})
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+
+	Log(context.Background(), logger, slog.LevelInfo, EventTencentCLSRequestCompleted, "Tencent CLS request completed",
+		slog.String(FieldComponent, "hooks"),
+		slog.String(FieldHTTPRequest, `{"RecordId":"record-1"}`),
+		slog.String(FieldHTTPResponse, "first line\nsecond line"),
+	)
+	Log(context.Background(), logger, slog.LevelInfo, EventTencentCLSEvidenceProjected, "Tencent CLS evidence projected for remediation",
+		slog.String(FieldComponent, "hooks"),
+		slog.String(FieldPayloadKind, "provider_detail"),
+		slog.String(FieldPayload, `{"RawResults":[{"message":"trigger"}]}`),
+	)
+
+	text := output.String()
+	for _, want := range []string{
+		"request:\n{\"RecordId\":\"record-1\"}",
+		"response:\nfirst line\nsecond line",
+		"tencent_cls_evidence[provider_detail]:\n{\"RawResults\":[{\"message\":\"trigger\"}]}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("console output missing %q: %s", want, text)
+		}
+	}
+	for _, quoted := range []string{`request="`, `response="`, `payload="`} {
+		if strings.Contains(text, quoted) {
+			t.Fatalf("console output kept quoted block %q: %s", quoted, text)
+		}
+	}
+}
+
 func TestLoggerWritesHTTPCompletedDebugJSONRecord(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := NewLogger(LoggerOptions{

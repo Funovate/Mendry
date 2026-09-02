@@ -77,10 +77,13 @@ func (g *ToolGateway) execDockerLogs(ctx context.Context, scope domain.EvidenceS
 	returnedLines := countDockerOutputLines(result.Stdout)
 	return ToolResult{
 		Tool: ToolDockerLogs,
-		Summary: fmt.Sprintf("docker logs container=%s bytes=%d truncated=%t window_lines=%d returned_lines=%d filtered=%d",
-			result.Container.Name, result.BytesRetrieved, result.Truncated, result.WindowLines, returnedLines, result.FilteredLines),
-		BytesRetrieved: result.BytesRetrieved,
-		Payload:        result,
+		Summary: fmt.Sprintf("docker logs container=%s bytes=%d truncated=%t coverage_limited=%t refinement_required=%t window_lines=%d returned_lines=%d filtered=%d",
+			result.Container.Name, result.BytesRetrieved, result.Truncated, result.CoverageLimited,
+			result.RefinementRequired, result.WindowLines, returnedLines, result.FilteredLines),
+		BytesRetrieved:     result.BytesRetrieved,
+		RefinementRequired: result.RefinementRequired,
+		RefinementReason:   result.CoverageReason,
+		Payload:            result,
 	}, nil
 }
 

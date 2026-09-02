@@ -13,6 +13,7 @@ frontend/*.tsbuildinfo
 # Backend build and test output
 backend/bin/
 backend/coverage/
+backend/logs/
 backend/*.out
 
 # Editor and operating-system files
@@ -20,4 +21,4 @@ backend/*.out
 .idea/
 .vscode/
 *.swp
-
+backend/api

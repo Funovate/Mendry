@@ -25,15 +25,28 @@ type DockerLogQuery struct {
 	ContextAfter  int
 }
 
+// DockerLogQueryMeta 是持久化所需的归一化查询元数据；bounds 由 gateway 校验，
+// 不包含模型可选的任意命令。
+type DockerLogQueryMeta struct {
+	Since   time.Time `json:"since"`
+	Until   time.Time `json:"until"`
+	Tail    int       `json:"tail"`
+	Pattern string    `json:"pattern,omitempty"`
+}
+
 // DockerLogResult 是有界 stdout/stderr 运行时证据；它不包含 credential 或远端命令。
 type DockerLogResult struct {
-	Container      DockerContainerIdentity `json:"container"`
-	Stdout         string                  `json:"stdout"`
-	Stderr         string                  `json:"stderr"`
-	Truncated      bool                    `json:"truncated"`
-	BytesRetrieved int64                   `json:"bytesRetrieved"`
-	WindowLines    int64                   `json:"windowLines"`
-	FilteredLines  int64                   `json:"filteredLines"`
+	Container          DockerContainerIdentity `json:"container"`
+	Stdout             string                  `json:"stdout"`
+	Stderr             string                  `json:"stderr"`
+	Truncated          bool                    `json:"truncated"`
+	CoverageLimited    bool                    `json:"coverageLimited"`
+	RefinementRequired bool                    `json:"refinementRequired"`
+	CoverageReason     string                  `json:"coverageReason,omitempty"`
+	BytesRetrieved     int64                   `json:"bytesRetrieved"`
+	WindowLines        int64                   `json:"windowLines"`
+	FilteredLines      int64                   `json:"filteredLines"`
+	Query              DockerLogQueryMeta      `json:"query"`
 }
 
 // DockerEvidencePort 只解析已保存 SSH source 的 exact container name，

@@ -10,7 +10,8 @@ import (
 // NewRecoveryChallenge 构造经过 sanitize 与边界检查的 provider-neutral recovery
 // challenge（D5 envelope）。message 复用 review 的 sanitize 规则并截断到上限，
 // 保证不携带凭据字面量；kind/severity/attempt 非法时返回错误，不静默改写。
-// 本构造器是纯 helper：本 slice 不把它接入 coordinator 的 terminal 路由。
+// coordinator 已用它回喂可恢复挑战（evidence_correction、soft-budget 信号）；
+// exhaustion proposal 接入前的 terminal 路由仍不使用该 envelope。
 func NewRecoveryChallenge(
 	kind domain.RecoveryChallengeKind,
 	severity domain.RecoverySeverity,

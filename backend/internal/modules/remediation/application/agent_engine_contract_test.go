@@ -30,10 +30,15 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 		"timeAssessment.basis must be exactly one of paired_epoch, explicit_offset, contextual_zone, unresolved",
 		"never put explanation text in basis",
 		"status must be one of configured, inspected_success, inspected_empty, unavailable, not_applicable, not_inspected",
-		"docker.logs", "only docker.logs in the first collection turn", "wait for its observation",
+		"docker.logs",
+		"no required first tool and no mandated sequence",
+		"repository (list/read/search/history", "provider_evidence", "runtime_logs", "ssh_inspect",
+		"code-localization hint", "not a rule that skips runtime",
 		"AnalysisOriginal.time", "UTC log-event time", "since/until anchor", "window_lines", "returned_lines", "filtered", "truncated", "narrow the window", "pattern", "context_after", "goroutine frames",
 		"repository-relative path", "repository.read_file", "repository.search",
 		"non-retryable detail failure", "available fallback tools",
+		"recoveryAction", "correct_request", "sanitized parameters", "retry_transient",
+		"retriesRemaining", "use_fallback", "failed, unpersisted tool result",
 	} {
 		if !strings.Contains(model.request.SystemPrompt+model.request.UserMessage, want) {
 			t.Fatalf("prompt missing %q: system=%q user=%q", want, model.request.SystemPrompt, model.request.UserMessage)
@@ -44,6 +49,81 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 	}
 	if strings.Contains(model.request.SystemPrompt+model.request.UserMessage, `"evidenceRef":`) {
 		t.Fatalf("prompt advertised an unsupported citation alias: %q", model.request.UserMessage)
+	}
+	for _, forbidden := range []string{
+		"only docker.logs in the first collection turn",
+		"wait for its observation before requesting",
+		"must request", "first ls the hinted logPath",
+	} {
+		if strings.Contains(model.request.UserMessage, forbidden) {
+			t.Fatalf("prompt still mandates tool ordering (%q): %q", forbidden, model.request.UserMessage)
+		}
+	}
+}
+
+// TestDiagnosisPromptIsGoalOrientedWithoutToolOrdering 证明 D1/R4：诊断 prompt
+// 表达 objective、completion criteria、可用 capability classes 与
+// code-localization 语义，不再编码 Docker-first/SSH-first 的决策树。
+func TestDiagnosisPromptIsGoalOrientedWithoutToolOrdering(t *testing.T) {
+	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
+	for _, want := range []string{
+		"Objective:", "Completion criteria:",
+		"service fact gate",
+		"any advertised bounded read tool in any useful order",
+		"no required first tool",
+		"repository", "provider_evidence", "runtime_logs", "ssh_inspect",
+		"strong code-localization hint",
+		"runtime correlation is likewise not mandatory for every code fix",
+		"Tool guidance (no ordering is required)",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("goal-oriented prompt missing %q: %s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"only docker.logs in the first collection turn",
+		"wait for its observation before requesting",
+		"must request", "before requesting repository tools",
+		"first ls the hinted logPath directory",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt encodes a provider decision tree (%q): %s", forbidden, prompt)
+		}
+	}
+}
+
+func TestDiagnosisPromptSeparatesTestAuthorizationFromCausalClosure(t *testing.T) {
+	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
+	for _, want := range []string{
+		"Test authorization is a separate audit dimension",
+		"testPolicyMatched=false or unknown does not by itself make root-cause evidence insufficient",
+		"record the unmatched test policy as an audit finding",
+		"Use insufficient_evidence only when missing material evidence prevents causal explanation",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("diagnosis prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
+func TestDiagnosisPromptRequiresDockerCoverageRefinement(t *testing.T) {
+	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
+	for _, want := range []string{
+		"coverage_limited", "refinement_required", "window_lines=-1",
+		"skipped an additional full-log count", "before returning a terminal diagnosis",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("diagnosis prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
+func TestPlanningPromptIncludesToolRecoveryContract(t *testing.T) {
+	prompt := (&AgentEngine{}).buildPrompt(domain.RunStatePlanning)
+	for _, want := range []string{"recoveryAction", "correct_request", "retry_transient", "retriesRemaining", "use_fallback"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planning prompt missing %q: %s", want, prompt)
+		}
 	}
 }
 

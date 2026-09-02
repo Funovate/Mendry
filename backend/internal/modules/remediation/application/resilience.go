@@ -49,9 +49,12 @@ type resilientRunState struct {
 	evidenceIndex       []domain.CheckpointEvidenceIndexItem
 	recoveries          []domain.CheckpointRecovery
 	recoveryAttempt     int
-	nextActions         []string
-	conversation        *AgentConversation
-	analysisOnly        bool
+	// evidenceCorrectionAttempts 是本次 run 已回喂的 evidence_correction
+	// challenge 次数，用作 challenge Attempt 字段的进度计数。
+	evidenceCorrectionAttempts int
+	nextActions                []string
+	conversation               *AgentConversation
+	analysisOnly               bool
 }
 
 // newResilientRunState 在 runQueued 成功 claim（queued→preparing_context）

@@ -37,6 +37,7 @@ type bodyCapture struct {
 	source io.ReadCloser
 	buffer bytes.Buffer
 	limit  int64
+	cut    bool
 }
 
 func newBodyCapture(source io.ReadCloser, limit int64) *bodyCapture {
@@ -45,12 +46,17 @@ func newBodyCapture(source io.ReadCloser, limit int64) *bodyCapture {
 
 func (c *bodyCapture) Read(p []byte) (int, error) {
 	n, err := c.source.Read(p)
-	if n > 0 && int64(c.buffer.Len()) < c.limit {
-		remaining := c.limit - int64(c.buffer.Len())
-		if int64(n) < remaining {
-			c.buffer.Write(p[:n])
+	if n > 0 {
+		if int64(c.buffer.Len()) < c.limit {
+			remaining := c.limit - int64(c.buffer.Len())
+			if int64(n) <= remaining {
+				c.buffer.Write(p[:n])
+			} else {
+				c.buffer.Write(p[:remaining])
+				c.cut = true
+			}
 		} else {
-			c.buffer.Write(p[:remaining])
+			c.cut = true
 		}
 	}
 	return n, err
@@ -59,6 +65,8 @@ func (c *bodyCapture) Read(p []byte) (int, error) {
 func (c *bodyCapture) Close() error { return c.source.Close() }
 
 func (c *bodyCapture) bytes() []byte { return c.buffer.Bytes() }
+
+func (c *bodyCapture) truncated() bool { return c.cut }
 
 // bodySnapshot 是脱敏截断后的请求体快照。
 type bodySnapshot struct {

@@ -254,6 +254,174 @@ func TestCoordinator_InsufficientEvidenceWithoutCollectionStopsImmediately(t *te
 	}
 }
 
+func TestCoordinator_ClosedCausalDiagnosisIsReassessedBeforeBlocking(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithClosedCausalClosureEnvelope(),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || model.calls != 3 {
+		t.Fatalf("state/model calls = %s/%d, want diagnosis_ready_for_review/3", store.state, model.calls)
+	}
+	if store.countTransitionsTo(domain.RunStateCollectingMoreContext) != 0 || len(store.invocations) != 0 {
+		t.Fatalf("reassessment must not fabricate collection: transitions=%#v invocations=%#v", store.transitions, store.invocations)
+	}
+	if len(store.decisions) != 2 {
+		t.Fatalf("decisions = %d, want initial and reassessed diagnoses", len(store.decisions))
+	}
+	if len(model.turns) != 3 ||
+		!strings.Contains(model.turns[1].UserMessage, `"code":"inconsistent_causal_closure"`) ||
+		!strings.Contains(model.turns[1].UserMessage, "test authorization is an audit finding") {
+		t.Fatalf("causal-closure reassessment missing from second turn: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_ClosedCausalDiagnosisReassessmentIsBounded(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithClosedCausalClosureEnvelope(),
+		insufficientWithClosedCausalClosureEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 2 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/2", store.state, model.calls)
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+type sequenceDockerEvidencePort struct {
+	results []domain.DockerLogResult
+	queries []domain.DockerLogQuery
+}
+
+func (p *sequenceDockerEvidencePort) ResolveDockerContainer(context.Context, domain.EvidenceScope) (domain.DockerContainerIdentity, error) {
+	return domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)}, nil
+}
+
+func (p *sequenceDockerEvidencePort) ReadDockerLogs(_ context.Context, _ domain.EvidenceScope, query domain.DockerLogQuery) (domain.DockerLogResult, error) {
+	p.queries = append(p.queries, query)
+	if len(p.results) == 0 {
+		return domain.DockerLogResult{}, fmt.Errorf("unexpected Docker log read")
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	result.Query = domain.DockerLogQueryMeta{
+		Since: query.Since, Until: query.Until, Tail: query.Tail, Pattern: query.Pattern,
+	}
+	return result, nil
+}
+
+func TestCoordinator_RequiresNarrowerDockerLogsBeforeDiagnosis(t *testing.T) {
+	start := time.Date(2026, 8, 28, 8, 6, 0, 0, time.UTC)
+	model := &scriptedModel{responses: []string{
+		dockerLogRequestEnvelope(start.Add(-time.Minute), start.Add(time.Minute), 2, ""),
+		diagnosisEnvelope("external_dependency"),
+		dockerLogRequestEnvelope(start, start.Add(time.Second), 20, "TriggerNilPointerFault"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	port := &sequenceDockerEvidencePort{results: []domain.DockerLogResult{
+		{
+			Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+			Stdout:    "tail-only\n", CoverageLimited: true, RefinementRequired: true, CoverageReason: "tail_limit",
+			WindowLines: -1,
+		},
+		{
+			Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+			Stderr:    "panic TriggerNilPointerFault\ngoroutine 42 [running]:\n", WindowLines: -1, FilteredLines: 1,
+		},
+	}}
+	coord := newDockerFlowCoordinator(t, store, model, port, start)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if run.State != domain.RunStateCompletedNonCode || model.calls != 4 || len(port.queries) != 2 {
+		t.Fatalf("state/model/docker = %s/%d/%d", run.State, model.calls, len(port.queries))
+	}
+	if !strings.Contains(model.turns[2].UserMessage, `"code":"docker_log_refinement_required"`) ||
+		!strings.Contains(model.turns[2].UserMessage, `"reason":"tail_limit"`) {
+		t.Fatalf("refinement correction missing from third turn: %#v", model.turns)
+	}
+	if len(store.decisions) != 1 || len(store.invocations) != 2 {
+		t.Fatalf("decisions/invocations = %d/%d", len(store.decisions), len(store.invocations))
+	}
+}
+
+func TestCoordinator_BlocksRepeatedDiagnosisWithPendingDockerRefinement(t *testing.T) {
+	start := time.Date(2026, 8, 28, 8, 6, 0, 0, time.UTC)
+	model := &scriptedModel{responses: []string{
+		dockerLogRequestEnvelope(start.Add(-time.Minute), start.Add(time.Minute), 2, ""),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	port := &sequenceDockerEvidencePort{results: []domain.DockerLogResult{{
+		Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+		Stdout:    "tail-only\n", CoverageLimited: true, RefinementRequired: true, CoverageReason: "tail_limit", WindowLines: -1,
+	}}}
+	coord := newDockerFlowCoordinator(t, store, model, port, start)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if run.State != domain.RunStateBlockedManualReview || model.calls != 3 || len(store.decisions) != 0 {
+		t.Fatalf("state/model/decisions = %s/%d/%d", run.State, model.calls, len(store.decisions))
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+func newDockerFlowCoordinator(
+	t *testing.T,
+	store *fakeRunStore,
+	model *scriptedModel,
+	port domain.DockerEvidencePort,
+	start time.Time,
+) *application.RemediationCoordinator {
+	t.Helper()
+	source := domain.SourceCapabilitySnapshot{
+		ProjectID: testProjectID, SourceID: "source-1", Kind: "ssh", Enabled: true, Supported: true,
+		Declared: []string{"pull_collection"}, Version: 1,
+		SSHDeploymentKind: "docker", SSHContainerName: "real-estate-api",
+	}
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, nil, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: testProjectID, EnvironmentID: "environment-1", SourceID: "source-1",
+			DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}}, nil, store, store, nil, staticSourceCaps{snapshot: source}, nil, nil,
+	)
+	coord.SetBootstrapEvidenceLoader(&bootstrapEvidenceLoader{value: domain.BootstrapEvidence{
+		TimeRange: domain.TimeRange{Start: start.Add(-time.Minute), End: start.Add(time.Minute)},
+		TimeBasis: "explicit_offset", TimeCertainty: "high",
+	}})
+	coord.SetDockerEvidencePort(port)
+	coord.SetRuntimeEvidenceWriter(&fakeRuntimeEvidenceWriter{})
+	return coord
+}
+
+func dockerLogRequestEnvelope(since, until time.Time, tail int, pattern string) string {
+	parameters := fmt.Sprintf(`"since":%q,"until":%q,"tail":%d`, since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano), tail)
+	if pattern != "" {
+		parameters += fmt.Sprintf(`,"pattern":%q,"context_after":2`, pattern)
+	}
+	return fmt.Sprintf(`{"schemaVersion":"v1","kind":"requestTool","requestTool":{"toolName":%q,"parameters":{%s}}}`, application.ToolDockerLogs, parameters)
+}
+
 // TestCoordinator_InsufficientThenCodeFixable verifies the loop can recover:
 // collect once, then a code-fixable diagnosis reaches diagnosis_ready.
 func TestCoordinator_InsufficientThenCodeFixable(t *testing.T) {
@@ -480,6 +648,36 @@ func TestCoordinator_ConnectorFailureIsModelVisibleAndSafe(t *testing.T) {
 	}
 }
 
+func TestCoordinator_ModelCorrectsRejectedToolRequestWithinRetryAllowance(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoReadFile, ""),
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if repo.calls != 1 {
+		t.Fatalf("repository calls = %d, want only corrected request to reach adapter", repo.calls)
+	}
+	if len(store.invocations) != 2 || store.budget.ToolCalls != 2 {
+		t.Fatalf("tool accounting = invocations:%d budget:%d, want 2/2", len(store.invocations), store.budget.ToolCalls)
+	}
+	if store.invocations[0].Error != "invalid_arguments" || store.invocations[1].Error != "" {
+		t.Fatalf("tool invocations = %#v", store.invocations)
+	}
+	if len(model.turns) != 3 || !strings.Contains(model.turns[1].UserMessage, `"recoveryAction":"correct_request"`) ||
+		!strings.Contains(model.turns[1].UserMessage, `"retriesRemaining":1`) {
+		t.Fatalf("corrective recovery contract missing from second turn: %#v", model.turns)
+	}
+}
+
 func TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn(t *testing.T) {
 	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
 	store := newFakeRunStore()
@@ -596,6 +794,47 @@ func TestCoordinator_EvidenceCitationCorrectionEnablesNextDiagnosis(t *testing.T
 	}
 	if strings.Contains(second.UserMessage, "ev-1") || len(second.Messages) != 0 {
 		t.Fatalf("rejected response was replayed: %#v", second)
+	}
+}
+
+// TestCoordinator_EvidenceCorrectionChallengeThenPlanning 证明 AC1/AC5：模型
+// 提交带错误 classification 的 code_fixable 时，coordinator 把
+// evidence_correction challenge（含存储权威分类）回喂同一循环并继续，模型
+// 修正后进入 planning；不终态化、不静默改写、不产生 contradiction，且被
+// challenge 的那一轮照常计入模型预算。
+func TestCoordinator_EvidenceCorrectionChallengeThenPlanning(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		mismatchedClassificationEnvelope("code_fixable"),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, run, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview || store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s/%s, want diagnosis_ready_for_review", run.State, store.state)
+	}
+	if model.calls != 3 || store.budget.ModelCalls != 3 {
+		t.Fatalf("calls/budget = %d/%d, want 3/3", model.calls, store.budget.ModelCalls)
+	}
+	// 只有修正后的 diagnosis 持久化；被 challenge 的提交不进入 review chain。
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1", len(store.decisions))
+	}
+	second := model.turns[1].UserMessage
+	for _, want := range []string{
+		`"kind":"evidence_correction"`, `"severity":"recoverable"`,
+		`"reasonCode":"citation_classification_mismatch"`,
+		"ev-1 is stored as direct_fault",
+		"does not by itself change fixability or confidence",
+	} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("second turn missing %q: %s", want, second)
+		}
+	}
+	if store.countTransitionsTo(domain.RunStateBlockedManualReview) != 0 {
+		t.Fatalf("correctable mismatch terminalized the run: %#v", store.transitions)
 	}
 }
 
@@ -1047,6 +1286,7 @@ func TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead(t *testing.T)
 	repo := &fakeRepoPort{}
 	evidence := &fakeEvidencePort{}
 	inspect := &fakeInspectPort{}
+	runtimeWriter := &fakeRuntimeEvidenceWriter{}
 	model := &scriptedModel{responses: []string{
 		requestSSHInspectEnvelope("ls /var/log | grep app"),
 		diagnosisEnvelope("configuration"),
@@ -1072,6 +1312,7 @@ func TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead(t *testing.T)
 		nil, nil,
 	)
 	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+	coord.SetRuntimeEvidenceWriter(runtimeWriter)
 	if _, err := coord.Start(context.Background(), domain.NewRun{
 		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
 	}); err != nil {
@@ -1082,6 +1323,20 @@ func TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead(t *testing.T)
 	}
 	if inspect.lastCommand != `'ls' '/var/log' | 'grep' 'app'` {
 		t.Fatalf("inspect command = %q", inspect.lastCommand)
+	}
+	// 成功 inspect 结果先持久化为 run 归属的 canonical evidence，再进入下一轮。
+	if len(runtimeWriter.evidence) != 1 || runtimeWriter.evidence[0].Provider != "ssh" ||
+		runtimeWriter.evidence[0].RunID != "run-1" {
+		t.Fatalf("runtime evidence = %#v", runtimeWriter.evidence)
+	}
+	runtimeEvidenceID := runtimeWriter.evidence[0].EvidenceID
+	if runtimeEvidenceID == "" {
+		t.Fatal("runtime evidence missing id")
+	}
+	// 证据 ID 进入 tool observation（evidenceIds），且诊断轮能引用它。
+	second := model.turns[1].UserMessage
+	if !strings.Contains(second, runtimeEvidenceID) {
+		t.Fatalf("second turn omitted runtime evidence id %s: %s", runtimeEvidenceID, second)
 	}
 	first := model.turns[0].UserMessage
 	for _, want := range []string{"logs.example.invalid", "app", "/srv/app", "/var/log", "ssh.inspect", "never auto-tails"} {

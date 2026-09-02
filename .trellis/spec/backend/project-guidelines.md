@@ -191,19 +191,32 @@ and viewer receive `null`. List, log, and audit records never include the
 plaintext token. `LookupWebhookToken` hashes the path value and returns
 project ID plus the enabled same-project source, or not found.
 
-`POST /hooks/{token}` has no Session. The body is opaque UTF-8
-(`text/plain`, `application/json`, form, or omitted Content-Type). Empty or
-invalid UTF-8 is `400 invalid_request`. The first non-empty line, whitespace
-collapsed and truncated, becomes title and fingerprint. The raw body becomes
-the Observation message (`error`, attributes `{}`). Source and environment
-come from the saved project configuration. Success is `202` with
-`{incidentId, created}`.
+`POST /hooks/{token}` has no Session. The body is bounded opaque UTF-8
+(`text/plain`, `application/json`, form, or omitted Content-Type). Empty or invalid
+UTF-8 is `400 invalid_request`. The token is resolved before the request is accepted.
+Success is `202` with `{accepted: true}`; it does not wait for an incident ID. Semantic
+normalization, Observation persistence, and incident ingestion then run in the API
+process background with request cancellation detached. Generic JSON payloads are
+sanitized and sent to the project LLM provider through a narrow classifier port with
+no tools and a bounded timeout. The classifier returns only a bounded title and scalar
+`grouping_fields`; the backend computes the final scoped `ai:v1` fingerprint from
+canonical fields. Tencent CLS still uses the classifier for its title, but its final
+fingerprint is always `tencent-cls:v1:<sha256>` over the project/source scope and a
+fixed whitespace-normalized `{alarm: Alarm, topic: Topic}` map. Model-selected fields,
+`TopicId`, `DetailUrl`, UIN, conditions, and trigger-count metadata never enter that
+provider fingerprint. Missing configuration, timeout, provider failure, or invalid
+model output uses a deterministic fallback: canonical JSON with volatile identifiers
+removed, or the legacy first non-empty line for plain text. The raw body becomes the
+Observation message (`error`, attributes `{}`). Source and environment come from the
+saved project configuration. Background failures emit a safe `webhook.ingest.failed`
+diagnostic without the token or raw payload. This in-process delivery is best effort;
+durable retry remains a future queue/outbox concern.
 
-Unknown hash, disabled trigger, wrong kind, missing source, and missing
-configuration all return `404 webhook_not_found`. Do not distinguish those
-cases. Hooks must not call Git, SSH, CLS, or LLM adapters; a new `P2`
-incident uses the existing `RemediationTrigger`.
-
+Unknown hash, disabled trigger, wrong kind, missing source, and missing configuration
+all return `404 webhook_not_found`. Do not distinguish those cases. Hooks do not call
+Git, SSH, or CLS adapters and do not let the model diagnose or trigger remediation; a
+new `P2` incident uses the existing `RemediationTrigger`. Model input is bounded and
+redacted, and raw webhook bodies are not added to application logs.
 Project creation, rename, member mutation, credential creation/update,
 configuration replacement, webhook-token rotate, incident creation, incident
 occurrence, and incident status changes create project audit events.
@@ -258,12 +271,18 @@ audits use a null `actor_user_id`.
   same-project UUID references, secret kinds, and Observation attribute allowlist.
 - Application: system-admin and membership matrices, non-member masking, last-admin
   guard, secret encryption context, generated IDs, name-only vs rotation,
-  preserved project key / secret ID / kind, webhook token generate/keep/clear,
-  admin reveal vs operator omit, and rotate invalidating the previous hash.
+  admin reveal vs operator omit, rotate invalidating the previous hash, and webhook
+  semantic normalization: token lookup before acceptance/model calls, immediate
+  return while the model is blocked, canonical JSON fallback
+  with volatile-field removal, strict model output validation, redacted bounded model
+  input, project/source scope isolation, legacy plain-text compatibility, and Tencent
+  CLS deterministic provider grouping: changing model fields, `TopicId`, URL, or
+  trigger-count metadata preserves the fingerprint, while changing `Alarm` or `Topic`
+  changes it.
 - HTTP: route nesting, capabilities, strict JSON, success envelope metadata and
   list totals, role denials, stable errors, omitted vs empty secret `value`,
   credential non-disclosure, admin-only `inboundUrl`, and unauthenticated
-  `POST /hooks/{token}` 202 / 404 collapsing.
+  `POST /hooks/{token}` accepted acknowledgement and 202 / 404 collapsing.
 - PostgreSQL integration: all 11 business tables and comments, configuration
   round-trip, encrypted-secret metadata, members, Observations, incidents, audit
   events, cross-project source/Observation/incident isolation, project rename,
@@ -320,6 +339,10 @@ secret, err := service.UpdateSecret(ctx, principal, projectKey, secretID, name, 
 - Do not log, audit, or return the raw webhook token except as the admin-only
   derived `inboundUrl`. AccessLog must use `POST /hooks/{token}`, never
   `RequestURI`.
+- Do not use model-selected `grouping_fields` as the final Tencent CLS incident
+  identity. Even at temperature zero, equivalent prompts can produce different field
+  names, field counts, or abstraction levels; keep its fixed `Alarm`/`Topic` hash in
+  the hooks application boundary.
 - Do not treat an explicit empty credential `value` as preserve. Only a missing
   field is name-only. Incomplete Git replacement drafts must not omit `value`.
 - Do not accept `kind` on credential update. Secret ID and kind stay unchanged so

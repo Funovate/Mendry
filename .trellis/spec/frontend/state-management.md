@@ -97,8 +97,9 @@ PATCH /api/v1/projects/{projectKey}/secrets/{secretId}
 ### 5. Good/Base/Bad Cases
 
 - Good: an admin saves each project configuration component independently; component payloads contain only the addressed row.
-- Good: an admin renames a project or credential in place; the stable project
-  key and secret ID stay in the URL and configuration references.
+- Good: an admin renames a project from the sidebar switcher, or a credential
+  in place; the stable project key and secret ID stay in the URL and
+  configuration references.
 - Base: a viewer reads project members, events, incidents, and audit data but
   sees no mutation controls.
 - Bad: using fixture projects or a local role dropdown after authentication.

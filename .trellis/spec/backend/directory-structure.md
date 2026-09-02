@@ -66,8 +66,8 @@ System routes:
 
 Environment groups:
 
-- Common: `FIXTHE_ENVIRONMENT`, `FIXTHE_LOG_LEVEL`, `FIXTHE_LOG_FORMAT`, and
-  bounded shutdown timeout.
+- Common: `FIXTHE_ENVIRONMENT`, `FIXTHE_LOG_LEVEL`, `FIXTHE_LOG_FORMAT`, optional
+  append-only `FIXTHE_LOG_FILE`, and bounded shutdown timeout.
 - API HTTP: bind address plus read-header/read/write/idle timeouts.
 - HTTP boundary: `FIXTHE_HTTP_MAX_BODY_BYTES` (default 1 MiB), optional exact
   `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`, and default-off
@@ -76,7 +76,8 @@ Environment groups:
 - Public URL: API-required `FIXTHE_PUBLIC_URL` is the absolute `http`/`https`
   origin used to derive `/hooks/{token}`; no credentials, query, fragment, or
   trailing slash; migrate / seed / bootstrap-admin do not read it.
-- Auth: bounded `FIXTHE_AUTH_SESSION_TTL`; command-only
+- Auth: bounded `FIXTHE_AUTH_SESSION_TTL`; webhook AI normalization uses bounded
+  `FIXTHE_WEBHOOK_AI_TIMEOUT` (default 60s); command-only
   `FIXTHE_BOOTSTRAP_ADMIN_PASSWORD` is never read by API startup.
 - Remediation: `FIXTHE_REMEDIATION_MODEL_TIMEOUT` bounds one logical model turn,
   including all HTTP attempts and retry backoff (default 5m, range 30s..20m).

@@ -33,6 +33,9 @@ func TestLoadAPIDefaults(t *testing.T) {
 	if configuration.Auth.SessionTTL != 24*time.Hour {
 		t.Fatalf("Auth = %#v", configuration.Auth)
 	}
+	if configuration.WebhookAI.NormalizationTimeout != 60*time.Second {
+		t.Fatalf("WebhookAI = %#v", configuration.WebhookAI)
+	}
 	if len(configuration.Encryption.Key) != 32 {
 		t.Fatalf("Encryption key length = %d", len(configuration.Encryption.Key))
 	}
@@ -60,6 +63,7 @@ func TestLoadAPICustomValues(t *testing.T) {
 		HTTPMaxBodyBytesKey:      "2097152",
 		HTTPCORSAllowedOriginKey: "https://console.example.com",
 		AuthSessionTTLKey:        "12h",
+		WebhookAITimeoutKey:      "75s",
 		EncryptionKey:            "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
 		PublicURLKey:             "https://fixthe.example.com/ingress",
 	}))
@@ -78,6 +82,9 @@ func TestLoadAPICustomValues(t *testing.T) {
 	}
 	if configuration.Auth.SessionTTL != 12*time.Hour {
 		t.Fatalf("Auth = %#v", configuration.Auth)
+	}
+	if configuration.WebhookAI.NormalizationTimeout != 75*time.Second {
+		t.Fatalf("WebhookAI = %#v", configuration.WebhookAI)
 	}
 	if configuration.PublicURL != "https://fixthe.example.com/ingress" {
 		t.Fatalf("PublicURL = %q", configuration.PublicURL)
@@ -136,6 +143,33 @@ func TestLoadCommonLogFormatDefaultsAndOverrides(t *testing.T) {
 				t.Fatalf("LogFormat = %q, want %q", configuration.LogFormat, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadCommonLogFileIsOptionalAndValidated(t *testing.T) {
+	configuration, err := LoadCommon(mapLookup(nil))
+	if err != nil {
+		t.Fatalf("LoadCommon() error = %v", err)
+	}
+	if configuration.LogFile != "" {
+		t.Fatalf("LogFile = %q, want disabled", configuration.LogFile)
+	}
+
+	configuration, err = LoadCommon(mapLookup(map[string]string{LogFileKey: " ./logs/fixthe.log "}))
+	if err != nil {
+		t.Fatalf("LoadCommon() error = %v", err)
+	}
+	if configuration.LogFile != "./logs/fixthe.log" {
+		t.Fatalf("LogFile = %q", configuration.LogFile)
+	}
+
+	const invalidPath = "logs/bad\nsecret.log"
+	_, err = LoadCommon(mapLookup(map[string]string{LogFileKey: invalidPath}))
+	if err == nil || !strings.Contains(err.Error(), LogFileKey) {
+		t.Fatalf("LoadCommon() error = %v", err)
+	}
+	if strings.Contains(err.Error(), invalidPath) {
+		t.Fatalf("error %q contains raw log path", err)
 	}
 }
 
@@ -396,6 +430,7 @@ func TestLoadAPIRejectsInvalidAddressAndDuration(t *testing.T) {
 		{name: "CORS path", values: map[string]string{HTTPCORSAllowedOriginKey: "https://console.example.com/path"}, field: HTTPCORSAllowedOriginKey},
 		{name: "CORS credentials", values: map[string]string{HTTPCORSAllowedOriginKey: "https://user:secret@console.example.com"}, field: HTTPCORSAllowedOriginKey},
 		{name: "session TTL", values: map[string]string{AuthSessionTTLKey: "1m"}, field: AuthSessionTTLKey},
+		{name: "webhook AI timeout", values: map[string]string{WebhookAITimeoutKey: "11m"}, field: WebhookAITimeoutKey},
 		{name: "request debug", values: map[string]string{HTTPRequestDebugKey: "pretty-secret-marker"}, field: HTTPRequestDebugKey},
 		{name: "public URL", values: map[string]string{PublicURLKey: "https://hooks.example.com/"}, field: PublicURLKey},
 	}

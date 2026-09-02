@@ -1,0 +1,249 @@
+package http
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"fixthe/backend/internal/modules/auth/application"
+	"fixthe/backend/internal/modules/auth/domain"
+	"fixthe/backend/internal/platform/httpserver"
+)
+
+const SessionCookieName = "fixthe_session"
+
+type principalContextKey struct{}
+
+type service interface {
+	Login(context.Context, string, []byte, string) (application.LoginResult, error)
+	Authenticate(context.Context, string) (domain.User, error)
+	Logout(context.Context, string) error
+}
+
+type userCreator interface {
+	CreateUser(context.Context, domain.User, string, []byte) (domain.User, error)
+}
+
+// HandlerOptions 声明认证 HTTP adapter 的 application 依赖和 cookie policy。
+type HandlerOptions struct {
+	Service      service
+	UserCreator  userCreator
+	SecureCookie bool
+	Now          func() time.Time
+}
+
+// Handler 负责认证 DTO、错误映射和 Session cookie，不实现 credential 规则。
+type Handler struct {
+	service      service
+	userCreator  userCreator
+	secureCookie bool
+	now          func() time.Time
+}
+
+func NewHandler(options HandlerOptions) (*Handler, error) {
+	if options.Service == nil {
+		return nil, errors.New("authentication HTTP service is required")
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	return &Handler{service: options.Service, userCreator: options.UserCreator, secureCookie: options.SecureCookie, now: options.Now}, nil
+}
+
+// Register 注册登录、退出和当前用户 endpoint。
+func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/auth/login", h.login)
+	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
+	mux.Handle("GET /api/v1/auth/me", h.RequireAuthentication(http.HandlerFunc(h.me)))
+	if h.userCreator != nil {
+		mux.Handle("POST /api/v1/users", h.RequireRoles([]domain.Role{domain.RoleAdmin}, http.HandlerFunc(h.createUser)))
+	}
+}
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type createUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type userResponse struct {
+	ID       string      `json:"id"`
+	Username string      `json:"username"`
+	Role     domain.Role `json:"role"`
+}
+
+func (h *Handler) login(writer http.ResponseWriter, request *http.Request) {
+	preventCaching(writer)
+	var payload loginRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	password := []byte(payload.Password)
+	payload.Password = ""
+	defer clear(password)
+
+	result, err := h.service.Login(request.Context(), payload.Username, password, sessionToken(request))
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	h.setSessionCookie(writer, result.Token, result.ExpiresAt)
+	if err := httpserver.WriteJSON(writer, http.StatusOK, mapUser(result.User)); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func (h *Handler) logout(writer http.ResponseWriter, request *http.Request) {
+	preventCaching(writer)
+	var payload struct{}
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	if err := h.service.Logout(request.Context(), sessionToken(request)); err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	h.clearSessionCookie(writer)
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) me(writer http.ResponseWriter, request *http.Request) {
+	preventCaching(writer)
+	user, ok := CurrentUser(request.Context())
+	if !ok {
+		httpserver.WriteError(writer, request, unauthenticatedError())
+		return
+	}
+	if err := httpserver.WriteJSON(writer, http.StatusOK, mapUser(user)); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func (h *Handler) createUser(writer http.ResponseWriter, request *http.Request) {
+	principal, ok := CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, application.ErrUnauthenticated)
+		return
+	}
+	var payload createUserRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	password := []byte(payload.Password)
+	payload.Password = ""
+	defer clear(password)
+
+	created, err := h.userCreator.CreateUser(request.Context(), principal, payload.Username, password)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, http.StatusCreated, mapUser(created)); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+// RequireAuthentication 验证 Session cookie，并把 Principal 放入 request context。
+func (h *Handler) RequireAuthentication(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		preventCaching(writer)
+		token := sessionToken(request)
+		user, err := h.service.Authenticate(request.Context(), token)
+		if err != nil {
+			writeApplicationError(writer, request, err)
+			return
+		}
+		ctx := context.WithValue(request.Context(), principalContextKey{}, user)
+		next.ServeHTTP(writer, request.WithContext(ctx))
+	})
+}
+
+// RequireRoles 同时执行 Session 验证和 HTTP 角色拒绝；业务用例仍须独立授权。
+func (h *Handler) RequireRoles(allowed []domain.Role, next http.Handler) http.Handler {
+	authorized := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		user, ok := CurrentUser(request.Context())
+		if !ok {
+			writeApplicationError(writer, request, application.ErrUnauthenticated)
+			return
+		}
+		if err := application.RequireRoles(user, allowed...); err != nil {
+			writeApplicationError(writer, request, err)
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
+	return h.RequireAuthentication(authorized)
+}
+
+// CurrentUser 返回认证 middleware 注入的 Principal。
+func CurrentUser(ctx context.Context) (domain.User, bool) {
+	user, ok := ctx.Value(principalContextKey{}).(domain.User)
+	return user, ok
+}
+
+func (h *Handler) setSessionCookie(writer http.ResponseWriter, token string, expiresAt time.Time) {
+	http.SetCookie(writer, &http.Cookie{
+		Name: SessionCookieName, Value: token, Path: "/", Expires: expiresAt.UTC(),
+		MaxAge: int(expiresAt.Sub(h.now().UTC()).Seconds()), HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (h *Handler) clearSessionCookie(writer http.ResponseWriter) {
+	http.SetCookie(writer, &http.Cookie{
+		Name: SessionCookieName, Value: "", Path: "/", Expires: time.Unix(1, 0).UTC(),
+		MaxAge: -1, HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func sessionToken(request *http.Request) string {
+	cookie, err := request.Cookie(SessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func mapUser(user domain.User) userResponse {
+	return userResponse{ID: user.ID, Username: user.Username, Role: user.Role}
+}
+
+func preventCaching(writer http.ResponseWriter) {
+	writer.Header().Set("Cache-Control", "no-store")
+}
+
+func writeApplicationError(writer http.ResponseWriter, request *http.Request, err error) {
+	switch {
+	case errors.Is(err, application.ErrInvalidCredentials):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: http.StatusUnauthorized, Code: "invalid_credentials", Message: "Username or password is invalid.",
+		})
+	case errors.Is(err, application.ErrUnauthenticated), errors.Is(err, application.ErrSessionNotFound):
+		httpserver.WriteError(writer, request, unauthenticatedError())
+	case errors.Is(err, application.ErrForbidden):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: http.StatusForbidden, Code: "forbidden", Message: "You do not have permission to perform this action.",
+		})
+	case errors.Is(err, application.ErrInvalidInput):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: http.StatusBadRequest, Code: "invalid_request", Message: "The request is invalid.",
+		})
+	case errors.Is(err, application.ErrUserConflict):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: http.StatusConflict, Code: "user_conflict", Message: "The username is already in use.",
+		})
+	default:
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func unauthenticatedError() httpserver.Error {
+	return httpserver.Error{Status: http.StatusUnauthorized, Code: "authentication_required", Message: "Authentication is required."}
+}

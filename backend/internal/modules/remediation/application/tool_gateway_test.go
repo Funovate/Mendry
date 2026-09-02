@@ -345,3 +345,67 @@ func TestToolGateway_SSHInspectRejectsUnquotedGlobBeforeAdapter(t *testing.T) {
 		t.Fatalf("inspect adapter calls = %d, want 0", inspect.calls)
 	}
 }
+
+// TestToolGateway_SSHInspectExecutesExpandedReadOnlyFamilies 覆盖 PRD AC2：扩展的
+// 主机/网络/进程/文件/日志/Docker 只读形态经过 gateway 解析并在适配器执行。
+func TestToolGateway_SSHInspectExecutesExpandedReadOnlyFamilies(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+	commands := []string{
+		`hostname -I`,
+		`ip addr show`,
+		`ss -lntp`,
+		`ps aux`,
+		`cat /etc/os-release`,
+		`tail -n 100 /var/log/app.log`,
+		`journalctl -u checkout-api --since '2026-08-24' | grep -i error`,
+		`docker ps --no-trunc`,
+		`docker inspect checkout-api`,
+		`docker stats --no-stream`,
+		`docker logs --tail 50 checkout-api`,
+	}
+	for _, command := range commands {
+		if _, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+			domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+			application.ToolSSHInspect, map[string]interface{}{"command": command}); err != nil {
+			t.Fatalf("ExecuteTool(%q) error = %v", command, err)
+		}
+	}
+	if inspect.calls != len(commands) {
+		t.Fatalf("inspect adapter calls = %d, want %d", inspect.calls, len(commands))
+	}
+}
+
+// TestToolGateway_SSHInspectRejectsMutatingFamiliesBeforeAdapter 覆盖 PRD AC3/AC4：
+// 每个混合用途命令族的变异形态与嵌套执行都在适配器调用前被拒绝。
+func TestToolGateway_SSHInspectRejectsMutatingFamiliesBeforeAdapter(t *testing.T) {
+	inspect := &fakeInspectPort{}
+	gateway := application.NewToolGatewayWithDynamicRuntime(&fakeRepoPort{}, &fakeEvidencePort{}, inspect, nil, nil)
+	commands := []string{
+		`hostname new-host`,
+		`date --set '2026-08-24 12:00:00'`,
+		`env bash -c 'echo hi'`,
+		`ss --kill`,
+		`ip addr add 10.0.0.1/24 dev eth0`,
+		`find /tmp -delete`,
+		`journalctl --vacuum-size=100M`,
+		`docker exec checkout-api bash`,
+		`docker stop checkout-api`,
+		`docker logs -f checkout-api`,
+		`systemctl restart checkout-api`,
+		`sudo journalctl`,
+		`cat $(pwd)`,
+		`ls; rm -rf /`,
+	}
+	for _, command := range commands {
+		_, err := gateway.ExecuteTool(context.Background(), domain.RunStateDiagnosing, domain.RepoRef{},
+			domain.EvidenceScope{ProjectID: "project-1", SourceID: "source-1"},
+			application.ToolSSHInspect, map[string]interface{}{"command": command})
+		if code, ok := application.RejectionCode(err); !ok || code != application.RejectArguments {
+			t.Fatalf("ExecuteTool(%q) rejection = %v code=%v ok=%t", command, err, code, ok)
+		}
+	}
+	if inspect.calls != 0 {
+		t.Fatalf("inspect adapter calls = %d, want 0 (all rejected before SSH)", inspect.calls)
+	}
+}

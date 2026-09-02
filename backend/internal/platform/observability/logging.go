@@ -3,6 +3,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,7 +25,11 @@ const (
 	FieldCommit                = "commit"
 	FieldEnvironment           = "environment"
 	FieldComponent             = "component"
+	FieldOperation             = "operation"
 	FieldOutcome               = "outcome"
+	FieldProvider              = "provider"
+	FieldStatusCode            = "status_code"
+	FieldBytesRetrieved        = "bytes_retrieved"
 	FieldDurationMS            = "duration_ms"
 	FieldTraceID               = "trace_id"
 	FieldSpanID                = "span_id"
@@ -49,6 +54,9 @@ const (
 	FieldGitOperation          = "git.operation.name"
 	FieldHTTPHost              = "http.host"
 	FieldHTTPPath              = "http.path"
+	FieldHTTPMethod            = "http.method"
+	FieldHTTPURL               = "http.url"
+	FieldHTTPFinalURL          = "http.final_url"
 	FieldHTTPStatus            = "http.status"
 	FieldHTTPRequest           = "http.request"
 	FieldHTTPRequestTruncated  = "http.request_truncated"
@@ -64,6 +72,7 @@ const (
 	FieldBodyParseError        = "body_parse_error"
 	FieldErrorType             = "error_type"
 	FieldErrorCode             = "error_code"
+	FieldErrorStage            = "error_stage"
 	FieldErrorMessage          = "error_message"
 	FieldErrorMessageTruncated = "error_message_truncated"
 	FieldErrorCauses           = "error_causes"
@@ -75,7 +84,9 @@ const (
 	FieldRunID                 = "run_id"
 	FieldSeriesID              = "series_id"
 	FieldIncidentID            = "incident_id"
+	FieldTopicID               = "topic_id"
 	FieldLifecycleGeneration   = "lifecycle_generation"
+	FieldContextVersion        = "context_version"
 	FieldPhase                 = "phase"
 	FieldFromState             = "from_state"
 	FieldToState               = "to_state"
@@ -92,6 +103,7 @@ const (
 	FieldModelTokensOut        = "model_tokens_out"
 	FieldModelTokens           = "model_tokens"
 	FieldModelCalls            = "model_calls"
+	FieldModelFinishReason     = "finish_reason"
 	FieldToolCalls             = "tool_calls"
 	FieldToolCount             = "tool_count"
 	FieldToolSchemaBytes       = "tool_schema_bytes"
@@ -106,46 +118,54 @@ const (
 	FieldCredentialKind        = "credential_kind"
 	FieldTransport             = "transport"
 	FieldRetryable             = "retryable"
+	FieldGateOutcome           = "gate_outcome"
+	FieldGateReason            = "gate_reason"
+	FieldAvailable             = "available"
 	FieldSSHCommand            = "ssh.command"
 )
 
 // 稳定 event name 是日志检索、指标和告警使用的机器契约。
 const (
-	EventProcessStarting            = "process.starting"
-	EventProcessStarted             = "process.started"
-	EventProcessStopping            = "process.stopping"
-	EventProcessStopped             = "process.stopped"
-	EventHTTPServerReady            = "http.server.ready"
-	EventHTTPCompleted              = "http.request.completed"
-	EventHTTPFailed                 = "http.request.failed"
-	EventHTTPError                  = "http.request.error"
-	EventHTTPPanicRecovered         = "http.request.panic_recovered"
-	EventDBQueryCompleted           = "db.query.completed"
-	EventDBTransactionCompleted     = "db.transaction.completed"
-	EventDBPoolState                = "db.pool.state"
-	EventMigrationApplied           = "db.migration.applied"
-	EventMigrationsCompleted        = "db.migrations.completed"
-	EventMigrationLockCleanupFailed = "db.migration.lock_cleanup_failed"
-	EventRedisCommandCompleted      = "redis.command.completed"
-	EventRedisPoolState             = "redis.pool.state"
-	EventLLMRequestCompleted        = "llm.request.completed"
-	EventGitRequestCompleted        = "git.request.completed"
-	EventRemediationFailed          = "remediation.failed"
-	EventRemediationRunStarted      = "remediation.run.started"
-	EventRemediationStateTransition = "remediation.state.transitioned"
-	EventRemediationContextComplete = "remediation.context.completed"
-	EventRemediationModelComplete   = "remediation.model_turn.completed"
-	EventRemediationToolComplete    = "remediation.tool.completed"
-	EventRemediationRunCompleted    = "remediation.run.completed"
-	EventRemediationContextPayload  = "remediation.context.payload"
-	EventRemediationModelPayload    = "remediation.model_turn.payload"
-	EventRemediationToolPayload     = "remediation.tool.payload"
-	EventSSHEvidenceCompleted       = "ssh.evidence.completed"
+	EventProcessStarting             = "process.starting"
+	EventProcessStarted              = "process.started"
+	EventProcessStopping             = "process.stopping"
+	EventProcessStopped              = "process.stopped"
+	EventHTTPServerReady             = "http.server.ready"
+	EventHTTPCompleted               = "http.request.completed"
+	EventHTTPFailed                  = "http.request.failed"
+	EventHTTPError                   = "http.request.error"
+	EventHTTPPanicRecovered          = "http.request.panic_recovered"
+	EventDBQueryCompleted            = "db.query.completed"
+	EventDBTransactionCompleted      = "db.transaction.completed"
+	EventDBPoolState                 = "db.pool.state"
+	EventMigrationApplied            = "db.migration.applied"
+	EventMigrationsCompleted         = "db.migrations.completed"
+	EventMigrationLockCleanupFailed  = "db.migration.lock_cleanup_failed"
+	EventRedisCommandCompleted       = "redis.command.completed"
+	EventRedisPoolState              = "redis.pool.state"
+	EventLLMRequestCompleted         = "llm.request.completed"
+	EventGitRequestCompleted         = "git.request.completed"
+	EventRemediationFailed           = "remediation.failed"
+	EventRemediationRunStarted       = "remediation.run.started"
+	EventRemediationContinuationGate = "remediation.continuation.gate"
+	EventRemediationStateTransition  = "remediation.state.transitioned"
+	EventRemediationContextComplete  = "remediation.context.completed"
+	EventRemediationModelComplete    = "remediation.model_turn.completed"
+	EventRemediationToolComplete     = "remediation.tool.completed"
+	EventRemediationRunCompleted     = "remediation.run.completed"
+	EventRemediationContextPayload   = "remediation.context.payload"
+	EventRemediationModelPayload     = "remediation.model_turn.payload"
+	EventRemediationToolPayload      = "remediation.tool.payload"
+	EventSSHEvidenceCompleted        = "ssh.evidence.completed"
+	EventTencentCLSRequestCompleted  = "tencent_cls.request.completed"
+	EventTencentCLSDetailCompleted   = "tencent_cls.detail.completed"
+	EventTencentCLSEvidenceProjected = "tencent_cls.evidence.projected"
 )
 
 // LoggerOptions 声明 logger 的输出格式、级别和进程身份。
 type LoggerOptions struct {
 	Writer      io.Writer
+	FileWriter  io.Writer
 	Level       string
 	Format      string
 	Service     string
@@ -170,12 +190,31 @@ func NewLogger(options LoggerOptions) (*slog.Logger, error) {
 		return nil, err
 	}
 
-	var handler slog.Handler
-	switch options.Format {
+	handler, err := newLogHandler(options.Writer, options.Format, level, true)
+	if err != nil {
+		return nil, err
+	}
+	if options.FileWriter != nil {
+		fileHandler, err := newLogHandler(options.FileWriter, options.Format, level, false)
+		if err != nil {
+			return nil, err
+		}
+		handler = fanoutHandler{handlers: []slog.Handler{handler, fileHandler}, outputMu: &sync.Mutex{}}
+	}
+	return slog.New(handler).With(
+		FieldService, options.Service,
+		FieldVersion, options.Build.Version,
+		FieldCommit, options.Build.Commit,
+		FieldEnvironment, options.Environment,
+	), nil
+}
+
+func newLogHandler(writer io.Writer, format string, level slog.Level, allowColor bool) (slog.Handler, error) {
+	switch format {
 	case "console":
-		handler = newConsoleHandler(options.Writer, level, writerSupportsColor(options.Writer))
+		return newConsoleHandler(writer, level, allowColor && writerSupportsColor(writer)), nil
 	case "json":
-		handler = slog.NewJSONHandler(options.Writer, &slog.HandlerOptions{
+		return slog.NewJSONHandler(writer, &slog.HandlerOptions{
 			Level: level,
 			ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
 				// 对齐项目日志 envelope，避免依赖 slog 默认的 time key。
@@ -184,16 +223,57 @@ func NewLogger(options LoggerOptions) (*slog.Logger, error) {
 				}
 				return attr
 			},
-		})
+		}), nil
 	default:
 		return nil, fmt.Errorf("unsupported log format")
 	}
-	return slog.New(handler).With(
-		FieldService, options.Service,
-		FieldVersion, options.Build.Version,
-		FieldCommit, options.Build.Commit,
-		FieldEnvironment, options.Environment,
-	), nil
+}
+
+// fanoutHandler 把同一条完整 slog record 投递到独立 destination，同时保留
+// 各 handler 自己的格式化、颜色和多行原子写入语义。
+type fanoutHandler struct {
+	handlers []slog.Handler
+	outputMu *sync.Mutex
+}
+
+func (h fanoutHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, handler := range h.handlers {
+		if handler.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h fanoutHandler) Handle(ctx context.Context, record slog.Record) error {
+	// 同一把锁覆盖全部 destination，确保并发 record 在 stdout 与文件中的
+	// 顺序一致；派生 handler 也必须共享这把锁。
+	h.outputMu.Lock()
+	defer h.outputMu.Unlock()
+
+	var result error
+	for _, handler := range h.handlers {
+		if handler.Enabled(ctx, record.Level) {
+			result = errors.Join(result, handler.Handle(ctx, record.Clone()))
+		}
+	}
+	return result
+}
+
+func (h fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	handlers := make([]slog.Handler, 0, len(h.handlers))
+	for _, handler := range h.handlers {
+		handlers = append(handlers, handler.WithAttrs(attrs))
+	}
+	return fanoutHandler{handlers: handlers, outputMu: h.outputMu}
+}
+
+func (h fanoutHandler) WithGroup(name string) slog.Handler {
+	handlers := make([]slog.Handler, 0, len(h.handlers))
+	for _, handler := range h.handlers {
+		handlers = append(handlers, handler.WithGroup(name))
+	}
+	return fanoutHandler{handlers: handlers, outputMu: h.outputMu}
 }
 
 func newConsoleHandler(writer io.Writer, level slog.Level, color bool) slog.Handler {
@@ -314,7 +394,7 @@ func (h consoleHandler) Handle(ctx context.Context, record slog.Record) error {
 		}
 	}
 	if payload := debugValues[FieldPayload]; payload != "" {
-		stacks = append(stacks, formatRemediationPayloadBlock(payloadKind, payload))
+		stacks = append(stacks, formatPayloadBlock(event, payloadKind, payload))
 	}
 
 	if component != "" {
@@ -381,7 +461,7 @@ var inboundHTTPDebugFieldOrder = []string{
 }
 
 func inboundHTTPDebugField(event, key string) bool {
-	if event != EventHTTPCompleted {
+	if event != EventHTTPCompleted && event != EventTencentCLSRequestCompleted {
 		return false
 	}
 	switch key {
@@ -397,15 +477,18 @@ func remediationPayloadField(event, key string) bool {
 		return false
 	}
 	switch event {
-	case EventRemediationContextPayload, EventRemediationModelPayload, EventRemediationToolPayload:
+	case EventRemediationContextPayload, EventRemediationModelPayload, EventRemediationToolPayload, EventTencentCLSEvidenceProjected:
 		return true
 	default:
 		return false
 	}
 }
 
-func formatRemediationPayloadBlock(kind, payload string) string {
+func formatPayloadBlock(event, kind, payload string) string {
 	label := "remediation_payload"
+	if event == EventTencentCLSEvidenceProjected {
+		label = "tencent_cls_evidence"
+	}
 	if kind != "" {
 		label += "[" + kind + "]"
 	}

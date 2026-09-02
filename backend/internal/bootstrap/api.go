@@ -12,6 +12,9 @@ import (
 	authredis "fixthe/backend/internal/modules/auth/adapter/redis"
 	authapplication "fixthe/backend/internal/modules/auth/application"
 	hookhttp "fixthe/backend/internal/modules/hooks/adapter/http"
+	hookllm "fixthe/backend/internal/modules/hooks/adapter/llm"
+	hooklogging "fixthe/backend/internal/modules/hooks/adapter/logging"
+	hooktencentcls "fixthe/backend/internal/modules/hooks/adapter/tencentcls"
 	hookapplication "fixthe/backend/internal/modules/hooks/application"
 	incidenthttp "fixthe/backend/internal/modules/incidents/adapter/http"
 	incidentpostgres "fixthe/backend/internal/modules/incidents/adapter/postgres"
@@ -27,6 +30,8 @@ import (
 	projectapplication "fixthe/backend/internal/modules/projects/application"
 	remediationgit "fixthe/backend/internal/modules/remediation/adapter/git"
 	remediationhttp "fixthe/backend/internal/modules/remediation/adapter/http"
+	remediationlogging "fixthe/backend/internal/modules/remediation/adapter/logging"
+	remediationmcp "fixthe/backend/internal/modules/remediation/adapter/mcp"
 	remediationopenai "fixthe/backend/internal/modules/remediation/adapter/openai"
 	remediationpostgres "fixthe/backend/internal/modules/remediation/adapter/postgres"
 	remediationsshlog "fixthe/backend/internal/modules/remediation/adapter/sshlog"
@@ -41,17 +46,18 @@ import (
 
 // RunAPI 验证配置，组装 PostgreSQL、Redis 和 HTTP 边界，并持续服务到
 // ctx 被取消或 server 失败。API 不会自动执行 migration。
-func RunAPI(ctx context.Context, options Options) error {
+func RunAPI(ctx context.Context, options Options) (result error) {
 	// 先验证全部 API 配置再创建 logger、client 和 listener，避免无效配置留下部分资源。
 	apiConfig, err := config.LoadAPI(options.Lookup)
 	if err != nil {
 		return fmt.Errorf("load API configuration: %w", err)
 	}
 
-	logger, err := logger(options, "fixthe-api", apiConfig.Common)
+	logger, logSink, err := logger(options, "fixthe-api", apiConfig.Common)
 	if err != nil {
 		return err
 	}
+	defer closeLogSink(&result, logSink)
 	telemetryRuntime, err := telemetry(ctx, options, "fixthe-api", apiConfig.Common.Environment)
 	if err != nil {
 		return err
@@ -127,8 +133,16 @@ func RunAPI(ctx context.Context, options Options) error {
 			fmt.Errorf("create project credential cipher: %w", err),
 		)
 	}
+	containerProbe, err := remediationsshlog.NewContainerProbe(remediationsshlog.ContainerProbeOptions{
+		Secrets: projectRepository, Cipher: projectCipher, Logger: logger,
+	})
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create Docker container probe: %w", err),
+		)
+	}
 	projectService, err := projectapplication.NewService(projectapplication.Options{
-		Repository: projectRepository, Cipher: projectCipher, Git: projectgit.NewLister(logger), LLM: projectopenai.NewLister(nil, logger),
+		Repository: projectRepository, Cipher: projectCipher, Git: projectgit.NewLister(logger), LLM: projectopenai.NewLister(nil, logger), Containers: containerProbe,
 		NewID: newUUIDv7, PublicURL: apiConfig.PublicURL,
 	})
 	if err != nil {
@@ -193,7 +207,7 @@ func RunAPI(ctx context.Context, options Options) error {
 		)
 	}
 	repositoryReader, err := remediationgit.NewReader(remediationgit.Options{
-		Configs: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher,
+		Configs: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher, Logger: logger,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -201,11 +215,19 @@ func RunAPI(ctx context.Context, options Options) error {
 		)
 	}
 	evidenceReader, err := remediationsshlog.NewReader(remediationsshlog.Options{
-		Sources: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher,
+		Sources: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher, Logger: logger,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
 			fmt.Errorf("create remediation ssh log reader: %w", err),
+		)
+	}
+	mcpRuntime, err := remediationmcp.NewRuntime(remediationmcp.Options{
+		Sources: runtimeLoaders, Secrets: runtimeLoaders, Cipher: projectCipher, Logger: logger,
+	})
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation MCP runtime: %w", err),
 		)
 	}
 	modelClient, err := remediationopenai.NewClient(remediationopenai.Options{
@@ -217,14 +239,58 @@ func RunAPI(ctx context.Context, options Options) error {
 			fmt.Errorf("create remediation openai client: %w", err),
 		)
 	}
-	// 真实 Git / SSH 日志 / OpenAI 适配器替换占位实现；凭据只在适配器内解密。
-	remediationCoordinator := remediationapplication.NewRemediationCoordinatorWithRuntime(
-		remediationStore, repositoryReader, evidenceReader, modelClient, incidentLookup, repositoryReader,
-		remediationStore, remediationStore,
+	webhookModel, err := hookllm.NewAdapter(modelClient)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create webhook classifier adapter: %w", err),
+		)
+	}
+	webhookAnalyzer := hookapplication.NewFingerprintAnalyzerWithTimeout(webhookModel, apiConfig.WebhookAI.NormalizationTimeout)
+	webhookFailureReporter, err := hooklogging.NewFailureReporter(logger)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create webhook failure reporter: %w", err),
+		)
+	}
+	tencentDetailClient, err := hooktencentcls.NewClient(hooktencentcls.Options{Logger: logger})
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create Tencent CLS detail client: %w", err),
+		)
+	}
+	tencentDetailResolver, err := hooktencentcls.NewIncidentDetailResolver(tencentDetailClient, remediationStore, remediationStore, time.Now)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create Tencent CLS remediation detail resolver: %w", err),
+		)
+	}
+	remediationObserver, err := remediationlogging.NewObserver(logger)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation observer: %w", err),
+		)
+	}
+	// 真实 Git / SSH 日志 / OpenAI 适配器替换占位实现；observer 只接收无凭据语义记录。
+	remediationCoordinator := remediationapplication.NewRemediationCoordinatorWithDynamicRuntime(
+		remediationStore, repositoryReader, evidenceReader, evidenceReader, modelClient, incidentLookup, repositoryReader,
+		remediationStore, remediationStore, remediationObserver, runtimeLoaders, mcpRuntime, remediationStore,
 	)
-	// evidence.read allows bounded re-reading of persisted evidence within the current run series.
+	remediationCoordinator.SetDockerEvidencePort(evidenceReader)
+	remediationCoordinator.SetTencentCLSDetailPort(tencentDetailResolver)
+	// evidence.read 允许模型按证据 ID 重新读取同 series 持久化证据的有界页面；
+	// 无凭据、无 URL/路径参数，run 身份来自执行 catalog。
 	remediationCoordinator.SetEvidenceReadPort(remediationStore)
-	// Durable working-memory checkpoints are enabled only for resilient_v1 run snapshots.
+	// SSH/Docker 成功结果先投影为 canonical evidence 并持久化，再进入模型上下文；
+	// 没有 writer 时 observed 工具 fail closed，不会暴露未持久化的原始输出。
+	remediationCoordinator.SetRuntimeEvidenceWriter(remediationStore)
+	// 证据 gate 只通过项目/运行范围受限的 store 解析引用，并持久化最终 assessment。
+	remediationCoordinator.SetEvidenceResolver(remediationStore)
+	// 首轮 remediation 只加载触发 Observation 及其预运行 evidence；运行时
+	// Git/SSH/日志读取仍由 Tool Gateway 按预算和策略驱动。
+	remediationCoordinator.SetBootstrapEvidenceLoader(remediationStore)
+	// durable working-memory checkpoint store（D2）。resilient_v1 项目的 run 在
+	// coordinator 循环中 append/load checkpoint；默认 agentLoopMode=legacy，
+	// 既有项目行为完全不变。
 	remediationCheckpointStore, checkpointStoreErr := remediationpostgres.NewCheckpointStore(postgresPool)
 	if checkpointStoreErr != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -232,7 +298,13 @@ func RunAPI(ctx context.Context, options Options) error {
 		)
 	}
 	remediationCoordinator.SetCheckpointStore(remediationCheckpointStore)
-	remediationTrigger, err := remediationapplication.NewTrigger(remediationStore, remediationCoordinator)
+	remediationFailureReporter, err := remediationlogging.NewFailureReporter(logger)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation failure reporter: %w", err),
+		)
+	}
+	remediationTrigger, err := remediationapplication.NewTriggerWithReporter(remediationStore, remediationCoordinator, remediationFailureReporter)
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
 			fmt.Errorf("create remediation trigger: %w", err),
@@ -254,7 +326,9 @@ func RunAPI(ctx context.Context, options Options) error {
 		)
 	}
 	hookService, err := hookapplication.NewService(hookapplication.Options{
-		Tokens: projectService, Observations: observationService, Incidents: incidentService, Now: time.Now,
+		Tokens: projectService, Analyzer: webhookAnalyzer, Observations: observationService,
+		Incidents: incidentService, Failures: webhookFailureReporter, Evidence: remediationStore,
+		Now: time.Now,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

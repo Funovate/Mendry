@@ -367,18 +367,24 @@ func (g *ToolGateway) baseDefinitions(
 	switch {
 	case source.Kind == "ssh" && source.Enabled && source.Supported &&
 		(source.Allows("pull_collection") || source.Allows("context_collection")) && phase != domain.RunStatePlanning:
-		// Docker deployment 只广告 typed logs，避免模型借 generic inspect
-		// 自己拼接 Docker 命令；host deployment 才保留受限 inspect。
+		// Docker deployment 同时广告 typed docker.logs 与 generic ssh.inspect：
+		// inspect 用于主机/网络/进程等运行时证据（如 INC-2267 的 hostname -I / ip addr show），
+		// typed logs 用于 incident window 日志收集。两者都经过只读命令策略，成功结果
+		// 先持久化为 remediation evidence 再进入模型上下文。
 		if source.SSHDeploymentKind == "docker" {
 			names = append(names, ToolDockerLogs)
-		} else {
-			names = append(names, ToolSSHInspect)
 		}
-		// Persisted evidence reads are connector-independent and remain diagnosis-only.
+		names = append(names, ToolSSHInspect)
+		// evidence.read 只读当前 run series 的持久化证据，不依赖任何 connector，
+		// 因此 SSH/Docker source 与 cloud 一样广告它：continuation 索引条目按 ID
+		// 重新读取原始证据时不需要日志窗口能力。evidence.search/context 仍绑定
+		// cloud pull/context 日志窗口，不进入 SSH 分支；planning 由外层条件排除。
 		names = append(names, ToolEvidenceRead)
 	case phase != domain.RunStatePlanning && ((source.Kind == "legacy" && scope.SourceID != "") || (source.Enabled && source.Supported &&
 		source.Kind == "cloud" &&
 		(source.Allows("pull_collection") || source.Allows("context_collection")))):
+		// evidence.read 只读持久化证据，不依赖 connector；广告位置与
+		// evidence.search/context 相同，避免把只读持久化读取暴露给分析专用 catalog。
 		names = append(names, ToolEvidenceSearch, ToolEvidenceContext, ToolEvidenceRead)
 	}
 	return g.advertisedToolDefinitionsForNames(names)

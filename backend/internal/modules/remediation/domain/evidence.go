@@ -157,6 +157,15 @@ type EvidenceResolution struct {
 	MaterialContradictions []string
 }
 
+// CitationClassificationMismatch 是模型声明分类与持久化权威分类的差异（R7）。
+// 它由 application 层在 citations+resolved records 已知处收集，绝不作为
+// material contradiction 进入 gate 判定：metadata 差异不独立影响 confidence
+// cap 或 planning eligibility，只产生可纠正的 evidence_correction challenge。
+type CitationClassificationMismatch struct {
+	EvidenceID           string
+	StoredClassification EvidenceClassification
+}
+
 // EvidenceGateInput is the service-owned input to EvaluateEvidenceGate.
 type EvidenceGateInput struct {
 	Fixability        FixabilityClass
@@ -218,9 +227,9 @@ func EvaluateEvidenceGate(input EvidenceGateInput) EvidenceGateDecision {
 			decision.MissingEvidence = appendUnique(decision.MissingEvidence, id)
 			continue
 		}
-		if citation.Classification != "" && citation.Classification != record.Classification {
-			decision.Contradictions = appendUnique(decision.Contradictions, "evidence classification mismatch: "+id)
-		}
+		// R7：citation classification 与存储分类不一致是可纠正的 metadata，
+		// 不是 material contradiction；mismatch 收集在 application 层完成，
+		// 这里只使用存储分类做 direct-evidence 判定。
 		if record.Classification == EvidenceDirectFault {
 			hasDirect = true
 			decision.DirectEvidenceIDs = appendUnique(decision.DirectEvidenceIDs, id)

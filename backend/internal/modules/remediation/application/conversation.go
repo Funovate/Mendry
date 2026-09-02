@@ -27,9 +27,18 @@ type AgentConversation struct {
 	observations            []conversationItem
 	pending                 []conversationItem
 	messages                []domain.ModelMessage
+	toolFailureAttempts     map[toolFailureKey]int
+	dockerRefinementPending bool
+	dockerRefinementVersion int
+	dockerRefinementReason  string
 	nextSequence            int64
 	preparedThroughSequence int64
 	preparedBootstrap       bool
+}
+
+type toolFailureKey struct {
+	tool string
+	code string
 }
 
 // NativeContinuation 返回尚未进入 provider-native 历史的有界增量。
@@ -279,12 +288,47 @@ func (c *AgentConversation) AppendRecoveryChallenge(challenge domain.RecoveryCha
 	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
 }
 
+// AppendCausalClosureReassessment 要求模型消解“因果已闭环但证据不足”的语义
+// 冲突。该观察只包含服务端固定文案，不能携带模型输出或未净化的证据。
+func (c *AgentConversation) AppendCausalClosureReassessment() {
+	if c == nil {
+		return
+	}
+	observation := map[string]interface{}{
+		"status": "error",
+		"error": map[string]interface{}{
+			"code":      "inconsistent_causal_closure",
+			"retryable": true,
+			"message": "insufficient_evidence cannot be terminal while causalClosure.explainsOriginalSymptom is true. " +
+				"Reassess whether each missing item is material to causal explanation or safe fixability classification. " +
+				"Unknown or unmatched test authorization is an audit finding, not a root-cause gap. " +
+				"Return the actual fixability when the symptom is explained; otherwise set causalClosure false and " +
+				"request bounded collectMoreContext tool calls for material evidence that is still collectible.",
+		},
+	}
+	encoded, encodeErr := json.Marshal(observation)
+	if encodeErr != nil {
+		encoded = []byte(`{"status":"error","error":{"code":"observation_encode_failed","retryable":false,"message":"causal-closure reassessment could not be encoded"}}`)
+	}
+	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
+}
+
 // AppendToolResult 将工具成功、拒绝或 adapter 失败变成下一轮可见的观察。
 func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult, err error) {
 	if c == nil {
 		return
 	}
 	status := "success"
+	if err == nil && req.ToolName == ToolDockerLogs {
+		if result.RefinementRequired {
+			c.dockerRefinementPending = true
+			c.dockerRefinementVersion++
+			c.dockerRefinementReason = result.RefinementReason
+		} else {
+			c.dockerRefinementPending = false
+			c.dockerRefinementReason = ""
+		}
+	}
 	observation := map[string]interface{}{
 		"tool":        req.ToolName,
 		"parameters":  redactConversationValue(req.Parameters),
@@ -292,7 +336,7 @@ func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult,
 		"evidenceIds": append([]string(nil), result.EvidenceIDs...),
 	}
 	if err != nil {
-		safe := classifyToolError(err)
+		safe := c.recoveryToolError(req.ToolName, classifyToolError(err))
 		status = "error"
 		if _, ok := RejectionCode(err); ok {
 			status = "rejected"
@@ -321,6 +365,43 @@ func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult,
 	}
 }
 
+// PendingDockerLogRefinement 返回仍需收窄的 Docker coverage 版本。每个受限
+// 结果递增版本，使 coordinator 对同一结果最多回喂一次固定修正。
+func (c *AgentConversation) PendingDockerLogRefinement() (int, string, bool) {
+	if c == nil {
+		return 0, "", false
+	}
+	return c.dockerRefinementVersion, c.dockerRefinementReason, c.dockerRefinementPending
+}
+
+// AppendDockerLogRefinement 要求模型基于原查询元数据收窄时间窗或增加精确
+// pattern。服务端固定文案不携带原始日志、路径或模型参数。
+func (c *AgentConversation) AppendDockerLogRefinement(reason string) {
+	if c == nil {
+		return
+	}
+	if reason != "byte_limit" && reason != "tail_limit" {
+		reason = "coverage_limit"
+	}
+	observation := map[string]interface{}{
+		"status": "error",
+		"error": map[string]interface{}{
+			"code":      "docker_log_refinement_required",
+			"retryable": true,
+			"reason":    reason,
+			"message": "The latest docker.logs result has incomplete coverage and cannot support a terminal diagnosis. " +
+				"Use its normalized query metadata and the exact alert event time to issue one narrower docker.logs request. " +
+				"Reduce the since/until window and, when a fault anchor exists, add a precise pattern with bounded context_before/context_after. " +
+				"Do not treat a tail-only or byte-truncated result as proof that runtime evidence is absent.",
+		},
+	}
+	encoded, encodeErr := json.Marshal(observation)
+	if encodeErr != nil {
+		encoded = []byte(`{"status":"error","error":{"code":"observation_encode_failed","retryable":false,"message":"Docker log refinement could not be encoded"}}`)
+	}
+	c.appendItem("protocol_observation", boundedText(string(encoded), maxObservationBytes), true)
+}
+
 func (c *AgentConversation) appendItem(kind, content string, nativePending bool) {
 	c.nextSequence++
 	item := conversationItem{
@@ -341,9 +422,48 @@ func (c *AgentConversation) appendItem(kind, content string, nativePending bool)
 }
 
 type safeToolError struct {
-	Code      string `json:"code"`
-	Retryable bool   `json:"retryable"`
-	Message   string `json:"message"`
+	Code             string `json:"code"`
+	Retryable        bool   `json:"retryable"`
+	Message          string `json:"message"`
+	RecoveryAction   string `json:"recoveryAction"`
+	FailureAttempt   int    `json:"failureAttempt"`
+	RetriesRemaining int    `json:"retriesRemaining"`
+}
+
+const maxModelToolCorrectiveRetries = 1
+
+func (c *AgentConversation) recoveryToolError(tool string, safe safeToolError) safeToolError {
+	if c.toolFailureAttempts == nil {
+		c.toolFailureAttempts = make(map[toolFailureKey]int)
+	}
+	key := toolFailureKey{tool: boundedText(tool, 256), code: safe.Code}
+	c.toolFailureAttempts[key]++
+	safe.FailureAttempt = c.toolFailureAttempts[key]
+
+	if safe.FailureAttempt > maxModelToolCorrectiveRetries {
+		safe.RecoveryAction = "use_fallback"
+		return safe
+	}
+	switch {
+	case correctableToolErrorCode(safe.Code):
+		safe.RecoveryAction = "correct_request"
+	case safe.Retryable:
+		safe.RecoveryAction = "retry_transient"
+	default:
+		safe.RecoveryAction = "use_fallback"
+		return safe
+	}
+	safe.RetriesRemaining = maxModelToolCorrectiveRetries
+	return safe
+}
+
+func correctableToolErrorCode(code string) bool {
+	switch code {
+	case "invalid_arguments", "path_out_of_scope", "not_found", "connector_not_found":
+		return true
+	default:
+		return false
+	}
 }
 
 func classifyToolError(err error) safeToolError {
@@ -403,7 +523,8 @@ func safeRuntimeCode(code string) string {
 		"capability_unavailable", "policy_unconfigured", "invalid_arguments", "tool_unavailable",
 		"connector_authorization", "connector_not_found", "connector_failure",
 		"provider_detail_unavailable", "provider_detail_invalid", "provider_detail_redirect_rejected",
-		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence":
+		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence",
+		"runtime_evidence_persistence":
 		return code
 	default:
 		return "connector_failure"
@@ -464,6 +585,8 @@ func safeRuntimeMessage(code string) string {
 		return "Tencent CLS detail request timed out"
 	case "provider_detail_persistence":
 		return "Tencent CLS detail could not be persisted"
+	case "runtime_evidence_persistence":
+		return "runtime evidence could not be persisted"
 	default:
 		return "connector request failed"
 	}
@@ -488,41 +611,53 @@ func boundedConversationValue(value any, limit int) any {
 func normalizeConversationValue(value any) any {
 	switch current := value.(type) {
 	case domain.SSHInspectResult:
-		// inspect stdout/stderr 按设计保持有界原文；仍截掉私钥块和临时 key 路径。
+		// inspect stdout/stderr 与 canonical runtime evidence 使用同一套脱敏：
+		// 凭据形态文本、PEM 私钥块与临时 key 路径都不进入模型边界。
 		return map[string]interface{}{
-			"command":   current.Command,
-			"exitCode":  current.ExitCode,
-			"stdout":    sanitizeInspectOutput(current.Stdout),
-			"stderr":    sanitizeInspectOutput(current.Stderr),
-			"truncated": current.Truncated,
+			"command":        current.Command,
+			"exitCode":       current.ExitCode,
+			"stdout":         sanitizeRuntimeOutput(current.Stdout),
+			"stderr":         sanitizeRuntimeOutput(current.Stderr),
+			"truncated":      current.Truncated,
+			"bytesRetrieved": current.BytesRetrieved,
 		}
 	case domain.DockerLogResult:
 		// Docker stdout/stderr 保留完整 operational evidence 的字段形状，
 		// 仅在模型边界隔离明显 credential/token 文本。
+		query := map[string]interface{}{}
+		if !current.Query.Since.IsZero() {
+			query["since"] = current.Query.Since.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+		}
+		if !current.Query.Until.IsZero() {
+			query["until"] = current.Query.Until.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+		}
+		if current.Query.Tail > 0 {
+			query["tail"] = current.Query.Tail
+		}
+		if current.Query.Pattern != "" {
+			query["pattern"] = current.Query.Pattern
+		}
 		return map[string]interface{}{
 			"container": map[string]interface{}{
 				"name": current.Container.Name, "id": current.Container.ID,
 				"image": current.Container.Image, "state": current.Container.State,
 				"status": current.Container.Status,
 			},
-			"stdout":         redactConversationText(current.Stdout),
-			"stderr":         redactConversationText(current.Stderr),
-			"truncated":      current.Truncated,
-			"bytesRetrieved": current.BytesRetrieved,
-			"window_lines":   current.WindowLines,
-			"returned_lines": countDockerOutputLines(current.Stdout),
-			"filtered":       current.FilteredLines,
+			"stdout":              redactConversationText(current.Stdout),
+			"stderr":              redactConversationText(current.Stderr),
+			"truncated":           current.Truncated,
+			"coverage_limited":    current.CoverageLimited,
+			"refinement_required": current.RefinementRequired,
+			"coverage_reason":     current.CoverageReason,
+			"bytesRetrieved":      current.BytesRetrieved,
+			"window_lines":        current.WindowLines,
+			"returned_lines":      countDockerOutputLines(current.Stdout) + countDockerOutputLines(current.Stderr),
+			"filtered":            current.FilteredLines,
+			"query":               query,
 		}
 	default:
 		return redactConversationValue(value)
 	}
-}
-
-func sanitizeInspectOutput(value string) string {
-	value = strings.ToValidUTF8(value, "\uFFFD")
-	value = conversationPEMPattern.ReplaceAllString(value, "[redacted]")
-	value = conversationTempKeyPattern.ReplaceAllString(value, "[redacted]")
-	return boundedText(value, maxObservationBytes)
 }
 
 func boundedConversationMap(value map[string]interface{}) map[string]interface{} {

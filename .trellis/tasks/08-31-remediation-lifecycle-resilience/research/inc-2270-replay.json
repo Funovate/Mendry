@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "v1",
+  "scenarioId": "INC-2270",
+  "sanitized": true,
+  "purpose": "Pre-change replay contract for silent gate rewrite and continuation provider-detail loss.",
+  "attempts": [
+    {
+      "attempt": 1,
+      "trustedBootstrap": {
+        "providerDetailPresent": true,
+        "approximateBytes": 47104,
+        "locators": ["error", "stack", "sourcePath", "line", "rawTime"]
+      },
+      "agentResult": {
+        "fixability": "code_fixable",
+        "confidenceBand": "high",
+        "causalClosure": true
+      },
+      "serviceResult": {
+        "fixability": "insufficient_evidence",
+        "cause": "citation classification mismatch was promoted to a material contradiction",
+        "enteredPlanning": false
+      }
+    },
+    {
+      "attempt": 2,
+      "continuationBootstrap": {
+        "providerDetailPresent": false,
+        "runtimeEvidencePresent": true,
+        "approximateBytes": 1843
+      },
+      "agentResult": {
+        "reportedMissing": ["rawError", "stack", "timeEvidence"]
+      },
+      "serviceResult": {
+        "cause": "continuation reused runtime-only evidence and omitted persisted provider detail"
+      }
+    }
+  ],
+  "requiredRegression": {
+    "attempt1": "classification correction returns a structured challenge and preserves the agent's causal/fixability proposal until re-evaluated",
+    "attempt2": "same-series provider detail remains indexed and re-readable by evidence.read without crossing lifecycle generation or deployed commit"
+  }
+}

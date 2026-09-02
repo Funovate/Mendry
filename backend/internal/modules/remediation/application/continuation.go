@@ -370,7 +370,8 @@ func safeContinuationReasonCode(value string) string {
 		"connector_authorization", "connector_not_found", "invalid_response", "invalid_configuration",
 		"capability_unavailable", "policy_unconfigured", "invalid_arguments", "tool_unavailable",
 		"provider_detail_unavailable", "provider_detail_invalid", "provider_detail_redirect_rejected",
-		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence", "prior_detail_failure", "policy_rejection",
+		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence",
+		"runtime_evidence_persistence", "prior_detail_failure", "policy_rejection",
 		"invalid_envelope", "blocked_manual_review", "insufficient_evidence", "budget_exhausted",
 		"elapsed", "model_calls", "model_cost", "tool_calls", "evidence_bytes", "repository_bytes",
 		"configuration_failure", "authorization_failure", "persistence_failure", "canceled", "unknown_failure":
