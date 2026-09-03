@@ -286,7 +286,7 @@ func (c *RemediationCoordinator) requestExhaustionProposalAfterRecorded(
 	outcomeRef := "challenge:exhaustion:" + trigger
 	// D2 recovery-triggered checkpoint：策略变化（请求 exhaustion proof）后
 	// 强制持久化 working memory，供重启/续跑重建。
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind:       string(domain.RecoveryChallengeKindExhaustion),
 		Action:     "request_exhaustion_proposal",
 		OutcomeRef: outcomeRef,
@@ -332,7 +332,7 @@ func (c *RemediationCoordinator) handleExhaustionEnvelope(
 			attempt = 1
 		}
 		challenge.Attempt = attempt
-		tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+		tracker.appendRecovery(domain.CheckpointRecovery{
 			Kind: string(challenge.Kind), Action: "reject_exhaustion_proposal", OutcomeRef: "challenge:" + challenge.ReasonCode,
 		})
 		if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {

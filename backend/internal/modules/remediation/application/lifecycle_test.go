@@ -80,8 +80,13 @@ func (s *restartLifecycleStore) GetLifecycleEffect(ctx context.Context, runID st
 		return domain.LifecycleEffect{}, err
 	}
 	if effect, ok := s.fallback[kind]; ok {
+		if effect.IdempotencyKey != "" && effect.IdempotencyKey != key {
+			return domain.LifecycleEffect{}, domain.ErrLifecycleEffectNotFound
+		}
 		effect.RunID = runID
-		effect.IdempotencyKey = key
+		if effect.IdempotencyKey == "" {
+			effect.IdempotencyKey = key
+		}
 		return effect, nil
 	}
 	return domain.LifecycleEffect{}, err
@@ -169,6 +174,7 @@ type lifecycleWorkspaceFake struct {
 	patches   int
 	patchesIn []domain.PatchRequest
 	results   []domain.PatchResult
+	errors    []error
 }
 
 func (w *lifecycleWorkspaceFake) Ensure(_ context.Context, request domain.WorkspaceRequest) (domain.WorkspaceIdentity, error) {
@@ -198,6 +204,13 @@ func (w *lifecycleWorkspaceFake) ReadFile(_ context.Context, _ domain.WorkspaceI
 func (w *lifecycleWorkspaceFake) ApplyPatch(_ context.Context, identity domain.WorkspaceIdentity, request domain.PatchRequest) (domain.PatchResult, error) {
 	w.patches++
 	w.patchesIn = append(w.patchesIn, request)
+	if len(w.errors) > 0 {
+		err := w.errors[0]
+		w.errors = w.errors[1:]
+		if err != nil {
+			return domain.PatchResult{}, err
+		}
+	}
 	if len(w.results) == 0 {
 		return domain.PatchResult{
 			WorkspaceID: identity.WorkspaceID, Applied: true, ArtifactRef: fmt.Sprintf("sha256:patch-%d", w.patches),

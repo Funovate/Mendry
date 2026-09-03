@@ -88,6 +88,15 @@ func TestWorkingMemoryCheckpointV1Validate(t *testing.T) {
 		{"question empty", func(c *domain.WorkingMemoryCheckpointV1) { c.UnresolvedQuestions[0].Question = "" }},
 		{"next action empty", func(c *domain.WorkingMemoryCheckpointV1) { c.NextActions = []string{""} }},
 		{"invalid budget frontier", func(c *domain.WorkingMemoryCheckpointV1) { c.Budget.Frontier = 99 }},
+		{"negative recovery progress", func(c *domain.WorkingMemoryCheckpointV1) {
+			c.RecoveryProgress = &domain.CheckpointRecoveryProgress{LifecycleRecoveryAttempts: -1}
+		}},
+		{"invalid recovery fingerprint", func(c *domain.WorkingMemoryCheckpointV1) {
+			c.RecoveryProgress = &domain.CheckpointRecoveryProgress{LastLifecycleRecoveryFingerprint: "not-a-hash"}
+		}},
+		{"recovery no progress exceeds attempts", func(c *domain.WorkingMemoryCheckpointV1) {
+			c.RecoveryProgress = &domain.CheckpointRecoveryProgress{FactCheckAttempts: 1, FactCheckNoProgress: 2}
+		}},
 		{"phase too long", func(c *domain.WorkingMemoryCheckpointV1) { c.Phase = strings.Repeat("x", 65) }},
 		{"fact statement too long", func(c *domain.WorkingMemoryCheckpointV1) { c.VerifiedFacts[0].Statement = strings.Repeat("x", 513) }},
 		{"too many verified facts", func(c *domain.WorkingMemoryCheckpointV1) {
@@ -134,6 +143,11 @@ func TestWorkingMemoryCheckpointV1Validate(t *testing.T) {
 
 func TestWorkingMemoryCheckpointV1CanonicalRoundTrip(t *testing.T) {
 	checkpoint := validCheckpoint()
+	checkpoint.RecoveryProgress = &domain.CheckpointRecoveryProgress{
+		RecoveryAttempts: 2, LifecycleRecoveryAttempts: 1,
+		LastLifecycleRecoveryFingerprint: strings.Repeat("a", 64),
+		LastLifecycleRecoveryClass:       "tool",
+	}
 	payload, err := checkpoint.CanonicalEncode()
 	if err != nil {
 		t.Fatalf("CanonicalEncode() error = %v", err)
@@ -185,7 +199,7 @@ func TestWorkingMemoryCheckpointV1OmitsEmptyLifecycleFieldsForLegacyHashes(t *te
 	if err != nil {
 		t.Fatalf("CanonicalEncode() error = %v", err)
 	}
-	for _, field := range []string{"workspace", "artifacts", "validation", "publication", "publicationPolicy", "validationCommands"} {
+	for _, field := range []string{"workspace", "artifacts", "validation", "publication", "publicationPolicy", "validationCommands", "recoveryProgress"} {
 		if strings.Contains(string(payload), `"`+field+`"`) {
 			t.Fatalf("legacy-compatible checkpoint unexpectedly encoded empty field %q: %s", field, payload)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -210,6 +211,12 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 		}
 		tracker.admitSoftBudget(c.budgetLimits, phase)
 	}
+	if tracker.checkpointNeedsRebuild {
+		if err := c.checkpointRun(ctx, tracker, agg.Run.State, domain.CheckpointReasonPhaseBoundary); err != nil {
+			return domain.Run{}, c.fail(ctx, runID, agg.Run.State, markPersistenceFailure(err))
+		}
+		tracker.checkpointNeedsRebuild = false
+	}
 	if agg.Run.State != domain.RunStatePublishing && len(tracker.validationCommands) == 0 {
 		return agg.Run, fmt.Errorf("%w: validation command snapshot is unavailable", ErrLifecycleUnavailable)
 	}
@@ -270,6 +277,11 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 		tracker.publicationPolicy = cloneCheckpointPublicationPolicy(checkpoint.PublicationPolicy)
 		tracker.validationCommands = cloneValidationCommands(checkpoint.ValidationCommands)
 		tracker.recoveries = append([]domain.CheckpointRecovery(nil), checkpoint.Recoveries...)
+		if checkpoint.RecoveryProgress != nil {
+			tracker.restoreRecoveryProgressSnapshot(*checkpoint.RecoveryProgress)
+		} else {
+			tracker.restoreRecoveryProgress()
+		}
 		tracker.nextActions = append([]string(nil), checkpoint.NextActions...)
 		if checkpoint.Budget.SchemaVersion != "" {
 			allocator, restoreErr := restorePhaseBudgetPlan(checkpoint.Budget)
@@ -278,6 +290,10 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 			}
 			tracker.alloc = allocator
 		}
+		if err := reconcileLifecycleCheckpoint(tracker, snapshot, run); err != nil {
+			return nil, err
+		}
+		tracker.checkpointNeedsRebuild = snapshot.NeedsRebuild || checkpoint.ObservedRunVersion < run.Version
 	} else if !errors.Is(err, domain.ErrCheckpointNotFound) {
 		return nil, fmt.Errorf("load lifecycle checkpoint: %w", err)
 	}
@@ -319,6 +335,86 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 		}
 	}
 	return tracker, nil
+}
+
+// reconcileLifecycleCheckpoint 以 durable run state/counters 为恢复权威。外层
+// checkpoint phase、allocator current/frontier/closed phases 与 durable phase
+// 必须共同描述一个可重建窗口；validating -> patching 是唯一后退边，allocator
+// 保持 validation frontier。durable counters 超出 checkpoint 的增量只补记一次，
+// checkpoint 超前则拒绝，避免丢失或重复 consumption。
+func reconcileLifecycleCheckpoint(tracker *resilientRunState, snapshot domain.CheckpointSnapshot, run domain.Run) error {
+	checkpointPhase, checkpointOK := domain.BudgetPhaseFor(domain.RunState(snapshot.Checkpoint.Phase))
+	durableState := run.State
+	if durableState == domain.RunStateDiagnosisReadyForReview {
+		durableState = domain.RunStatePlanning
+	}
+	durablePhase, durableOK := domain.BudgetPhaseFor(durableState)
+	if !checkpointOK || !durableOK {
+		return fmt.Errorf("reconcile lifecycle checkpoint: invalid phase %q -> %q", snapshot.Checkpoint.Phase, run.State)
+	}
+	needsRebuild := snapshot.NeedsRebuild || snapshot.Checkpoint.ObservedRunVersion < run.Version
+	if !needsRebuild && checkpointPhase != durablePhase {
+		return fmt.Errorf("reconcile lifecycle checkpoint: phase %q conflicts with durable phase %q", checkpointPhase, durablePhase)
+	}
+	if tracker.alloc == nil {
+		return nil
+	}
+	current := tracker.alloc.current
+	if current != checkpointPhase && !(checkpointPhase == domain.RunStatePatching && current == domain.RunStateValidating) {
+		return fmt.Errorf("reconcile lifecycle budget: checkpoint phase %q conflicts with allocator current %q", checkpointPhase, current)
+	}
+	if tracker.alloc.frontier != domain.BudgetPhaseIndex(current) || tracker.alloc.closed[current] {
+		return fmt.Errorf("reconcile lifecycle budget: allocator frontier/closed state conflicts with current phase %q", current)
+	}
+	if current != durablePhase {
+		if durablePhase == domain.RunStatePatching && current == domain.RunStateValidating &&
+			(checkpointPhase == domain.RunStatePatching || (checkpointPhase == domain.RunStateValidating && needsRebuild)) {
+			// validation repair keeps the forward allocator frontier.
+		} else {
+			currentIndex := domain.BudgetPhaseIndex(current)
+			durableIndex := domain.BudgetPhaseIndex(durablePhase)
+			if currentIndex < 0 || durableIndex < currentIndex {
+				return fmt.Errorf("reconcile lifecycle budget: allocator phase %q cannot recover durable phase %q", current, durablePhase)
+			}
+			for currentIndex < durableIndex {
+				if err := tracker.alloc.ClosePhase(tracker.alloc.current); err != nil {
+					return fmt.Errorf("reconcile lifecycle budget close phase: %w", err)
+				}
+				next := domain.BudgetPhaseOrder()[currentIndex+1]
+				if err := tracker.alloc.AdmitPhase(next); err != nil {
+					return fmt.Errorf("reconcile lifecycle budget admit phase: %w", err)
+				}
+				currentIndex++
+			}
+		}
+	}
+
+	checkpointConsumed := tracker.alloc.Projection().Consumed
+	durableConsumed := budgetAmountFromCounters(run.Budget)
+	delta := durableConsumed.Sub(checkpointConsumed)
+	if !budgetAmountNonNegative(delta) {
+		return fmt.Errorf("reconcile lifecycle budget: checkpoint consumption is ahead of durable counters")
+	}
+	if !delta.IsZero() {
+		if _, err := tracker.alloc.Consume(tracker.alloc.current, delta); err != nil {
+			return fmt.Errorf("reconcile lifecycle budget consumption: %w", err)
+		}
+	}
+	tracker.lastMirroredElapsed = run.Budget.ElapsedSeconds
+	return nil
+}
+
+func budgetAmountFromCounters(counters domain.BudgetCounters) domain.BudgetAmount {
+	return domain.BudgetAmount{
+		ElapsedSeconds: counters.ElapsedSeconds, ModelCalls: counters.ModelCalls,
+		ModelCostCents: counters.ModelCostCents, ToolCalls: counters.ToolCalls,
+		EvidenceBytes: counters.EvidenceBytes, RepositoryBytes: counters.RepositoryBytes,
+	}
+}
+
+func budgetAmountNonNegative(amount domain.BudgetAmount) bool {
+	return amount.ElapsedSeconds >= 0 && amount.ModelCalls >= 0 && amount.ModelCostCents >= 0 &&
+		amount.ToolCalls >= 0 && amount.EvidenceBytes >= 0 && amount.RepositoryBytes >= 0
 }
 
 func maxInt64(value int, fallback int64) int64 {
@@ -363,19 +459,39 @@ func (c *RemediationCoordinator) driveLifecycle(ctx context.Context, budget *run
 func (c *RemediationCoordinator) ensureLifecycleWorkspace(ctx context.Context, budget *runBudget, run domain.Run, tracker *resilientRunState) (bool, error) {
 	key := lifecycleEffectKey("workspace", run.RunID, run.DeployedCommit)
 	existing, err := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, domain.LifecycleEffectWorkspace, key)
-	if err == nil && existing.State == domain.LifecycleEffectSucceeded {
-		identity := domain.WorkspaceIdentity{
-			WorkspaceID: existing.WorkspaceID, RunID: run.RunID, BaselineCommit: existing.BaselineCommit,
-			BaseTreeHash: existing.BaseTreeHash, CurrentTreeHash: existing.ResultTreeHash, Version: maxInt64(existing.Attempt, 1),
+	if err == nil {
+		switch existing.State {
+		case domain.LifecycleEffectSucceeded:
+			identity := domain.WorkspaceIdentity{
+				WorkspaceID: existing.WorkspaceID, RunID: run.RunID, BaselineCommit: existing.BaselineCommit,
+				BaseTreeHash: existing.BaseTreeHash, CurrentTreeHash: existing.ResultTreeHash, Version: maxInt64(existing.Attempt, 1),
+			}
+			if identity.BaselineCommit != run.DeployedCommit {
+				return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markConfigurationFailure(fmt.Errorf("workspace baseline does not match run")))
+			}
+			if validateErr := identity.Validate(); validateErr != nil {
+				return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markPersistenceFailure(validateErr))
+			}
+			tracker.workspace = &domain.CheckpointWorkspace{WorkspaceID: identity.WorkspaceID, BaselineCommit: identity.BaselineCommit, BaseTreeHash: identity.BaseTreeHash, CurrentTreeHash: identity.CurrentTreeHash, Version: identity.Version}
+			return true, nil
+		case domain.LifecycleEffectFailed:
+			if existing.Attempt >= maxLifecycleRecoveryAttempts {
+				return false, c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePatching, "workspace_retry_exhausted")
+			}
+			return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markConfigurationFailure(fmt.Errorf("workspace.ensure: %s", safeLifecycleErrorCode(existing.ErrorCode))))
+		case domain.LifecycleEffectStarted, domain.LifecycleEffectRecoverable:
+			if existing.Attempt >= maxLifecycleRecoveryAttempts {
+				failed := existing
+				failed.State = domain.LifecycleEffectFailed
+				if strings.TrimSpace(failed.ErrorCode) == "" {
+					failed.ErrorCode = "effect_retry_exhausted"
+				}
+				if _, saveErr := c.lifecycleStore.UpsertLifecycleEffect(ctx, failed); saveErr != nil {
+					return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markPersistenceFailure(saveErr))
+				}
+				return false, c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePatching, "workspace_retry_exhausted")
+			}
 		}
-		if identity.BaselineCommit != run.DeployedCommit {
-			return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markConfigurationFailure(fmt.Errorf("workspace baseline does not match run")))
-		}
-		if validateErr := identity.Validate(); validateErr != nil {
-			return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markPersistenceFailure(validateErr))
-		}
-		tracker.workspace = &domain.CheckpointWorkspace{WorkspaceID: identity.WorkspaceID, BaselineCommit: identity.BaselineCommit, BaseTreeHash: identity.BaseTreeHash, CurrentTreeHash: identity.CurrentTreeHash, Version: identity.Version}
-		return true, nil
 	}
 	if err != nil && !errors.Is(err, domain.ErrLifecycleEffectNotFound) {
 		return false, c.fail(ctx, run.RunID, domain.RunStatePatching, markPersistenceFailure(err))
@@ -452,7 +568,6 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 	if c.lifecycleTools == nil {
 		c.lifecycleTools = NewLifecycleToolGateway(c.workspace, c.validation)
 	}
-	protocolFailures := 0
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, run.RunID, domain.RunStatePatching); err != nil || exhausted {
 			return err
@@ -475,13 +590,13 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 			}
 			continue
 		}
-		protocolFailures = 0
 		exhausted, err := c.recordSameStateBudget(ctx, budget, run.RunID, domain.RunStatePatching, modelEffect(usage))
 		if err != nil || exhausted {
 			return err
 		}
 		switch env.Kind {
 		case "requestTool":
+			tracker.resetLifecycleProtocolNoProgress()
 			for index := range env.RequestedTools() {
 				requests := env.RequestedTools()
 				exhausted, err = c.runLifecycleTool(ctx, budget, run, domain.RunStatePatching, tracker, &requests[index], "patch")
@@ -490,6 +605,7 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 				}
 			}
 		case "patchComplete":
+			tracker.resetLifecycleProtocolNoProgress()
 			if !env.PatchComplete.Success || tracker.validation != nil || !hasCheckpointArtifact(tracker.artifacts, "patch") {
 				if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindValidationRevision, "patch_completion_not_ready", "patchComplete", []string{"workspace"}, []string{"inspect_workspace", "apply_changed_patch"}, "The patch is not ready for validation. Inspect the bounded workspace result and apply a changed patch before confirming completion."); err != nil {
 					return err
@@ -503,8 +619,8 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 				return err
 			}
 		default:
-			protocolFailures++
-			if protocolFailures >= maxLifecycleRecoveryAttempts {
+			tracker.recordLifecycleFailure("agentEnvelope\x00unexpected_patch_envelope")
+			if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
 				return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePatching, "patch_protocol_no_progress")
 			}
 			if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindProtocolCorrection, "unexpected_patch_envelope", "agentEnvelope", []string{"workspace"}, []string{"correct_request"}, "Return a patchComplete envelope after a successful workspace patch, or request one advertised workspace tool."); err != nil {
@@ -547,7 +663,6 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 	if c.lifecycleTools == nil {
 		c.lifecycleTools = NewLifecycleToolGateway(c.workspace, c.validation)
 	}
-	protocolFailures := 0
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, run.RunID, domain.RunStateValidating); err != nil || exhausted {
 			return err
@@ -570,13 +685,13 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 			}
 			continue
 		}
-		protocolFailures = 0
 		exhausted, err := c.recordSameStateBudget(ctx, budget, run.RunID, domain.RunStateValidating, modelEffect(usage))
 		if err != nil || exhausted {
 			return err
 		}
 		switch env.Kind {
 		case "requestTool":
+			tracker.resetLifecycleProtocolNoProgress()
 			requests := env.RequestedTools()
 			for index := range requests {
 				exhausted, err = c.runLifecycleTool(ctx, budget, run, domain.RunStateValidating, tracker, &requests[index], "validation")
@@ -585,6 +700,7 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 				}
 			}
 		case "validationAssessment":
+			tracker.resetLifecycleProtocolNoProgress()
 			if tracker.validation == nil {
 				if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindValidationRevision, "validation_result_required", "validationAssessment", []string{"validation"}, []string{"run_approved_validation"}, "The service has no authoritative validation result for this assessment. Run one approved validation command and assess its bounded result."); err != nil {
 					return err
@@ -601,8 +717,8 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 				return err
 			}
 		default:
-			protocolFailures++
-			if protocolFailures >= maxLifecycleRecoveryAttempts {
+			tracker.recordLifecycleFailure("agentEnvelope\x00unexpected_validation_envelope")
+			if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
 				return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStateValidating, "validation_protocol_no_progress")
 			}
 			if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindProtocolCorrection, "unexpected_validation_envelope", "agentEnvelope", []string{"workspace", "validation"}, []string{"correct_request"}, "Return a validationAssessment envelope after an approved validation result, or request one advertised workspace tool."); err != nil {
@@ -632,7 +748,7 @@ func (c *RemediationCoordinator) reviseAfterValidationFailure(ctx context.Contex
 	if tracker == nil || tracker.validation == nil {
 		return ErrLifecycleUnavailable
 	}
-	fingerprint := tracker.validation.CommandID + "\x00" + tracker.validation.OutputHash
+	fingerprint := recoveryFingerprint(tracker.validation.CommandID + "\x00" + tracker.validation.OutputHash)
 	if fingerprint == tracker.lastValidationFingerprint {
 		tracker.validationNoProgress++
 	} else {
@@ -685,9 +801,29 @@ func (c *RemediationCoordinator) runPublication(ctx context.Context, budget *run
 	branchRef := strings.TrimSuffix(policy.BranchPrefix, "/") + "/" + shortLifecycleID(run.RunID)
 	key := lifecycleEffectKey("publication", run.RunID, patchArtifact.ContentHash+"\x00"+tracker.workspace.CurrentTreeHash)
 	existing, err := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, domain.LifecycleEffectPublication, key)
-	if err == nil && existing.State == domain.LifecycleEffectSucceeded {
-		tracker.publication = &domain.CheckpointPublication{BranchRef: existing.BranchRef, TargetBranch: existing.TargetBranch, CommitHash: existing.CommitHash, DraftChangeRef: existing.DraftChangeRef, CompareURL: existing.CompareURL, HumanReviewOnly: true}
-		return c.finishPublication(ctx, budget, run.RunID)
+	if err == nil {
+		switch existing.State {
+		case domain.LifecycleEffectSucceeded:
+			tracker.publication = &domain.CheckpointPublication{BranchRef: existing.BranchRef, TargetBranch: existing.TargetBranch, CommitHash: existing.CommitHash, DraftChangeRef: existing.DraftChangeRef, CompareURL: existing.CompareURL, HumanReviewOnly: true}
+			return c.finishPublication(ctx, budget, run.RunID)
+		case domain.LifecycleEffectFailed:
+			if existing.Attempt >= maxLifecycleRecoveryAttempts {
+				return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, "publication_retry_exhausted")
+			}
+			return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, existing.ErrorCode)
+		case domain.LifecycleEffectStarted, domain.LifecycleEffectRecoverable:
+			if existing.Attempt >= maxLifecycleRecoveryAttempts {
+				failed := existing
+				failed.State = domain.LifecycleEffectFailed
+				if strings.TrimSpace(failed.ErrorCode) == "" {
+					failed.ErrorCode = "effect_retry_exhausted"
+				}
+				if _, saveErr := c.lifecycleStore.UpsertLifecycleEffect(ctx, failed); saveErr != nil {
+					return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(saveErr))
+				}
+				return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, "publication_retry_exhausted")
+			}
+		}
 	}
 	if err != nil && !errors.Is(err, domain.ErrLifecycleEffectNotFound) {
 		return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(err))
@@ -820,7 +956,7 @@ func (c *RemediationCoordinator) handleLifecycleExternalFailure(
 ) (bool, error) {
 	code, retryable := lifecycleErrorInfo(cause)
 	state := domain.LifecycleEffectRecoverable
-	if !retryable {
+	if !retryable || attempt >= maxLifecycleRecoveryAttempts {
 		state = domain.LifecycleEffectFailed
 	}
 	if _, err := c.lifecycleStore.UpsertLifecycleEffect(ctx, domain.LifecycleEffect{
@@ -831,6 +967,9 @@ func (c *RemediationCoordinator) handleLifecycleExternalFailure(
 	}
 	if !retryable {
 		return false, c.fail(ctx, run.RunID, phase, markConfigurationFailure(fmt.Errorf("%s: %s", action, code)))
+	}
+	if attempt >= maxLifecycleRecoveryAttempts {
+		return false, c.blockLifecycleForPolicy(ctx, budget, run.RunID, phase, string(kind)+"_retry_exhausted")
 	}
 	if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindToolFailure, code, action, lifecycleCapabilitiesForPhase(phase), []string{"retry_transient", "use_fallback"}, "A bounded lifecycle tool failed. Retry the same idempotent operation while available, or choose another advertised recovery path; the run remains active."); err != nil {
 		return false, err
@@ -845,18 +984,38 @@ func (c *RemediationCoordinator) runLifecycleTool(ctx context.Context, budget *r
 		return false, ErrLifecycleUnavailable
 	}
 	tool := req.ToolName
+	if rejection := lifecycleRequestRejection(phase, tracker.validationCommands, tool, req.Parameters); rejection != nil {
+		return c.handleLifecycleToolRejection(ctx, budget, run, phase, tracker, req, rejection)
+	}
 	key := lifecycleEffectKey(kind, run.RunID, tool+"\x00"+tracker.workspace.CurrentTreeHash+"\x00"+requestValue(req.Parameters, "patch")+"\x00"+requestValue(req.Parameters, "commandId"))
 	var cached *domain.LifecycleEffect
 	effectAttempt := 1
 	if effectKind, ok := lifecycleEffectKindForTool(tool); ok {
 		effect, err := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, effectKind, key)
-		if err == nil && effect.State == domain.LifecycleEffectSucceeded {
-			cached = &effect
-			effectAttempt = effect.Attempt
-			if effectAttempt < 1 {
-				effectAttempt = 1
+		if err == nil {
+			switch effect.State {
+			case domain.LifecycleEffectSucceeded:
+				cached = &effect
+				effectAttempt = effect.Attempt
+				if effectAttempt < 1 {
+					effectAttempt = 1
+				}
+			case domain.LifecycleEffectFailed:
+				return c.handleDurableFailedLifecycleTool(ctx, budget, run, phase, tracker, req, effect)
+			case domain.LifecycleEffectStarted, domain.LifecycleEffectRecoverable:
+				if effect.Attempt >= maxLifecycleRecoveryAttempts {
+					failed := effect
+					failed.State = domain.LifecycleEffectFailed
+					if strings.TrimSpace(failed.ErrorCode) == "" {
+						failed.ErrorCode = "effect_retry_exhausted"
+					}
+					if _, saveErr := c.lifecycleStore.UpsertLifecycleEffect(ctx, failed); saveErr != nil {
+						return false, c.fail(ctx, run.RunID, phase, markPersistenceFailure(saveErr))
+					}
+					return c.handleDurableFailedLifecycleTool(ctx, budget, run, phase, tracker, req, failed)
+				}
 			}
-		} else if err != nil && !errors.Is(err, domain.ErrLifecycleEffectNotFound) {
+		} else if !errors.Is(err, domain.ErrLifecycleEffectNotFound) {
 			return false, c.fail(ctx, run.RunID, phase, markPersistenceFailure(err))
 		}
 		if cached == nil {
@@ -913,7 +1072,7 @@ func (c *RemediationCoordinator) runLifecycleTool(ctx context.Context, budget *r
 				attempt = effect.Attempt
 			}
 			state := domain.LifecycleEffectRecoverable
-			if !retryable {
+			if !retryable || attempt >= maxLifecycleRecoveryAttempts {
 				state = domain.LifecycleEffectFailed
 			}
 			if _, saveErr := c.lifecycleStore.UpsertLifecycleEffect(ctx, domain.LifecycleEffect{
@@ -935,16 +1094,17 @@ func (c *RemediationCoordinator) runLifecycleTool(ctx context.Context, budget *r
 		if !retryable && !isPatchCorrectionTool(tool) {
 			return false, c.fail(ctx, run.RunID, phase, markConfigurationFailure(fmt.Errorf("lifecycle tool %s: %s", tool, code)))
 		}
+		tracker.recordLifecycleFailure(tool + "\x00" + key + "\x00" + code)
 		if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
-			return false, c.blockLifecycleForPolicy(ctx, budget, run.RunID, phase, "lifecycle_tool_no_progress")
+			return true, c.blockLifecycleForPolicy(ctx, budget, run.RunID, phase, "lifecycle_tool_no_progress")
 		}
-		tracker.lifecycleRecoveryAttempts++
 		if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindToolFailure, code, tool, lifecycleCapabilitiesForPhase(phase), []string{"correct_request", "retry_transient", "use_fallback"}, lifecycleSafeMessage(code)); err != nil {
 			return false, err
 		}
 		return false, nil
 	}
 
+	tracker.resetLifecycleNoProgress()
 	tracker.conversation.AppendToolResult(*req, result, nil)
 	if err := c.persistLifecycleToolSuccess(ctx, run, phase, tracker, req, key, effectAttempt, result); err != nil {
 		return false, err
@@ -956,8 +1116,89 @@ func (c *RemediationCoordinator) runLifecycleTool(ctx context.Context, budget *r
 	return false, nil
 }
 
+// handleDurableFailedLifecycleTool 关闭已失败的同一 effect key，但把安全结果回喂
+// 模型，使 changed patch 或另一 approved validation 仍可使用新的 key。
+func (c *RemediationCoordinator) handleDurableFailedLifecycleTool(ctx context.Context, budget *runBudget, run domain.Run, phase domain.RunState, tracker *resilientRunState, req *RequestTool, effect domain.LifecycleEffect) (bool, error) {
+	code := safeLifecycleErrorCode(effect.ErrorCode)
+	result := ToolResult{Tool: req.ToolName, Summary: lifecycleSafeMessage(code)}
+	cause := &domain.LifecycleRuntimeError{Code: code, Retryable: false}
+	invocation := domain.ToolInvocation{ToolName: req.ToolName, Phase: phase, Error: code}
+	invocation.InvocationID = tracker.recordToolAction(req.ToolName, nil)
+	if err := c.store.RecordToolInvocation(ctx, run.RunID, invocation); err != nil {
+		return false, c.fail(ctx, run.RunID, phase, markPersistenceFailure(fmt.Errorf("record closed lifecycle tool invocation: %w", err)))
+	}
+	tracker.conversation.AppendToolResult(*req, result, cause)
+	c.observeLifecycleTool(ctx, phase, req, result, cause)
+	if exhausted, err := c.recordSameStateBudget(ctx, budget, run.RunID, phase, domain.Effect{ToolCalls: 1}); err != nil || exhausted {
+		return exhausted, err
+	}
+	tracker.recordLifecycleFailure(req.ToolName + "\x00" + effect.IdempotencyKey + "\x00" + code)
+	if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
+		return true, c.blockLifecycleForPolicy(ctx, budget, run.RunID, phase, "lifecycle_tool_no_progress")
+	}
+	if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindToolFailure, code, req.ToolName, lifecycleCapabilitiesForPhase(phase), []string{"correct_request", "use_alternative"}, "The prior effect with this idempotency key failed and is closed. Submit a changed patch or another approved validation request; the failed effect will not be executed again."); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func lifecycleRequestRejection(phase domain.RunState, commandVersions map[string]int64, tool string, params map[string]interface{}) *ToolRejection {
+	if !lifecycleToolAdvertised(tool, phase) {
+		return &ToolRejection{Code: RejectOutOfPhase, Tool: tool, Message: "lifecycle tool is unavailable in the current phase"}
+	}
+	if tool == ToolWorkspaceReadFile {
+		pathValue, _ := params["path"].(string)
+		if err := validateRepoPath(pathValue); err != nil {
+			return &ToolRejection{Code: RejectPathScope, Tool: tool, Message: "path must be repository-relative"}
+		}
+	}
+	if err := validateLifecycleToolParams(tool, params); err != nil {
+		return &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
+	}
+	if tool == ToolWorkspaceRunValidation {
+		commandID, _ := params["commandId"].(string)
+		if commandVersions[commandID] < 1 {
+			return &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "validation command is not approved for this run"}
+		}
+	}
+	return nil
+}
+
+// handleLifecycleToolRejection 把 policy/phase/schema/path 拒绝作为 bounded
+// model feedback 持久化；拒绝发生在 effect/adaptor 之前，绝不升级为配置故障。
+func (c *RemediationCoordinator) handleLifecycleToolRejection(ctx context.Context, budget *runBudget, run domain.Run, phase domain.RunState, tracker *resilientRunState, req *RequestTool, rejection *ToolRejection) (bool, error) {
+	result := ToolResult{Tool: req.ToolName}
+	code, _ := RejectionCode(rejection)
+	invocation := domain.ToolInvocation{ToolName: req.ToolName, Phase: phase, Error: string(code)}
+	invocation.InvocationID = tracker.recordToolAction(req.ToolName, nil)
+	if err := c.store.RecordToolInvocation(ctx, run.RunID, invocation); err != nil {
+		return false, c.fail(ctx, run.RunID, phase, markPersistenceFailure(fmt.Errorf("record rejected lifecycle tool invocation: %w", err)))
+	}
+	tracker.conversation.AppendToolResult(*req, result, rejection)
+	c.observeLifecycleTool(ctx, phase, req, result, rejection)
+	if exhausted, err := c.recordSameStateBudget(ctx, budget, run.RunID, phase, domain.Effect{ToolCalls: 1}); err != nil || exhausted {
+		return exhausted, err
+	}
+	tracker.recordLifecycleFailure(req.ToolName + "\x00" + lifecycleRequestParametersFingerprint(req.Parameters) + "\x00" + string(code))
+	if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
+		return true, c.blockLifecycleForPolicy(ctx, budget, run.RunID, phase, "lifecycle_tool_no_progress")
+	}
+	if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindProtocolCorrection, string(code), req.ToolName, lifecycleCapabilitiesForPhase(phase), []string{"correct_request", "use_fallback"}, lifecycleSafeMessage(string(code))); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 func isPatchCorrectionTool(tool string) bool {
 	return tool == ToolWorkspaceApplyPatch || tool == ToolWorkspaceReadFile || tool == ToolWorkspaceStatus
+}
+
+func lifecycleRequestParametersFingerprint(parameters map[string]interface{}) string {
+	encoded, err := json.Marshal(parameters)
+	if err != nil {
+		return "invalid_parameters"
+	}
+	return recoveryFingerprint(string(encoded))
 }
 
 func lifecycleEffectKindForTool(tool string) (domain.LifecycleEffectKind, bool) {
@@ -1006,6 +1247,9 @@ func (c *RemediationCoordinator) persistLifecycleToolSuccess(ctx context.Context
 		}); err != nil {
 			return c.fail(ctx, run.RunID, phase, markPersistenceFailure(err))
 		}
+		// changed patch 只有在 success effect 持久化后才算 validation repair 进展；
+		// 仅清理 validation 指纹，保留其他 recovery class 的 no-progress 计数。
+		tracker.resetValidationNoProgress()
 	case ToolWorkspaceRunValidation:
 		validation, ok := result.Payload.(domain.ValidationResult)
 		if !ok {
@@ -1082,8 +1326,8 @@ func (c *RemediationCoordinator) handleLifecycleTurnError(ctx context.Context, b
 	if !retryable && !errors.Is(cause, ErrInvalidEnvelope) {
 		return true, c.fail(ctx, runID, phase, cause)
 	}
-	tracker.lifecycleRecoveryAttempts++
-	if tracker.lifecycleRecoveryAttempts > maxLifecycleRecoveryAttempts {
+	tracker.recordLifecycleFailure("model_turn\x00" + code)
+	if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
 		return true, c.blockLifecycleForPolicy(ctx, budget, runID, phase, "lifecycle_model_no_progress")
 	}
 	kind := domain.RecoveryChallengeKindContextRehydration
@@ -1122,11 +1366,25 @@ func (c *RemediationCoordinator) appendLifecycleChallenge(ctx context.Context, k
 	if tracker == nil {
 		return ErrLifecycleUnavailable
 	}
-	challenge, err := NewRecoveryChallenge(kind, domain.RecoverySeverityRecoverable, code, action, capabilities, suggested, tracker.lifecycleRecoveryAttempts+1, lifecycleRemainingBudget(ctx), message)
+	tracker.lifecycleChallengeAttempts++
+	challenge, err := NewRecoveryChallenge(kind, domain.RecoverySeverityRecoverable, code, action, capabilities, suggested, tracker.lifecycleChallengeAttempts, lifecycleRemainingBudget(ctx), message)
 	if err != nil {
 		return c.fail(ctx, tracker.run.RunID, lifecyclePhaseFromTracker(tracker), markPersistenceFailure(err))
 	}
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{Kind: string(kind), Action: action, OutcomeRef: "challenge:" + code})
+	journalAction := "lifecycle:" + action
+	fingerprint := tracker.lastLifecycleRecoveryFingerprint
+	if fingerprint == "" {
+		fingerprint = action + "\x00" + code
+	}
+	outcomeRef := recoveryProgressRef(code, fingerprint)
+	if action == "stop" {
+		journalAction = "stop"
+	}
+	if code == "validation_failed" {
+		journalAction = "revise_patch"
+		outcomeRef = recoveryProgressRef(code, tracker.lastValidationFingerprint)
+	}
+	tracker.appendRecovery(domain.CheckpointRecovery{Kind: string(kind), Action: journalAction, OutcomeRef: outcomeRef})
 	if tracker.conversation != nil {
 		tracker.conversation.AppendRecoveryChallenge(challenge)
 	}
@@ -1167,7 +1425,8 @@ func (c *RemediationCoordinator) blockLifecycleForPolicy(ctx context.Context, bu
 func safeLifecycleTerminalReason(reason string) string {
 	switch reason {
 	case "denied_control_plane_change", "high_risk_policy_requires_opt_in", "plan_policy_no_progress", "no_policy_compliant_plan",
-		"publication_retry_exhausted", "publication_validation_required", "publication_patch_artifact_required",
+		"publication_retry_exhausted", "workspace_retry_exhausted", "patch_retry_exhausted", "validation_retry_exhausted",
+		"publication_validation_required", "publication_patch_artifact_required",
 		"patch_protocol_no_progress", "validation_protocol_no_progress", "validation_no_progress",
 		"lifecycle_tool_no_progress", "lifecycle_model_no_progress", "agent_stop_no_progress":
 		return reason
@@ -1283,6 +1542,12 @@ func shortLifecycleID(value string) string {
 
 func requestValue(values map[string]interface{}, key string) string {
 	value, _ := values[key].(string)
+	if key == "patch" {
+		// effect key 只携带完整 bounded patch 的固定长度 identity，既不截断
+		// suffix 差异，也不把 patch 文本写入 durable idempotency metadata。
+		sum := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(sum[:])
+	}
 	return boundedContinuationText(value, 256)
 }
 

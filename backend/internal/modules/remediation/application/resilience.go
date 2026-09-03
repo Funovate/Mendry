@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,7 +15,10 @@ import (
 // maxResilientEvidenceIndex 是进程内 checkpoint evidence index 的条目上限，
 // 与 domain 的 maxCheckpointEvidenceIndex 保持一致（该常量未导出，这里本地
 // 镜像并在 domain Validate 处再次兜底）。
-const maxResilientEvidenceIndex = 256
+const (
+	maxResilientEvidenceIndex = 256
+	maxResilientRecoveries    = 64
+)
 
 // maxResilientActionRefs 是进程内 capability-bound action/evidence ref 的
 // 条目上限；exhaustion proof 只能引用真实工具动作或已准入证据，不能引用
@@ -67,21 +72,25 @@ type resilientRunState struct {
 	analysisOnly             bool
 	// lifecycle fields are bounded identities only; raw patch and validation output
 	// remain content-addressed artifacts outside the checkpoint payload.
-	lifecyclePlanID             string
-	lifecyclePhase              domain.RunState
-	workspace                   *domain.CheckpointWorkspace
-	artifacts                   []domain.CheckpointArtifact
-	validation                  *domain.CheckpointValidation
-	publication                 *domain.CheckpointPublication
-	publicationPolicy           *domain.CheckpointPublicationPolicy
-	validationCommands          map[string]int64
-	planFeedbackAttempts        int
-	planFeedbackNoProgress      int
-	lastPlanFeedbackFingerprint string
-	lifecycleRecoveryAttempts   int
-	lifecycleStopAttempts       int
-	validationNoProgress        int
-	lastValidationFingerprint   string
+	lifecyclePlanID                  string
+	lifecyclePhase                   domain.RunState
+	workspace                        *domain.CheckpointWorkspace
+	artifacts                        []domain.CheckpointArtifact
+	validation                       *domain.CheckpointValidation
+	publication                      *domain.CheckpointPublication
+	publicationPolicy                *domain.CheckpointPublicationPolicy
+	validationCommands               map[string]int64
+	planFeedbackAttempts             int
+	planFeedbackNoProgress           int
+	lastPlanFeedbackFingerprint      string
+	lifecycleRecoveryAttempts        int
+	lastLifecycleRecoveryFingerprint string
+	lastLifecycleRecoveryClass       string
+	lifecycleChallengeAttempts       int
+	lifecycleStopAttempts            int
+	validationNoProgress             int
+	lastValidationFingerprint        string
+	checkpointNeedsRebuild           bool
 	// exhaustionProposalAttempts 是本次 run 已请求的 exhaustion proposal
 	// 次数，用作 exhaustion challenge 的 Attempt 字段进度计数。
 	exhaustionProposalAttempts int
@@ -109,6 +118,196 @@ func newResilientRunState(store domain.CheckpointStore, run domain.Run, reconstr
 		lastSoftSignal:         softWithinAllocation,
 		actionRefsByCapability: make(map[string][]string),
 	}
+}
+
+// appendRecovery 保留最新的 64 条 recovery journal。所有 application append
+// 必须经过这里，避免第 65 次可恢复动作把合法 run 转成 persistence_failure。
+func (t *resilientRunState) appendRecovery(recovery domain.CheckpointRecovery) {
+	if t == nil {
+		return
+	}
+	if len(t.recoveries) >= maxResilientRecoveries {
+		t.recoveries = append([]domain.CheckpointRecovery(nil), t.recoveries[len(t.recoveries)-maxResilientRecoveries+1:]...)
+	}
+	t.recoveries = append(t.recoveries, recovery)
+}
+
+// recoveryProgressRef 把模型或 adapter 输入压缩为固定长度 marker；checkpoint
+// 只持久化 hash，不保存原始错误、patch、输出或模型内容。
+func recoveryProgressRef(code, fingerprint string) string {
+	if strings.TrimSpace(fingerprint) == "" {
+		return "challenge:" + code
+	}
+	return "challenge:" + code + ":" + recoveryFingerprint(fingerprint)
+}
+
+func recoveryFingerprint(fingerprint string) string {
+	if len(fingerprint) == sha256.Size*2 {
+		if _, err := hex.DecodeString(fingerprint); err == nil {
+			return fingerprint
+		}
+	}
+	sum := sha256.Sum256([]byte(fingerprint))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func recoveryProgressHash(ref string) string {
+	parts := strings.Split(ref, ":")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+// restoreRecoveryProgress 从 pre-change v1 recovery journal 保守重建 bounded
+// no-progress 状态。新 checkpoint 使用 RecoveryProgress 权威快照；journal 仅是
+// audit/event history。hashless 旧条目以 action+ref 派生稳定 fingerprint，不能
+// 被误当成零进展而重置连续尝试。
+func (t *resilientRunState) restoreRecoveryProgress() {
+	for _, recovery := range t.recoveries {
+		hash := recoveryProgressHash(recovery.OutcomeRef)
+		if hash == "" {
+			hash = recoveryFingerprint("legacy\x00" + recovery.Action + "\x00" + recovery.OutcomeRef)
+		}
+		switch {
+		case recovery.Action == "correct_citation":
+			t.evidenceCorrectionAttempts++
+		case recovery.Action == "correct_fact_check":
+			t.factCheckAttempts++
+			if hash == t.lastFactCheckFingerprint {
+				t.factCheckNoProgress++
+			} else {
+				t.lastFactCheckFingerprint = hash
+				t.factCheckNoProgress = 1
+			}
+		case recovery.Action == "revise_plan":
+			t.planFeedbackAttempts++
+			if hash == t.lastPlanFeedbackFingerprint {
+				t.planFeedbackNoProgress++
+			} else {
+				t.lastPlanFeedbackFingerprint = hash
+				t.planFeedbackNoProgress = 1
+			}
+		case recovery.Action == "revise_patch":
+			if hash == t.lastValidationFingerprint {
+				t.validationNoProgress++
+			} else {
+				t.lastValidationFingerprint = hash
+				t.validationNoProgress = 1
+			}
+		case recovery.Action == "stop":
+			t.lifecycleStopAttempts++
+			t.lifecycleChallengeAttempts++
+		case isLegacyLifecycleRecoveryAction(recovery.Action):
+			t.lifecycleChallengeAttempts++
+			t.lastLifecycleRecoveryClass = legacyLifecycleRecoveryClass(recovery.Action)
+			if hash == t.lastLifecycleRecoveryFingerprint {
+				t.lifecycleRecoveryAttempts++
+			} else {
+				t.lastLifecycleRecoveryFingerprint = hash
+				t.lifecycleRecoveryAttempts = 1
+			}
+		default:
+			// pre-change v1 没有独立快照；未分类 challenge 至少消耗一次通用
+			// recovery attempt，避免 restart 把旧尝试当成零。
+			t.recoveryAttempt++
+		}
+		if recovery.Kind == string(domain.RecoveryChallengeKindExhaustion) && recovery.Action == "request_exhaustion_proposal" {
+			t.exhaustionProposalAttempts++
+		}
+	}
+}
+
+func isLegacyLifecycleRecoveryAction(action string) bool {
+	if strings.HasPrefix(action, "lifecycle:") {
+		return true
+	}
+	switch action {
+	case "model_turn", "agentEnvelope", ToolWorkspaceApplyPatch, ToolWorkspaceRunValidation,
+		ToolWorkspaceReadFile, ToolWorkspaceStatus, "patchComplete", "validationAssessment":
+		return true
+	default:
+		return false
+	}
+}
+
+func legacyLifecycleRecoveryClass(action string) string {
+	action = strings.TrimPrefix(action, "lifecycle:")
+	if action == "model_turn" || action == "agentEnvelope" {
+		return "protocol"
+	}
+	return "tool"
+}
+
+func (t *resilientRunState) restoreRecoveryProgressSnapshot(progress domain.CheckpointRecoveryProgress) {
+	t.recoveryAttempt = progress.RecoveryAttempts
+	t.evidenceCorrectionAttempts = progress.EvidenceCorrectionAttempts
+	t.factCheckAttempts = progress.FactCheckAttempts
+	t.factCheckNoProgress = progress.FactCheckNoProgress
+	t.lastFactCheckFingerprint = progress.LastFactCheckFingerprint
+	t.planFeedbackAttempts = progress.PlanFeedbackAttempts
+	t.planFeedbackNoProgress = progress.PlanFeedbackNoProgress
+	t.lastPlanFeedbackFingerprint = progress.LastPlanFeedbackFingerprint
+	t.lifecycleRecoveryAttempts = progress.LifecycleRecoveryAttempts
+	t.lastLifecycleRecoveryFingerprint = progress.LastLifecycleRecoveryFingerprint
+	t.lastLifecycleRecoveryClass = progress.LastLifecycleRecoveryClass
+	t.lifecycleChallengeAttempts = progress.LifecycleChallengeAttempts
+	t.lifecycleStopAttempts = progress.LifecycleStopAttempts
+	t.validationNoProgress = progress.ValidationNoProgress
+	t.lastValidationFingerprint = progress.LastValidationFingerprint
+	t.exhaustionProposalAttempts = progress.ExhaustionProposalAttempts
+}
+
+func (t *resilientRunState) recoveryProgressSnapshot() *domain.CheckpointRecoveryProgress {
+	return &domain.CheckpointRecoveryProgress{
+		RecoveryAttempts: t.recoveryAttempt, EvidenceCorrectionAttempts: t.evidenceCorrectionAttempts,
+		FactCheckAttempts: t.factCheckAttempts, FactCheckNoProgress: t.factCheckNoProgress,
+		LastFactCheckFingerprint: t.lastFactCheckFingerprint,
+		PlanFeedbackAttempts:     t.planFeedbackAttempts, PlanFeedbackNoProgress: t.planFeedbackNoProgress,
+		LastPlanFeedbackFingerprint:      t.lastPlanFeedbackFingerprint,
+		LifecycleRecoveryAttempts:        t.lifecycleRecoveryAttempts,
+		LastLifecycleRecoveryFingerprint: t.lastLifecycleRecoveryFingerprint,
+		LastLifecycleRecoveryClass:       t.lastLifecycleRecoveryClass,
+		LifecycleChallengeAttempts:       t.lifecycleChallengeAttempts, LifecycleStopAttempts: t.lifecycleStopAttempts,
+		ValidationNoProgress: t.validationNoProgress, LastValidationFingerprint: t.lastValidationFingerprint,
+		ExhaustionProposalAttempts: t.exhaustionProposalAttempts,
+	}
+}
+
+func (t *resilientRunState) recordLifecycleFailure(fingerprint string) {
+	class := "tool"
+	if strings.HasPrefix(fingerprint, "model_turn\x00") || strings.HasPrefix(fingerprint, "agentEnvelope\x00") {
+		class = "protocol"
+	}
+	fingerprint = recoveryFingerprint(fingerprint)
+	if fingerprint == t.lastLifecycleRecoveryFingerprint {
+		t.lifecycleRecoveryAttempts++
+		return
+	}
+	t.lastLifecycleRecoveryClass = class
+	t.lastLifecycleRecoveryFingerprint = fingerprint
+	t.lifecycleRecoveryAttempts = 1
+}
+
+func (t *resilientRunState) resetLifecycleProtocolNoProgress() {
+	if t.lastLifecycleRecoveryClass == "protocol" {
+		t.lifecycleRecoveryAttempts = 0
+		t.lastLifecycleRecoveryFingerprint = ""
+		t.lastLifecycleRecoveryClass = ""
+	}
+	t.lifecycleStopAttempts = 0
+}
+
+func (t *resilientRunState) resetLifecycleNoProgress() {
+	t.lifecycleRecoveryAttempts = 0
+	t.lastLifecycleRecoveryFingerprint = ""
+	t.lastLifecycleRecoveryClass = ""
+	t.lifecycleStopAttempts = 0
+}
+
+func (t *resilientRunState) resetValidationNoProgress() {
+	t.validationNoProgress = 0
+	t.lastValidationFingerprint = ""
 }
 
 type resilientRunStateKey struct{}
@@ -213,6 +412,7 @@ func (t *resilientRunState) buildCheckpoint(phase domain.RunState, reason string
 		Objective:          checkpointObjective(phase),
 		EvidenceIndex:      append([]domain.CheckpointEvidenceIndexItem(nil), t.evidenceIndex...),
 		Recoveries:         append([]domain.CheckpointRecovery(nil), t.recoveries...),
+		RecoveryProgress:   t.recoveryProgressSnapshot(),
 		NextActions:        append([]string(nil), t.nextActions...),
 		Workspace:          cloneCheckpointWorkspace(t.workspace),
 		Artifacts:          append([]domain.CheckpointArtifact(nil), t.artifacts...),
@@ -410,7 +610,7 @@ func (c *RemediationCoordinator) softBudgetRecovery(ctx context.Context, budget 
 	if err != nil {
 		return fmt.Errorf("build soft budget recovery challenge: %w", err)
 	}
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind:       string(challenge.Kind),
 		Action:     string(signal),
 		OutcomeRef: "challenge:" + challenge.ReasonCode,

@@ -43,7 +43,7 @@ func (c *RemediationCoordinator) appendToolRecoveryChallenge(
 	if err != nil {
 		return c.fail(ctx, runID, phase, markPersistenceFailure(fmt.Errorf("build tool recovery challenge: %w", err)))
 	}
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind: string(challenge.Kind), Action: req.ToolName, OutcomeRef: "challenge:" + challenge.ReasonCode,
 	})
 	if conversation != nil {

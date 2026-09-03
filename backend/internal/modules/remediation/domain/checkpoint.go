@@ -109,6 +109,7 @@ type WorkingMemoryCheckpointV1 struct {
 	UnresolvedQuestions []CheckpointQuestion          `json:"unresolvedQuestions"`
 	PhaseProgress       CheckpointPhaseProgress       `json:"phaseProgress"`
 	Recoveries          []CheckpointRecovery          `json:"recoveries"`
+	RecoveryProgress    *CheckpointRecoveryProgress   `json:"recoveryProgress,omitempty"`
 	NextActions         []string                      `json:"nextActions"`
 	Workspace           *CheckpointWorkspace          `json:"workspace,omitempty"`
 	Artifacts           []CheckpointArtifact          `json:"artifacts,omitempty"`
@@ -207,6 +208,28 @@ type CheckpointRecovery struct {
 	Kind       string `json:"kind"`
 	Action     string `json:"action"`
 	OutcomeRef string `json:"outcomeRef"`
+}
+
+// CheckpointRecoveryProgress 是 no-progress/retry 控制状态的有界权威快照。
+// Recoveries 仅保留审计 journal；该字段避免 journal 淘汰旧条目后重启重新授予
+// 尝试次数。omitempty 保持 pre-change v1 checkpoint 的 canonical JSON/hash。
+type CheckpointRecoveryProgress struct {
+	RecoveryAttempts                 int    `json:"recoveryAttempts"`
+	EvidenceCorrectionAttempts       int    `json:"evidenceCorrectionAttempts"`
+	FactCheckAttempts                int    `json:"factCheckAttempts"`
+	FactCheckNoProgress              int    `json:"factCheckNoProgress"`
+	LastFactCheckFingerprint         string `json:"lastFactCheckFingerprint,omitempty"`
+	PlanFeedbackAttempts             int    `json:"planFeedbackAttempts"`
+	PlanFeedbackNoProgress           int    `json:"planFeedbackNoProgress"`
+	LastPlanFeedbackFingerprint      string `json:"lastPlanFeedbackFingerprint,omitempty"`
+	LifecycleRecoveryAttempts        int    `json:"lifecycleRecoveryAttempts"`
+	LastLifecycleRecoveryFingerprint string `json:"lastLifecycleRecoveryFingerprint,omitempty"`
+	LastLifecycleRecoveryClass       string `json:"lastLifecycleRecoveryClass,omitempty"`
+	LifecycleChallengeAttempts       int    `json:"lifecycleChallengeAttempts"`
+	LifecycleStopAttempts            int    `json:"lifecycleStopAttempts"`
+	ValidationNoProgress             int    `json:"validationNoProgress"`
+	LastValidationFingerprint        string `json:"lastValidationFingerprint,omitempty"`
+	ExhaustionProposalAttempts       int    `json:"exhaustionProposalAttempts"`
 }
 
 // CheckpointSnapshot 是 latest working-memory snapshot 与解析后的 checkpoint。
@@ -313,6 +336,11 @@ func (c WorkingMemoryCheckpointV1) Validate() error {
 	}
 	for _, recovery := range c.Recoveries {
 		if err := recovery.validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrCheckpointInvalid, err)
+		}
+	}
+	if c.RecoveryProgress != nil {
+		if err := c.RecoveryProgress.validate(); err != nil {
 			return fmt.Errorf("%w: %v", ErrCheckpointInvalid, err)
 		}
 	}
@@ -545,6 +573,59 @@ func (r CheckpointRecovery) validate() error {
 		return err
 	}
 	return boundedOptionalText("recovery outcome ref", r.OutcomeRef, maxCheckpointProgressItemLen)
+}
+
+func (p CheckpointRecoveryProgress) validate() error {
+	const maxRecoveryProgressCount = 1_000_000
+	for label, value := range map[string]int{
+		"recovery attempts":            p.RecoveryAttempts,
+		"evidence correction attempts": p.EvidenceCorrectionAttempts,
+		"fact check attempts":          p.FactCheckAttempts,
+		"fact check no progress":       p.FactCheckNoProgress,
+		"plan feedback attempts":       p.PlanFeedbackAttempts,
+		"plan feedback no progress":    p.PlanFeedbackNoProgress,
+		"lifecycle recovery attempts":  p.LifecycleRecoveryAttempts,
+		"lifecycle challenge attempts": p.LifecycleChallengeAttempts,
+		"lifecycle stop attempts":      p.LifecycleStopAttempts,
+		"validation no progress":       p.ValidationNoProgress,
+		"exhaustion proposal attempts": p.ExhaustionProposalAttempts,
+	} {
+		if value < 0 || value > maxRecoveryProgressCount {
+			return fmt.Errorf("%s is out of bounds", label)
+		}
+	}
+	if p.FactCheckNoProgress > p.FactCheckAttempts || p.PlanFeedbackNoProgress > p.PlanFeedbackAttempts {
+		return fmt.Errorf("recovery no-progress count exceeds its attempt count")
+	}
+	if (p.FactCheckNoProgress > 0) != (p.LastFactCheckFingerprint != "") ||
+		(p.PlanFeedbackNoProgress > 0) != (p.LastPlanFeedbackFingerprint != "") ||
+		(p.ValidationNoProgress > 0) != (p.LastValidationFingerprint != "") {
+		return fmt.Errorf("recovery no-progress count and fingerprint must be present together")
+	}
+	if (p.LifecycleRecoveryAttempts > 0) != (p.LastLifecycleRecoveryFingerprint != "") ||
+		(p.LifecycleRecoveryAttempts > 0) != (p.LastLifecycleRecoveryClass != "") {
+		return fmt.Errorf("lifecycle recovery count, fingerprint, and class must be present together")
+	}
+	for label, fingerprint := range map[string]string{
+		"fact check fingerprint":         p.LastFactCheckFingerprint,
+		"plan feedback fingerprint":      p.LastPlanFeedbackFingerprint,
+		"lifecycle recovery fingerprint": p.LastLifecycleRecoveryFingerprint,
+		"validation fingerprint":         p.LastValidationFingerprint,
+	} {
+		if fingerprint == "" {
+			continue
+		}
+		if len(fingerprint) != sha256.Size*2 {
+			return fmt.Errorf("%s must be a sha256 hex value", label)
+		}
+		if _, err := hex.DecodeString(fingerprint); err != nil {
+			return fmt.Errorf("%s must be a sha256 hex value", label)
+		}
+	}
+	if err := boundedOptionalText("lifecycle recovery class", p.LastLifecycleRecoveryClass, 64); err != nil {
+		return err
+	}
+	return nil
 }
 
 func validateEvidenceIDList(label string, ids []string) error {

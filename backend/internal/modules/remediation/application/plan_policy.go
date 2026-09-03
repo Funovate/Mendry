@@ -205,11 +205,11 @@ func (c *RemediationCoordinator) handlePlanPolicyDecision(
 	if err := decision.Validate(); err != nil {
 		return false, c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(fmt.Errorf("validate plan policy decision: %w", err)))
 	}
-	fingerprint := domain.FailureFingerprint{
+	fingerprint := recoveryFingerprint(domain.FailureFingerprint{
 		FailedActionRef: decision.ReasonCode + "\x00" + strings.Join(decision.RejectedPlanIDs, "\x00"),
 		Capability:      "workspace",
 		ErrorCode:       "plan_policy",
-	}.Key()
+	}.Key())
 	tracker.planFeedbackAttempts++
 	if fingerprint == tracker.lastPlanFeedbackFingerprint {
 		tracker.planFeedbackNoProgress++
@@ -257,8 +257,8 @@ func (c *RemediationCoordinator) handlePlanPolicyDecision(
 	if err != nil {
 		return true, c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(fmt.Errorf("build plan policy challenge: %w", err)))
 	}
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
-		Kind: string(challenge.Kind), Action: "revise_plan", OutcomeRef: "challenge:" + challenge.ReasonCode,
+	tracker.appendRecovery(domain.CheckpointRecovery{
+		Kind: string(challenge.Kind), Action: "revise_plan", OutcomeRef: recoveryProgressRef(challenge.ReasonCode, fingerprint),
 	})
 	if tracker.conversation != nil {
 		tracker.conversation.AppendRecoveryChallenge(challenge)

@@ -1126,7 +1126,7 @@ func (c *RemediationCoordinator) challengeEvidenceCorrections(
 	if tracker := resilientStateFrom(ctx); tracker != nil {
 		// D2 recovery-triggered checkpoint：策略变化（evidence metadata 修正）
 		// 后强制持久化 working memory，供重启/续跑重建。
-		tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+		tracker.appendRecovery(domain.CheckpointRecovery{
 			Kind: string(challenge.Kind), Action: "correct_citation", OutcomeRef: "challenge:" + challenge.ReasonCode,
 		})
 		if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
@@ -1185,7 +1185,7 @@ func (c *RemediationCoordinator) challengeFactCheck(
 	if err != nil {
 		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(fmt.Errorf("build fact-check challenge: %w", err)))
 	}
-	tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind: string(challenge.Kind), Action: "correct_fact_check", OutcomeRef: "challenge:fact_check_rejected",
 	})
 	if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
@@ -1667,7 +1667,7 @@ func (c *RemediationCoordinator) handleTurnError(
 			if buildErr != nil {
 				return true, c.fail(ctx, runID, phase, markPersistenceFailure(fmt.Errorf("build protocol recovery challenge: %w", buildErr)))
 			}
-			tracker.recoveries = append(tracker.recoveries, domain.CheckpointRecovery{
+			tracker.appendRecovery(domain.CheckpointRecovery{
 				Kind: string(challenge.Kind), Action: "correct_envelope", OutcomeRef: "challenge:" + challenge.ReasonCode,
 			})
 			if checkpointErr := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonRecovery); checkpointErr != nil {
