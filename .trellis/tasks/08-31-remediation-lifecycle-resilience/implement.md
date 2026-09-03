@@ -72,8 +72,72 @@ Progress markers: `[x]` = delivered slice (2026-08-31, first pass). Remaining Ph
       evidence.read → checkpoint evidence index; diagnosis-continuation
       reconstruction from the predecessor durable checkpoint replacing the
       runtime-only evidence block; composition-root `SetCheckpointStore`.
-      The automatic context/tool-output byte-threshold trigger remains a
-      follow-up slice.
+- [x] Implement the automatic context/tool-output byte-threshold checkpoint
+      trigger (D2/R13 automatic hybrid trigger set). Delivered (2026-09-05,
+      slice 5b; corrected 2026-09-05 after two parent-review defects):
+      `AgentConversation` gains a monotone cumulative provider-visible-byte
+      pressure proxy (`CumulativeModelVisibleBytes`) plus a monotone large-observation
+      identity (`LargeToolObservation`); both derive from the existing
+      `maxConversationBytes`/`maxObservationBytes`/`maxMessageBytes` bounds,
+      never from the run's evidence/repository byte budget. The value is a
+      monotone, conservative provider-context pressure proxy, not unique-payload
+      size or exact wire bytes. Bootstrap and pending textual observations are
+      measured when they enter those context structures; successful
+      `RecordModelTurn` user/assistant messages and native tool messages are
+      measured again when they enter replayable history. A user continuation
+      can therefore include previously measured bootstrap/pending text: that
+      increment intentionally represents new replay/history pressure.
+      Non-pending textual snapshot copies in `observations` (native tool
+      results and `assistant_output`) do not form another context structure and
+      are never counted. This removes the prior accidental snapshot duplicate
+      while retaining deliberate pending-to-history churn accounting. Two bounded triggers evaluated
+      on the `resilientRunState` before every provider call
+      (`shouldAutoCheckpoint`/`noteAutoCheckpoint` +
+      `consumeConversationWatermarks` + coordinator
+      `autoThresholdCheckpoint`): T1 context pressure fires when cumulative
+      model-visible content crosses successive `contextPressureStepBytes`
+      (192 KiB = 3/4 of the 256 KiB context bound, one full generation) and
+      T2 tool-output pressure fires for a distinct complete tool observation
+      whose block reaches `toolOutputPressureBytes` (48 KiB = 3/4 of its
+      64 KiB output bound). Every durable checkpoint (any reason) consumes the
+      conversation byte watermark and the latest large-observation sequence
+      (`consumedToolObservationSequence`), so each complete large tool
+      observation can trigger T2 at most once and an already-covered
+      observation never re-fires after later unrelated non-tool growth reaches
+      the anti-spam quantum (defect 2: replaces the stale
+      `LastToolObservationBytes` memory, which re-fired a checkpointed large
+      observation once unrelated growth crossed the quantum; small
+      observations never overwrite the large identity). Two distinct large
+      observations each consumed before the next arrives fire twice. Both
+      triggers share one anti-spam byte watermark, so a repeated evaluation or
+      growth below one output-pressure quantum never re-fires. Evaluation
+      points sit at the top of the four model-turn loops (diagnosing,
+      planning, patching, validating) after budget admission, when every
+      native assistant tool_call + tool result group is already complete, so
+      checkpoints never split a provider-native group. Trigger state (T1
+      level, byte/observation watermarks, pressure proxy) is process-local
+      instrumentation: after restart/continuation the durable checkpoint is
+      the recovery authority, the conversation is rebuilt from it, and a fresh
+      tracker starts at the first level with zero watermarks, so decisions are
+      deterministic for the rebuilt content but do NOT resume a pre-restart
+      mid-generation byte total/level (restart claim corrected). The reason
+      uses the existing `domain.CheckpointReasonThreshold`; the checkpoint
+      metric emission and recovery-episode settlement (first non-recovery
+      durable checkpoint closes/settles an open episode) ride the unchanged
+      `checkpointRun` choke point. An automatic checkpoint failure keeps the
+      existing persistence-terminal contract (`failed`/`persistence_failure`,
+      store locked unavailable). Legacy runs and nil-store runs are
+      byte-for-byte no-ops. Tests: conversation pressure/accessor/eviction-
+      survival unit tests (native-history, strict-JSON-pending, and
+      non-pending-snapshot accounting, no extra snapshot structure, large-observation
+      identity), internal pure-decision boundary matrix (below/at/above both
+      lines, level advance, no-growth anti-spam, stale large observation +
+      ≥ 48 KiB non-tool growth no re-fire, two distinct large observations two
+      fires, forced checkpoint consuming a large observation, guards, restart
+      reset determinism), coordinator-level oversized-observation
+      output-pressure append with metric reason=threshold, two distinct large
+      reads → exactly two threshold checkpoints, small-read no-fire, no-growth
+      no-spam, legacy no-op, and append-failure → persistence terminal.
 - [x] Replace runtime-only continuation bootstrap with a bounded same-series
       evidence index through the predecessor attempt. Delivered (2026-08-31,
       slice 3): `ContinuationEvidenceStore` gains
@@ -293,10 +357,15 @@ tool/context challenge unification and full lifecycle restart coverage remain op
 - [ ] Pass the `INC-2270`, code-first-to-logs, continuation rehydration, malformed
       envelope, no-progress, and hard-blocker test matrix before enabling the
       feature flag for any project.
-      AC1-AC6 and AC8 diagnosis regressions are green. The named AC7 test covers
-      diagnosis-boundary reconstruction only; AC7's required before/after crash
-      windows at every lifecycle phase remain in Phase 3, so this aggregate
-      acceptance item is intentionally not marked complete.
+      Status (2026-09-05): the named diagnosis scenarios are covered and green,
+      but this aggregate remains pending because AC7 is only partially covered.
+      Existing tests prove durable reconstruction, durable-first phase
+      reconciliation, and idempotent recovery of workspace/patch/validation/
+      publication effects. They do not yet provide an explicit before-transition
+      and after-transition crash test for every phase boundary as AC7 requires;
+      several rows below compose assertions from different tests rather than
+      exercising both crash windows at that boundary. Do not enable the feature
+      flag based on this aggregate until that matrix is added.
 
       Diagnosis subset delivered (2026-09-04): additive regression matrix
       `backend/internal/modules/remediation/application/inc2270_regression_test.go`
@@ -324,6 +393,18 @@ tool/context challenge unification and full lifecycle restart coverage remain op
       | AC8 | `TestINC2270Regression_AC8_IncompleteExhaustionProposalRejectedWithChallenge` | Early/incomplete proposal rejected; challenge lists every uncovered capability/recovery class; complete proof accepted with `exhaustion_proof` |
 
       Existing coverage reused without modification: `TestCoordinator_EvidenceCorrectionChallengeThenPlanning` (AC1/AC5), `TestCoordinatorContinueRendersSameSeriesEvidenceIndex` + `evidence_read_test.go` (AC2), Docker refinement + `TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead` (AC3), `TestCoordinator_ConnectorFailureIsModelVisibleAndSafe` / `TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn` (AC4), `TestResilient_ContinuationReconstructsFromDurableCheckpoint` (AC7), `TestCoordinator_ResilientIncompleteExhaustionProposalChallengesAndRetries` + `TestValidateExhaustionProposal` (AC8).
+
+      AC7 partial restart coverage inventory (verified green 2026-09-05; this is
+      not yet the required explicit every-boundary before/after crash matrix):
+
+      | Restart boundary | Before-transition window (crash while still in from-state) | After-transition window (durable state ahead of the checkpoint) | Tests |
+      |---|---|---|---|
+      | Attempt boundary / diagnosing resume | Predecessor terminal `failed` + continuation from durable checkpoint | Child run checkpoints at diagnosing entry (phase boundary before first turn) | `TestINC2270Regression_AC7_RestartReconstructsFromDurableCheckpoint`, `TestResilient_ContinuationReconstructsFromDurableCheckpoint`, `TestResilient_ReconstructionFallsBackToRuntimeBrief` |
+      | diagnosing→planning, planning→diagnosis_ready_for_review | Planning continuation resume from the latest durable same-context `code_fixable` checkpoint (latest may be several attempts behind a polluted predecessor) | Checkpoint ordering around the diagnosing→planning boundary and before the review terminal (observed versions asserted) | `TestCoordinatorContinueResumesPlanningAfterDurableCodeDiagnosis`, `TestCoordinatorContinueRecoversLatestPlanningCheckpointAcrossPollutedChain`, `TestCoordinatorContinuePlanningKeepsCompactBrief`, `TestResilient_CodeFixableCheckpointsAroundPlanning` |
+      | diagnosis_ready_for_review→patching | `ApplyPlan` re-entry from durable D4R state (plan/checkpoint only, no provider session) | `forceLifecycleState(patching)` resumes with real model turns after `ResumeLifecycle`, stale planning-phase checkpoint rebuilt | `TestResilientLifecycleRestartAfterWorkspaceEffectContinuesPatching`, `TestResilientLifecycleRestartReusesWorkspaceAndPatchEffects`, `TestResilientLifecycleRunsPatchValidationPublicationWithCheckpointIdentities` |
+      | patching→validating | Restart in patching with a durable patch effect → transitions to validating without a duplicate patch call | Restart in validating with a durable validation result → skips re-validation and publishes | `TestResilientLifecycleRestartSkipsValidationWhenResultWasDurable` (+ the two patching restart tests above, all asserting zero duplicate external calls and stable artifact/tree/baseline identities) |
+      | validating→publishing (+ validation-repair backward edge) | Passed validation effect resumes to publication | Validation-repair frontier: allocator stays on the validation frontier across the backward validating→patching edge | `TestReconcileLifecycleCheckpointCrashWindows` (incl. `validation repair keeps frontier`), `TestReconcileLifecycleCheckpointAcceptsPersistedValidationRepairFrontier`, `TestReconcileLifecycleCheckpointRejectsEqualVersionPhaseMismatch`, `TestReconcileLifecycleCheckpointRejectsEmbeddedPhaseAndCounterConflicts` |
+      | publishing→awaiting_human_review | `started`/`recoverable` publication effect retries the same run-scoped idempotency key after restart; `failed`/attempt-exhausted states terminalize without a retry | Restart with a `succeeded` publication effect reuses branch/commit/change identifiers and performs no SCM call | `TestResilientLifecyclePublicationEffectRestartStates`, `TestResilientLifecyclePublicationRetryReusesIdempotencyKeyAfterRestart`, `TestResilientLifecycleRestartSkipsPublicationWhenResultWasDurable` |
 
 ## Phase 3: Remaining Lifecycle
 
@@ -359,18 +440,22 @@ additive and requires `resilient_v1` plus the companion stores/ports.
       snapshot target branch/baseline, cap transient retries, restore successful
       branch/commit/change identities, and transition only to
       `awaiting_human_review`.
-- [x] Add forced checkpoint and restart tests before/after every phase transition
+- [ ] Add forced checkpoint and restart tests before/after every phase transition
       and external effect.
-      Delivered: focused fake matrix covers restart after workspace, patch,
+      Partial: focused fake coverage exercises restart after workspace, patch,
       validation, and publication effects; it verifies no duplicate external
       calls, stable artifact/tree/baseline identities, publication policy
       retention, same-key retry, and final human-review state. Boundary
-      checkpoint ordering is asserted by the lifecycle flow tests.
+      checkpoint ordering and durable-first reconciliation are also covered.
+      Remaining: add an explicit two-window crash matrix (immediately before and
+      immediately after the durable transition) for every phase boundary; the
+      current suite does not prove that full AC7 quantifier.
 
 Delivery status: Phase 3 production contracts, coordinator loop, persistence,
-policy feedback, and lifecycle restart regressions are complete. Phase 4 remains
-for API/UI recovery projections, rollout controls, metrics, and final cross-layer
-acceptance.
+policy feedback, and external-effect restart regressions are complete. The
+explicit every-phase-boundary before/after crash matrix remains open under AC7.
+Phase 4 is delivered for API/UI recovery projections, rollout observability,
+and low-cardinality metrics.
 
 ## Phase 4: API, UI, Rollout, And Verification
 

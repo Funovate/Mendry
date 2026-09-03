@@ -18,6 +18,21 @@ const (
 	maxConversationItems = 32
 )
 
+// 自动 byte-threshold checkpoint 的阈值派生自 conversation 自身的模型可见
+// 字节边界（本文件上方常量），而不是 run 的 evidence/repository byte
+// budget：预算维度衡量 connector 外部效果，这里衡量下一轮 provider 输入。
+const (
+	// contextPressureStepBytes 是 T1 context-pressure 的级别步长：累计模型
+	// 可见内容每增长 192 KiB（maxConversationBytes 的 3/4，约一个完整
+	// context generation）允许一次自动 checkpoint；首次命中在 192 KiB。
+	contextPressureStepBytes = 3 * (maxConversationBytes / 4)
+	// toolOutputPressureBytes 是 T2 单次完整工具观察的输出压力线：观察达到
+	// 其 maxObservationBytes 输出上限的 3/4（48 KiB）时，该有界观察本身构成
+	// configured output pressure。它同时作为自动 checkpoint 的最小字节增长
+	// 量子，避免同一内容被重复评估造成 checkpoint spam。
+	toolOutputPressureBytes = 3 * (maxObservationBytes / 4)
+)
+
 // AgentConversation 保存一次 run 的有界模型历史和工具观察。
 // bootstrap 永远保留，旧观察按时间顺序压缩；adapter 错误只以稳定分类进入
 // 模型上下文，避免把 stderr、响应体或其他诊断细节变成新的泄漏边界。
@@ -34,6 +49,36 @@ type AgentConversation struct {
 	nextSequence            int64
 	preparedThroughSequence int64
 	preparedBootstrap       bool
+	// cumulativeBytes 是 provider-context pressure 的保守单调代理，只增不减。
+	// 它跟踪内容进入 resilient provider-native 上下文结构的时点，而不是唯一
+	// payload 大小或每次请求的精确 wire bytes：
+	//   - RecordModelTurn 追加的 user/assistant message 与 AppendToolResult 追加的
+	//     native tool message 各按 encodedModelMessage 计入；成功 user message
+	//     可能包含先前排队的 bootstrap/pending 文本，因为该 continuation 此时
+	//     成为后续 History() 会重放的 native history；
+	//   - strict-JSON tool result 与 protocol observation 在进入 pending textual
+	//     continuation 队列时按 formatted block 计入；
+	//   - bootstrap 在 conversation 创建时计入，确保首轮前已有的大 context 也
+	//     对压力可见。
+	// 因此 bootstrap/pending 在后续成功 user continuation 中再次序列化时会产生
+	// 新的 history 压力并再次计入；这是有意的 churn/replay 计量，不是内容去重
+	// 账本。反过来，observations 中仅供 ContextText 有界回退的 non-pending
+	// snapshot（native tool result 与 assistant output 的副本）不是独立上下文
+	// 结构，不计入，避免同一次 append 同时按 native message 和 snapshot 计量。
+	// 被裁剪/逐出的旧内容不回退。该代理用于自动 byte-threshold checkpoint
+	// （D2/R13），与 evidence/repository byte budget 无关；restart/continuation
+	// 后 conversation 重建，代理从新 bootstrap 确定性重新开始，不持久化旧
+	// generation 的字节水位。
+	cumulativeBytes int
+	// largeToolObservationSequence/Bytes 是最近一次块字节达到
+	// toolOutputPressureBytes 的完整 tool_observation（native tool result 与
+	// strict-JSON observation，组在 AppendToolResult 内完整落盘）：item
+	// sequence 提供 monotone 观察身份，bytes 是含 kind/sequence wrapper 的
+	// formatted block 字节。小观察不会覆盖它，因此已被 durable checkpoint
+	// 覆盖的大观察不会因后续小观察重新成为“最新”（T2 stale re-fire 修正）；
+	// 尚无大观察时为 0/0。
+	largeToolObservationSequence int64
+	largeToolObservationBytes    int
 }
 
 type toolFailureKey struct {
@@ -78,9 +123,37 @@ type conversationItem struct {
 	content  string
 }
 
-// NewAgentConversation 创建以 bootstrap metadata 为起点的有界对话。
+// NewAgentConversation 创建以 bootstrap metadata 为起点的有界对话。累计字节
+// 压力从 bootstrap 的已存储长度开始计数（bootstrap 是首个 continuation 的
+// 独立交付，账本在创建时计一次）。
 func NewAgentConversation(bootstrap string) *AgentConversation {
-	return &AgentConversation{bootstrap: boundedText(bootstrap, maxObservationBytes)}
+	stored := boundedText(bootstrap, maxObservationBytes)
+	return &AgentConversation{bootstrap: stored, cumulativeBytes: len(stored)}
+}
+
+// CumulativeModelVisibleBytes 返回 conversation 的单调 provider-context
+// pressure proxy。它累计内容进入 bootstrap、pending textual continuation 与
+// provider-native history 结构的字节；当 bootstrap/pending 随成功 user
+// continuation 成为可重放 history 时，重复序列化会作为新的 history 压力计入。
+// 因此该值不是唯一 payload 大小，也不是请求 wire size。它是自动
+// byte-threshold checkpoint 的保守、确定性压力源；restart 后从重建的
+// bootstrap 重新开始，无需持久化旧 generation 的水位。
+func (c *AgentConversation) CumulativeModelVisibleBytes() int {
+	if c == nil {
+		return 0
+	}
+	return c.cumulativeBytes
+}
+
+// LargeToolObservation 返回最近一次块字节达到 toolOutputPressureBytes 的完整
+// tool_observation 的 monotone item sequence 与 formatted block 字节；尚无大
+// 观察时为 0,0。小观察不覆盖大观察。tracker 的 T2 consumed 水位只与返回的
+// sequence 比较，保证每条大观察至多触发一次自动 checkpoint。
+func (c *AgentConversation) LargeToolObservation() (sequence int64, bytes int) {
+	if c == nil {
+		return 0, 0
+	}
+	return c.largeToolObservationSequence, c.largeToolObservationBytes
 }
 
 // ContextText 返回供不支持原生消息历史的 provider 使用的紧凑上下文。
@@ -187,6 +260,14 @@ func encodedConversationBytes(messages []domain.ModelMessage) int {
 	return len(encoded)
 }
 
+func encodedModelMessage(message domain.ModelMessage) int {
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return maxMessageBytes
+	}
+	return len(encoded)
+}
+
 // RecordModelTurn 将本次 user 输入和 provider 返回的 assistant 内容加入历史。
 func (c *AgentConversation) RecordModelTurn(userMessage string, result domain.ModelResult) {
 	if c == nil {
@@ -196,6 +277,10 @@ func (c *AgentConversation) RecordModelTurn(userMessage string, result domain.Mo
 		Role:    "user",
 		Content: boundedText(userMessage, maxMessageBytes),
 	})
+	// provider-native message 成为可重放 history 时，其编码字节进入单调
+	// context-pressure proxy。user continuation 可能重放先前 bootstrap/pending；
+	// 这代表新增 history 压力，不是唯一 payload 计数（见 cumulativeBytes）。
+	c.cumulativeBytes += encodedModelMessage(c.messages[len(c.messages)-1])
 	if c.preparedBootstrap {
 		c.bootstrapDelivered = true
 	}
@@ -215,6 +300,7 @@ func (c *AgentConversation) RecordModelTurn(userMessage string, result domain.Mo
 			Role:      "assistant",
 			ToolCalls: append([]domain.ToolCall(nil), result.ToolCalls...),
 		})
+		c.cumulativeBytes += encodedModelMessage(c.messages[len(c.messages)-1])
 		return
 	}
 	if result.Content != "" {
@@ -222,6 +308,7 @@ func (c *AgentConversation) RecordModelTurn(userMessage string, result domain.Mo
 			Role:    "assistant",
 			Content: boundedText(result.Content, maxMessageBytes),
 		})
+		c.cumulativeBytes += encodedModelMessage(c.messages[len(c.messages)-1])
 		c.appendItem("assistant_output", boundedText(result.Content, maxObservationBytes), false)
 	}
 }
@@ -399,6 +486,7 @@ func (c *AgentConversation) AppendToolResult(req RequestTool, result ToolResult,
 			ToolCallID: req.CallID,
 			Content:    encodedText,
 		})
+		c.cumulativeBytes += encodedModelMessage(c.messages[len(c.messages)-1])
 	}
 }
 
@@ -447,6 +535,20 @@ func (c *AgentConversation) appendItem(kind, content string, nativePending bool)
 		content:  boundedText(content, maxObservationBytes),
 	}
 	c.observations = append(c.observations, item)
+	// D2/R13 context-pressure proxy：进入 pending textual continuation 的项
+	// 在排队时计量；non-pending snapshot（native tool result / assistant output
+	// 的 ContextText 副本）不形成额外结构，由对应 native message 计量。
+	// 工具观察无论走哪个通道都更新 T2 大观察身份：块字节达到
+	// toolOutputPressureBytes 才记录（小观察不覆盖），sequence 保持 monotone。
+	// trim 旧 item 不回退，保证压力代理单调且 anti-spam 水位只向前推进。
+	blockBytes := len(formatConversationItem(item))
+	if nativePending {
+		c.cumulativeBytes += blockBytes
+	}
+	if kind == "tool_observation" && blockBytes >= toolOutputPressureBytes {
+		c.largeToolObservationSequence = item.sequence
+		c.largeToolObservationBytes = blockBytes
+	}
 	if nativePending {
 		c.pending = append(c.pending, item)
 	}

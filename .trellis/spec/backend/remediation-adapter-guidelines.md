@@ -1204,6 +1204,59 @@ request := domain.PublicationRequest{
 publisher.Publish(ctx, request)
 ```
 
+## Scenario: Automatic Byte-Threshold Checkpoint Trigger
+
+### 1. Scope / Trigger
+- Trigger: adding or changing the resilient_v1 automatic checkpoint trigger that fires on model-visible context / tool-output byte pressure (D2/R13 hybrid trigger set; delivery slice 5b).
+- The trigger guards durable working memory against provider/context pressure and heavyweight tool output without waiting for a forced phase-boundary or recovery checkpoint.
+
+### 2. Signatures
+```go
+func (*AgentConversation) CumulativeModelVisibleBytes() int
+func (*AgentConversation) LargeToolObservation() (sequence int64, bytes int)
+func (t *resilientRunState) shouldAutoCheckpoint(conversation *AgentConversation) (fire, contextPressure bool)
+func (t *resilientRunState) noteAutoCheckpoint(conversation *AgentConversation, contextPressure bool)
+func (t *resilientRunState) consumeConversationWatermarks(conversation *AgentConversation)
+func (c *RemediationCoordinator) autoThresholdCheckpoint(ctx context.Context, tracker *resilientRunState, phase domain.RunState, conversation *AgentConversation, runID string) error
+```
+
+### 3. Contracts
+- The conversation byte value is a monotone, conservative **provider-context pressure proxy**. It is neither unique-payload size nor exact request wire size. Bootstrap is counted when the conversation is created; strict-JSON tool results and protocol observations are counted when their formatted blocks enter the `pending` textual-continuation queue; native user/assistant/tool messages are counted when they enter replayable `messages` history. A successful user continuation can contain bootstrap or pending text already counted at enqueue time: counting that encoded user message again is intentional because the continuation has become a new native-history structure that later `History()` calls can replay. This models context churn/replay pressure rather than payload deduplication. Textual snapshots kept only in `observations` for bounded `ContextText` fallback (native tool-result snapshots and `assistant_output` copies) do not form another provider-native context structure and are never counted. Trimming or evicting old content never decrements the proxy. Thresholds derive from `maxConversationBytes`/`maxObservationBytes`/`maxMessageBytes`; this pressure value must never be equated with the run evidence/repository byte budget.
+- T1 context pressure fires when cumulative model-visible content reaches successive `contextPressureStepBytes` levels (192 KiB = 3/4 of the 256 KiB context bound; one full generation). T2 tool-output pressure fires for a **distinct complete tool observation** whose block reaches `toolOutputPressureBytes` (48 KiB = 3/4 of its 64 KiB output bound).
+- Each complete tool observation carries a monotone item sequence identity (`LargeToolObservation` returns the latest observation at/above the T2 line; small observations never overwrite it). The tracker keeps a `consumedToolObservationSequence` watermark: **any durable checkpoint (any reason) consumes/ covers every observation present at the moment it persists**, so a given large observation can trigger T2 at most once and an already-covered observation can never re-fire after later unrelated (non-tool) growth reaches the anti-spam quantum. Two distinct large observations that are each followed by their own consumed checkpoint fire twice when growth allows; two large observations covered by one checkpoint before an evaluation fire once.
+- Both triggers share one anti-spam byte watermark refreshed (consumed) by every durable checkpoint at the moment it persists and after every successful automatic checkpoint; an automatic checkpoint requires cumulative growth of at least one output-pressure quantum since the watermark, so repeated evaluation of the same content never re-fires. T1 fires at most once per level.
+- Evaluation happens immediately before each provider call in the diagnosing, planning, patching, and validating model-turn loops (resilient_v1 only), when every native assistant tool_call + tool result group is already complete; a checkpoint never splits a provider-native group.
+- Trigger state (T1 level, byte watermark, consumed observation sequence, and the conversation pressure proxy) is **process-local instrumentation**. After a process restart or continuation the durable checkpoint is the recovery authority: the conversation is rebuilt from it, and a fresh tracker starts at the first T1 level with zero byte/observation watermarks, so pressure accounting restarts from the reconstructed bootstrap. This reconstructs trigger **decisions deterministically for the rebuilt content** (an already-checkpointed large observation does not re-fire) but does **not** resume a pre-restart mid-generation byte total or level; that state is intentionally not persisted.
+- The checkpoint uses the existing `domain.CheckpointReasonThreshold`; metric emission (checkpoint kind, reason `threshold`) and recovery-episode settlement ride the unchanged `checkpointRun` choke point. A failed automatic append follows the existing persistence-terminal contract: the store is locked unavailable and the run transitions to `failed` with `persistence_failure`.
+- Legacy runs, nil-store runs, and nil-conversation states are byte-for-byte no-ops.
+
+### 4. Validation & Error Matrix
+| Condition | Result |
+|---|---|
+| Cumulative bytes below 192 KiB level and no tool observation at/above 48 KiB | No automatic checkpoint |
+| Cumulative at/above a 192 KiB level | One threshold checkpoint; level advances one step |
+| Single complete tool observation at/above 48 KiB, unconsumed | One threshold checkpoint (per distinct large observation) |
+| Consumed large observation followed by ≥ 48 KiB non-tool growth below the next T1 level | No re-fire (T2 consumed watermark) |
+| Forced durable checkpoint after a large observation, then unrelated growth | Large observation covered; no T2 re-fire; a later new large observation may fire |
+| Two distinct large observations, each consumed before the next arrives | Two threshold checkpoints (one per observation) |
+| Repeated evaluation or growth below one quantum since the last durable checkpoint | No re-fire (anti-spam) |
+| Oversized adapter payload | Observation saturates at the 64 KiB output bound; T2 fires once |
+| Context accounting | Bootstrap/pending enqueue pressure plus successful native-history append pressure; replayed text may contribute at both stages by design; observation-only snapshots never add a third copy |
+| Provider-native history eviction / continuation loss | Ledger stays monotone; trigger decisions restart deterministically from the rebuilt conversation (process-local levels/watermarks reset) |
+| Automatic checkpoint append fails | Run fails with `persistence_failure`; no re-prompt |
+| Legacy or nil checkpoint store | No-op; zero appends |
+
+### 5. Good / Base / Bad Cases
+- Good: three heavyweight repository reads during diagnosis each persist one threshold checkpoint (T2 after the first two reads, T1 when cumulative crosses 192 KiB) while ordinary small-read runs never append an automatic checkpoint.
+- Good: a large observation fires T2, is consumed by that checkpoint, and later ≥ 48 KiB of protocol/non-tool content growth does not make it fire again; the next distinct large observation fires exactly once.
+- Base: a resilient lifecycle phase whose every successful tool already appends a forced boundary checkpoint refreshes the watermark and consumes the observation, so the automatic trigger stays dormant by design instead of double-persisting.
+- Bad: charging context pressure against the evidence/repository byte budget, checkpointing mid assistant/tool group, counting an observation-only native tool or assistant snapshot as another context structure, treating the pressure proxy as either unique payload bytes or exact request wire bytes, letting a stale `LastToolObservationBytes` re-fire an already-checkpointed large observation, letting eviction shrink the pressure proxy so repeated churn spams checkpoints, or claiming restart resumes the pre-restart byte total/level.
+
+### 6. Tests Required
+- Conversation pressure tests: bootstrap and pending enqueue pressure; successful user/assistant/tool history append pressure, including the intentional pending-to-history replay increment; non-pending textual snapshots (native tool results, assistant outputs) add no separate structure; trim monotonicity; large-observation identity recorded only at/above the T2 line and not overwritten by small observations; native-history eviction survival.
+- Pure-decision boundary matrix: below/at/above both lines, one fire per level, no-growth anti-spam, stale large-observation + ≥ 48 KiB non-tool growth no re-fire, two distinct large observations two fires, forced checkpoint consuming a large observation, guards, restart reset determinism (fresh level/watermarks, identical reconstructed decisions).
+- Coordinator-level: oversized-observation output-pressure checkpoint with metric reason `threshold`; small-read no-fire; no-growth no-spam; two distinct large reads producing exactly two threshold checkpoints; legacy no-op; append failure becomes `persistence_failure`.
+
 ## Common Mistakes
 
 - Do not treat `FIXTHE_ENCRYPTION_KEY` as the OpenAI key. It only unwraps

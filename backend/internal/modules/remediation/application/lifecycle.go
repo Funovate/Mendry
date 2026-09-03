@@ -576,6 +576,12 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 		if exhausted, err := c.admitOperation(ctx, budget, run.RunID, domain.RunStatePatching); err != nil || exhausted {
 			return err
 		}
+		// D2/R13 自动 byte-threshold hybrid trigger（resilient_v1）：patching 的
+		// workspace/补丁读取同样受 conversation 字节压力保护；检查点保留工件/树
+		// 身份，不内联 patch 正文。失败按既有 contract 转为 persistence_failure。
+		if checkpointErr := c.autoThresholdCheckpoint(ctx, tracker, domain.RunStatePatching, tracker.conversation, run.RunID); checkpointErr != nil {
+			return checkpointErr
+		}
 		operationCtx, cancel := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(
 			operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx), domain.RunStatePatching,
@@ -670,6 +676,11 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, run.RunID, domain.RunStateValidating); err != nil || exhausted {
 			return err
+		}
+		// D2/R13 自动 byte-threshold hybrid trigger（resilient_v1），见 patching
+		// 循环同位置；validation 阶段只读 bounded 结果引用，压力账本同样适用。
+		if checkpointErr := c.autoThresholdCheckpoint(ctx, tracker, domain.RunStateValidating, tracker.conversation, run.RunID); checkpointErr != nil {
+			return checkpointErr
 		}
 		operationCtx, cancel := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(

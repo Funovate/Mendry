@@ -106,6 +106,25 @@ type resilientRunState struct {
 	// exhaustionProposalAttempts 是本次 run 已请求的 exhaustion proposal
 	// 次数，用作 exhaustion challenge 的 Attempt 字段进度计数。
 	exhaustionProposalAttempts int
+	// thresholdCheckpointLevelBytes 是下一个自动 byte-threshold checkpoint
+	// （D2/R13 T1）的累计模型可见字节级别：从 contextPressureStepBytes（192
+	// KiB）开始，每次 T1 命中推进一个步长，每级最多触发一次。进程本地：
+	// restart/续跑后 conversation 重建，计数从首级确定性重新开始，无需持久化。
+	thresholdCheckpointLevelBytes int64
+	// lastAutoCheckpointBytes 是最近一次 durable checkpoint（任何 reason）时
+	// conversation 的累计模型可见字节水位。自动 byte-threshold 触发只在累计
+	// 字节自该水位增长 ≥ toolOutputPressureBytes 后允许，避免同一内容被多轮
+	// 重复评估造成 checkpoint spam。
+	lastAutoCheckpointBytes int64
+	// consumedToolObservationSequence 是 T2 的 consumed 水位：最近一次 durable
+	// checkpoint（任何 reason，含自动触发）落盘时 conversation 最新大工具观察
+	// 的 monotone item sequence。T2 只允许出现于该水位之后的新大观察触发；
+	// 之后任意 durable checkpoint（phase boundary / recovery / threshold /
+	// process shutdown）都会消费/覆盖它——那时该观察的 working memory 已随
+	// checkpoint 落盘，后续无关字节增长不得再让同一观察重新触发（T2 stale
+	// re-fire 修正）。进程本地：restart/续跑后从 0 开始，配合重建的 fresh
+	// conversation，不再对 restart 前已 checkpoint 的内容重复触发。
+	consumedToolObservationSequence int64
 	// actionRefsByCapability 把真实工具动作及其结果 evidence IDs 绑定到
 	// D1 capability class。exhaustion validator 按 capability 校验，禁止用
 	// recovery challenge 或另一类工具的 ref 冒充已尝试路径。
@@ -123,12 +142,13 @@ type resilientRunState struct {
 // checkpoint 重建块（AC7 种子）。
 func newResilientRunState(store domain.CheckpointStore, run domain.Run, reconstruction string) *resilientRunState {
 	return &resilientRunState{
-		store:                  store,
-		run:                    run,
-		observedVersion:        run.Version + 1,
-		reconstruction:         reconstruction,
-		lastSoftSignal:         softWithinAllocation,
-		actionRefsByCapability: make(map[string][]string),
+		store:                         store,
+		run:                           run,
+		observedVersion:               run.Version + 1,
+		reconstruction:                reconstruction,
+		lastSoftSignal:                softWithinAllocation,
+		actionRefsByCapability:        make(map[string][]string),
+		thresholdCheckpointLevelBytes: contextPressureStepBytes,
 	}
 }
 
@@ -465,6 +485,12 @@ func (c *RemediationCoordinator) checkpointRun(ctx context.Context, tracker *res
 			Kind: ResilienceMetricRecoverySuccess, Phase: phase, Reason: reason,
 		})
 	}
+	// 自动 byte-threshold 触发的 anti-spam/consumed 水位（D2/R13）：任意 durable
+	// checkpoint 已代表 working memory 落盘，消费当时 conversation 的字节水位
+	// 与大工具观察身份；自动触发要求在该水位之上再有 ≥ toolOutputPressureBytes
+	// 的新增内容，且新大观察必须出现在 consumed 水位之后。queued/preparing
+	// 早期尚无 conversation 时跳过。
+	tracker.consumeConversationWatermarks(tracker.conversation)
 	return nil
 }
 
@@ -825,6 +851,100 @@ func checkpointObjective(phase domain.RunState) domain.CheckpointObjective {
 			},
 		}
 	}
+}
+
+// shouldAutoCheckpoint 是自动 byte-threshold 触发（D2/R13 automatic hybrid
+// trigger）的纯判定，供 autoThresholdCheckpoint 与单测使用：
+//   - T1 context pressure：累计模型可见字节达到下一个 contextPressureStepBytes
+//     级别（192 KiB，一个完整 context generation ≈ 现有 256 KiB 上限的 3/4），
+//     在下一轮序列化可能开始丢弃最旧内容前持久化 working memory；
+//   - T2 tool-output pressure：存在一条块字节达到 toolOutputPressureBytes 且
+//     item sequence 出现在 consumed 水位之后（尚未被任何 durable checkpoint
+//     覆盖）的完整工具观察——该有界观察本身构成 configured output pressure，
+//     且每条大观察至多触发一次（见 consumedToolObservationSequence）。
+//
+// anti-spam：两个触发共用 lastAutoCheckpointBytes 字节水位——只有累计字节自
+// 上次 durable checkpoint 增长 ≥ toolOutputPressureBytes 才允许新的自动
+// checkpoint，没有新增内容的重复评估不会触发。返回 (fire, contextPressure)；
+// T1 命中后由 noteAutoCheckpoint 推进 level。legacy / 无 store / 无
+// conversation 状态一律不触发。
+func (t *resilientRunState) shouldAutoCheckpoint(conversation *AgentConversation) (fire, contextPressure bool) {
+	if t == nil || t.store == nil || conversation == nil {
+		return false, false
+	}
+	cumulative := int64(conversation.CumulativeModelVisibleBytes())
+	if cumulative < t.lastAutoCheckpointBytes+toolOutputPressureBytes {
+		return false, false
+	}
+	contextPressure = t.thresholdCheckpointLevelBytes > 0 && cumulative >= t.thresholdCheckpointLevelBytes
+	// 大观察出现在 consumed 水位之后即满足字节线（记录时已 ≥ threshold），
+	// 且它自身为本次评估贡献了 ≥ 一个输出压力量子的新增内容；这里的字节线
+	// 检查只是防御性兜底。
+	sequence, observationBytes := conversation.LargeToolObservation()
+	outputPressure := sequence > t.consumedToolObservationSequence && observationBytes >= toolOutputPressureBytes
+	return contextPressure || outputPressure, contextPressure
+}
+
+// noteAutoCheckpoint 在自动 byte-threshold checkpoint 成功后推进 T1 level 并
+// 消费字节/观察水位（consumeConversationWatermarks），保证每级和每条大观察
+// 最多触发一次。调用方必须确认 checkpoint 已成功持久化。
+func (t *resilientRunState) noteAutoCheckpoint(conversation *AgentConversation, contextPressure bool) {
+	if t == nil || conversation == nil {
+		return
+	}
+	t.consumeConversationWatermarks(conversation)
+	if contextPressure && t.thresholdCheckpointLevelBytes > 0 {
+		t.thresholdCheckpointLevelBytes += contextPressureStepBytes
+	}
+}
+
+// consumeConversationWatermarks 把 conversation 当前的累计字节与最新大工具
+// 观察身份消费到 tracker 的 anti-spam/consumed 水位。任何 durable checkpoint
+// 成功落盘（checkpointRun，含 phase boundary / recovery / threshold / process
+// shutdown）或成功触发的自动 checkpoint（noteAutoCheckpoint）之后调用；调用方
+// 必须保证该 checkpoint 已持久化，消费语义才安全：已被覆盖的大观察不再因后续
+// 无关字节增长重复触发 T2。
+func (t *resilientRunState) consumeConversationWatermarks(conversation *AgentConversation) {
+	if t == nil || conversation == nil {
+		return
+	}
+	cumulative := int64(conversation.CumulativeModelVisibleBytes())
+	if cumulative > t.lastAutoCheckpointBytes {
+		t.lastAutoCheckpointBytes = cumulative
+	}
+	if sequence, _ := conversation.LargeToolObservation(); sequence > t.consumedToolObservationSequence {
+		t.consumedToolObservationSequence = sequence
+	}
+}
+
+// autoThresholdCheckpoint 在 resilient_v1 下于每轮模型调用前评估并执行自动
+// byte-threshold checkpoint（D2/R13；判定见 shouldAutoCheckpoint）。评估点
+// 在模型轮次之前，此时 native assistant tool_call + tool result 组必然完整
+// （组在 RecordModelTurn / AppendToolResult 同步完成），因此 checkpoint 永不
+// 截断 provider-native group。checkpoint 失败按既有 contract 是
+// persistence/consistency blocker：直接 transition 到 failed
+// （persistence_failure），不继续模型决策路径；checkpointRun 的 phase/version
+// 刷新与 metric（reason=threshold）语义保持不变。legacy / 未注入 store 时是
+// no-op，不影响既有字节路径。
+func (c *RemediationCoordinator) autoThresholdCheckpoint(
+	ctx context.Context,
+	tracker *resilientRunState,
+	phase domain.RunState,
+	conversation *AgentConversation,
+	runID string,
+) error {
+	if tracker == nil || tracker.store == nil || conversation == nil {
+		return nil
+	}
+	fire, contextPressure := tracker.shouldAutoCheckpoint(conversation)
+	if !fire {
+		return nil
+	}
+	if err := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonThreshold); err != nil {
+		return c.fail(ctx, runID, phase, markPersistenceFailure(err))
+	}
+	tracker.noteAutoCheckpoint(conversation, contextPressure)
+	return nil
 }
 
 // checkpointReconstructionEnvelope 是 reconstruction 块的 JSON 形状；所有

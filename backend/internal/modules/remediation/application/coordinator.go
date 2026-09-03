@@ -836,6 +836,13 @@ func (c *RemediationCoordinator) drive(
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStateDiagnosing); err != nil || exhausted {
 			return err
 		}
+		// D2/R13 自动 byte-threshold hybrid trigger（resilient_v1）：每轮 provider
+		// 调用前评估 context/tool-output 字节压力；触发只追加 durable checkpoint，
+		// 不改变本轮的预算/协议/终止语义。失败按既有 contract 转为
+		// persistence_failure。
+		if checkpointErr := c.autoThresholdCheckpoint(ctx, tracker, domain.RunStateDiagnosing, conversation, runID); checkpointErr != nil {
+			return checkpointErr
+		}
 		operationCtx, cancelOperation := budget.operationContext(ctx)
 		env, usage, err := c.agentEngine.TurnObservedWithConversationAndTools(
 			operationCtx, observationRun(ctx), c.observer, nextObservationSequence(ctx),
@@ -1416,6 +1423,11 @@ func (c *RemediationCoordinator) planFrom(
 	for {
 		if exhausted, err := c.admitOperation(ctx, budget, runID, domain.RunStatePlanning); err != nil || exhausted {
 			return err
+		}
+		// D2/R13 自动 byte-threshold hybrid trigger（resilient_v1），见 diagnosing
+		// 循环同位置；planning 工具读取同样受 conversation 字节压力保护。
+		if checkpointErr := c.autoThresholdCheckpoint(ctx, resilientStateFrom(ctx), domain.RunStatePlanning, conversation, runID); checkpointErr != nil {
+			return checkpointErr
 		}
 		contextText := ""
 		if conversation != nil {
