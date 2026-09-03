@@ -328,6 +328,114 @@ func (c *RemediationCoordinator) Continue(ctx context.Context, in domain.NextAtt
 		prepared.resumePhase, prepared.child.TriggerReason, "", prepared.priorInvocations)
 }
 
+// Resume 从 durable state 恢复同一个 resilient_v1 attempt。diagnosis/planning
+// 从最新 checkpoint 重建 provider-neutral context；lifecycle phase 额外复用
+// durable external-effect projection，终态重复调用保持幂等。
+func (c *RemediationCoordinator) Resume(ctx context.Context, runID string) (domain.Run, error) {
+	aggregate, err := c.store.Get(ctx, runID)
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("load remediation run for resume: %w", err)
+	}
+	run := aggregate.Run
+	if domain.ParseAgentLoopMode(string(run.AgentLoopMode)) != domain.AgentLoopModeResilientV1 || c.checkpointStore == nil {
+		return run, ErrLifecycleUnavailable
+	}
+	switch run.State {
+	case domain.RunStatePatching, domain.RunStateValidating, domain.RunStatePublishing, domain.RunStateAwaitingHumanReview:
+		return c.ResumeLifecycle(ctx, runID)
+	case domain.RunStateDiagnosisReadyForReview, domain.RunStateCompletedNonCode,
+		domain.RunStateBlockedManualReview, domain.RunStateFailed, domain.RunStateBudgetExhausted:
+		return run, nil
+	case domain.RunStateCollectingMoreContext:
+		// collecting_more_context 是 diagnosing 内部的 durable 子状态。checkpoint
+		// 不保存 raw model turn；restart 先以无效果 transition 回到 diagnosing，
+		// 再从进入/退出 collecting 边界的 provider-neutral checkpoint 继续。
+		if err := c.transition(ctx, run.RunID, domain.RunStateCollectingMoreContext, domain.RunStateDiagnosing, domain.Effect{}); err != nil {
+			return domain.Run{}, err
+		}
+		refreshed, loadErr := c.store.Get(ctx, run.RunID)
+		if loadErr != nil {
+			return domain.Run{}, fmt.Errorf("reload remediation run after collecting recovery: %w", loadErr)
+		}
+		return c.resumeAnalysis(ctx, refreshed)
+	case domain.RunStatePreparingContext, domain.RunStateDiagnosing, domain.RunStatePlanning:
+		return c.resumeAnalysis(ctx, aggregate)
+	default:
+		return run, fmt.Errorf("%w: state %s is not resumable", ErrLifecycleNotReady, run.State)
+	}
+}
+
+func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate domain.RunAggregate) (domain.Run, error) {
+	run := aggregate.Run
+	ctx = withRunObservationContext(ctx, run)
+	tracker := newResilientRunState(c.checkpointStore, run, "")
+	analysisOnly := run.TriggerReason == domain.TriggerOriginManualContinue
+	tracker.analysisOnly = analysisOnly
+	for _, invocation := range aggregate.ToolInvocations {
+		tracker.recordPriorToolAction(invocation)
+	}
+	if snapshot, err := c.checkpointStore.LoadLatestCheckpoint(ctx, run.RunID); err == nil {
+		if err := restoreAnalysisCheckpoint(tracker, snapshot, run); err != nil {
+			return domain.Run{}, err
+		}
+		tracker.reconstruction = renderCheckpointReconstruction(snapshot, nil, nil, aggregate.ToolInvocations)
+	} else if !errors.Is(err, domain.ErrCheckpointNotFound) ||
+		(run.State != domain.RunStatePreparingContext && !(run.State == domain.RunStateDiagnosing && run.Budget.ModelCalls == 0)) {
+		// 初始 preparing→diagnosing after-window 尚无 checkpoint；zero model calls
+		// 证明尚未进入首轮 provider turn，可从 run/bootstrap authority 重建。
+		return domain.Run{}, fmt.Errorf("load remediation checkpoint for resume: %w", err)
+	}
+	if tracker.alloc == nil {
+		budgetPhase := run.State
+		if budgetPhase == domain.RunStatePreparingContext {
+			budgetPhase = domain.RunStateDiagnosing
+		}
+		tracker.admitSoftBudget(c.budgetLimits, budgetPhase)
+	}
+	ctx = withResilientRunState(ctx, tracker)
+	ref, scope, err := c.resolveRefs(ctx, run)
+	if err != nil {
+		return domain.Run{}, c.fail(ctx, run.RunID, run.State, err)
+	}
+	if err := c.drive(ctx, run.RunID, ref, scope, "", "", run.State, run.State, aggregate.ToolInvocations, analysisOnly); err != nil {
+		return domain.Run{}, err
+	}
+	return c.loadLifecycleRun(ctx, run.RunID)
+}
+
+func restoreAnalysisCheckpoint(tracker *resilientRunState, snapshot domain.CheckpointSnapshot, run domain.Run) error {
+	checkpoint := snapshot.Checkpoint
+	if err := checkpoint.Validate(); err != nil {
+		return fmt.Errorf("validate remediation checkpoint for resume: %w", err)
+	}
+	if checkpoint.RunID != run.RunID || checkpoint.SeriesID != run.SeriesID || checkpoint.ContextVersion != run.ContextVersion {
+		return fmt.Errorf("validate remediation checkpoint for resume: identity mismatch: checkpoint %s/%s/%d, run %s/%s/%d",
+			checkpoint.RunID, checkpoint.SeriesID, checkpoint.ContextVersion, run.RunID, run.SeriesID, run.ContextVersion)
+	}
+	tracker.observedVersion = run.Version
+	tracker.evidenceIndex = append([]domain.CheckpointEvidenceIndexItem(nil), checkpoint.EvidenceIndex...)
+	tracker.recoveries = append([]domain.CheckpointRecovery(nil), checkpoint.Recoveries...)
+	tracker.nextActions = append([]string(nil), checkpoint.NextActions...)
+	tracker.recoveryEpisodeOpen = checkpoint.Reason == domain.CheckpointReasonRecovery
+	if checkpoint.RecoveryProgress != nil {
+		tracker.restoreRecoveryProgressSnapshot(*checkpoint.RecoveryProgress)
+	} else {
+		tracker.restoreRecoveryProgress()
+	}
+	if checkpoint.Budget.SchemaVersion != "" {
+		allocator, err := restorePhaseBudgetPlan(checkpoint.Budget)
+		if err != nil {
+			return fmt.Errorf("restore remediation budget for resume: %w", err)
+		}
+		tracker.alloc = allocator
+	}
+	if err := reconcileLifecycleCheckpoint(tracker, snapshot, run); err != nil {
+		return err
+	}
+	tracker.checkpointNeedsRebuild = snapshot.NeedsRebuild || checkpoint.ObservedRunVersion < run.Version
+	return nil
+}
+
 // preparedContinuation 是 prepareContinuation 的只读结果：queued child 及其
 // bounded continuation 输入。brief 只含 predecessor 元数据；priorEvidence 是
 // 同 series 的 runtime evidence/index 渲染；reconstruction 是 resilient_v1
@@ -441,7 +549,7 @@ func (c *RemediationCoordinator) prepareContinuation(
 		switch {
 		case loadErr == nil:
 			if snapshot.Checkpoint.SeriesID == in.SeriesID && snapshot.ContextVersion == in.ContextVersion {
-				reconstruction = renderCheckpointReconstruction(snapshot, priorRuntimeEvidence, priorEvidenceIndex)
+				reconstruction = renderCheckpointReconstruction(snapshot, priorRuntimeEvidence, priorEvidenceIndex, predecessor.ToolInvocations)
 			}
 		case errors.Is(loadErr, domain.ErrCheckpointNotFound):
 			// 前驱没有 durable checkpoint：保持既有 brief 路径。
@@ -549,7 +657,7 @@ func (c *RemediationCoordinator) runQueued(
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, failure
 	}
-	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, priorEvidenceBlock, resumePhase, priorInvocations, analysisOnly); err != nil {
+	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, priorEvidenceBlock, domain.RunStatePreparingContext, resumePhase, priorInvocations, analysisOnly); err != nil {
 		c.observeRunCompleted(ctx, run, started, domain.RunStateFailed, "failure")
 		return domain.Run{}, err
 	}
@@ -707,13 +815,22 @@ func (c *RemediationCoordinator) drive(
 	scope domain.EvidenceScope,
 	continuationBrief string,
 	priorEvidenceBlock string,
+	startState domain.RunState,
 	resumePhase domain.RunState,
 	priorInvocations []domain.ToolInvocation,
 	analysisOnly bool,
 ) error {
-	budget := newRunBudget(c.budgetLimits)
-	// resilient_v1 的 per-run 状态：nil（legacy / 无 store）时所有新增路径 no-op。
 	tracker := resilientStateFrom(ctx)
+	limits := c.budgetLimits
+	if tracker != nil && tracker.alloc != nil {
+		// restart 必须沿用 run 创建时写入 checkpoint 的 immutable hard ceiling；
+		// 新进程配置只能用于没有 durable budget snapshot 的旧数据。
+		limits = tracker.alloc.plan.Ceiling
+	}
+	budget := newRunBudget(limits)
+	if startState != domain.RunStatePreparingContext && tracker != nil {
+		budget = resumeRunBudget(limits, restoredRunBudgetCounters(tracker, tracker.run.Budget))
+	}
 
 	// runQueued 已经以 optimistic transition claim queued；此处从
 	// preparing_context 继续，避免重复推进或并发驱动同一 root。
@@ -814,18 +931,29 @@ func (c *RemediationCoordinator) drive(
 	if tracker != nil {
 		tracker.conversation = conversation
 	}
+	if startState == domain.RunStatePlanning {
+		return c.planFrom(ctx, budget, runID, ref, scope, catalog, domain.RunStatePlanning, domain.Effect{}, conversation)
+	}
 	if resumePhase == domain.RunStatePlanning {
 		return c.planFrom(ctx, budget, runID, ref, scope, catalog, domain.RunStatePreparingContext, contextEffect, conversation)
 	}
 
-	// preparing_context → diagnosing
-	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStatePreparingContext, domain.RunStateDiagnosing, contextEffect)
-	if err != nil || exhausted {
-		return err
-	}
-	// (a) D2 forced set：preparing_context → diagnosing 边界后的强制 checkpoint。
-	if checkpointErr := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
-		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
+	var exhausted bool
+	if startState != domain.RunStateDiagnosing {
+		// preparing_context → diagnosing
+		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStatePreparingContext, domain.RunStateDiagnosing, contextEffect)
+		if err != nil || exhausted {
+			return err
+		}
+		// (a) D2 forced set：preparing_context → diagnosing 边界后的强制 checkpoint。
+		if checkpointErr := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+			return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
+		}
+	} else if tracker != nil && tracker.checkpointNeedsRebuild {
+		if checkpointErr := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+			return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
+		}
+		tracker.checkpointNeedsRebuild = false
 	}
 
 	collectLoops := 0
@@ -1377,6 +1505,11 @@ func (c *RemediationCoordinator) collectMoreContext(
 	usage domain.ModelResult,
 	conversation *AgentConversation,
 ) (bool, error) {
+	// durable transition 前保存 provider-neutral diagnosis memory；usage 由后续
+	// transition 原子计入 run counters，after-window restore 会补 allocator delta。
+	if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+		return true, c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
+	}
 	exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateCollectingMoreContext, modelEffect(usage))
 	if err != nil || exhausted {
 		return exhausted, err
@@ -1391,6 +1524,11 @@ func (c *RemediationCoordinator) collectMoreContext(
 		}
 	}
 
+	// 工具结果已通过 invocation/evidence store 持久化；退出 collecting 前的
+	// checkpoint 只保存有界 evidence index 与 allocator，不保存 raw observation。
+	if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStateCollectingMoreContext, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+		return true, c.fail(ctx, runID, domain.RunStateCollectingMoreContext, markPersistenceFailure(checkpointErr))
+	}
 	return false, c.transition(ctx, runID, domain.RunStateCollectingMoreContext, domain.RunStateDiagnosing, domain.Effect{})
 }
 
@@ -1411,12 +1549,20 @@ func (c *RemediationCoordinator) planFrom(
 	initialEffect domain.Effect,
 	conversation *AgentConversation,
 ) error {
-	exhausted, err := c.transitionBudgeted(ctx, budget, runID, from, domain.RunStatePlanning, initialEffect)
-	if err != nil || exhausted {
-		return err
-	}
-	if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStatePlanning, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
-		return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(checkpointErr))
+	var exhausted bool
+	if from != domain.RunStatePlanning {
+		exhausted, err := c.transitionBudgeted(ctx, budget, runID, from, domain.RunStatePlanning, initialEffect)
+		if err != nil || exhausted {
+			return err
+		}
+		if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStatePlanning, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+			return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(checkpointErr))
+		}
+	} else if tracker := resilientStateFrom(ctx); tracker != nil && tracker.checkpointNeedsRebuild {
+		if checkpointErr := c.checkpointRun(ctx, tracker, domain.RunStatePlanning, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
+			return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(checkpointErr))
+		}
+		tracker.checkpointNeedsRebuild = false
 	}
 
 	protocolFailures := 0

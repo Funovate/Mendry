@@ -132,7 +132,10 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 	tracker.publicationPolicy = checkpointPublicationPolicy(c.publicationPolicy)
 	tracker.conversation = NewAgentConversation(lifecyclePlanContext(agg.Run, selected, agg.SuggestedDiff))
 	ctx = withResilientRunState(ctx, tracker)
-	budget := resumeRunBudget(c.budgetLimits, agg.Run.Budget)
+	budget := resumeRunBudget(
+		restoredRunBudgetLimits(c.budgetLimits, tracker),
+		restoredRunBudgetCounters(tracker, agg.Run.Budget),
+	)
 	ctx = withLifecycleBudget(ctx, budget)
 	if len(tracker.validationCommands) == 0 {
 		return agg.Run, fmt.Errorf("%w: no approved validation command snapshot", ErrLifecycleUnavailable)
@@ -195,14 +198,14 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 	}
 	tracker.lifecyclePlanID = selected.PlanID
 	tracker.conversation = NewAgentConversation(lifecyclePlanContext(agg.Run, selected, agg.SuggestedDiff))
-	if len(tracker.validationCommands) == 0 {
-		tracker.validationCommands = cloneValidationCommands(c.validationCommands)
-	}
-	if tracker.publicationPolicy == nil {
-		tracker.publicationPolicy = checkpointPublicationPolicy(c.publicationPolicy)
+	if len(tracker.validationCommands) == 0 || tracker.publicationPolicy == nil {
+		return agg.Run, fmt.Errorf("%w: lifecycle policy snapshot is incomplete", ErrLifecycleUnavailable)
 	}
 	ctx = withResilientRunState(ctx, tracker)
-	budget := resumeRunBudget(c.budgetLimits, agg.Run.Budget)
+	budget := resumeRunBudget(
+		restoredRunBudgetLimits(c.budgetLimits, tracker),
+		restoredRunBudgetCounters(tracker, agg.Run.Budget),
+	)
 	ctx = withLifecycleBudget(ctx, budget)
 	if tracker.alloc == nil {
 		phase := agg.Run.State
@@ -298,7 +301,9 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 			return nil, err
 		}
 		tracker.checkpointNeedsRebuild = snapshot.NeedsRebuild || checkpoint.ObservedRunVersion < run.Version
-	} else if !errors.Is(err, domain.ErrCheckpointNotFound) {
+	} else if errors.Is(err, domain.ErrCheckpointNotFound) {
+		return nil, fmt.Errorf("%w: required lifecycle checkpoint is missing", ErrLifecycleUnavailable)
+	} else {
 		return nil, fmt.Errorf("load lifecycle checkpoint: %w", err)
 	}
 	effects, err := c.lifecycleStore.ListLifecycleEffects(ctx, run.RunID)
@@ -370,6 +375,25 @@ func reconcileLifecycleCheckpoint(tracker *resilientRunState, snapshot domain.Ch
 	if tracker.alloc.frontier != domain.BudgetPhaseIndex(current) || tracker.alloc.closed[current] {
 		return fmt.Errorf("reconcile lifecycle budget: allocator frontier/closed state conflicts with current phase %q", current)
 	}
+	checkpointConsumed := tracker.alloc.Projection().Consumed
+	durableConsumed := budgetAmountFromCounters(run.Budget)
+	// PostgreSQL 对 active run 不写 elapsed_ms；checkpoint 是进程重启时已消耗
+	// wall-clock hard budget 的 durable authority。其他维度仍以 run counters 为准。
+	if run.Budget.ElapsedSeconds == 0 && checkpointConsumed.ElapsedSeconds > 0 {
+		durableConsumed.ElapsedSeconds = checkpointConsumed.ElapsedSeconds
+	}
+	delta := durableConsumed.Sub(checkpointConsumed)
+	if !budgetAmountNonNegative(delta) {
+		return fmt.Errorf("reconcile lifecycle budget: checkpoint consumption is ahead of durable counters")
+	}
+	// transition effect 在 durable state 变更时仍属于 source phase；必须先补
+	// checkpoint→run counter delta，再 close/admit target，避免消耗后移到 reserve。
+	if !delta.IsZero() {
+		if _, err := tracker.alloc.Consume(current, delta); err != nil {
+			return fmt.Errorf("reconcile lifecycle budget consumption: %w", err)
+		}
+	}
+
 	if current != durablePhase {
 		if durablePhase == domain.RunStatePatching && current == domain.RunStateValidating &&
 			(checkpointPhase == domain.RunStatePatching || (checkpointPhase == domain.RunStateValidating && needsRebuild)) {
@@ -392,19 +416,7 @@ func reconcileLifecycleCheckpoint(tracker *resilientRunState, snapshot domain.Ch
 			}
 		}
 	}
-
-	checkpointConsumed := tracker.alloc.Projection().Consumed
-	durableConsumed := budgetAmountFromCounters(run.Budget)
-	delta := durableConsumed.Sub(checkpointConsumed)
-	if !budgetAmountNonNegative(delta) {
-		return fmt.Errorf("reconcile lifecycle budget: checkpoint consumption is ahead of durable counters")
-	}
-	if !delta.IsZero() {
-		if _, err := tracker.alloc.Consume(tracker.alloc.current, delta); err != nil {
-			return fmt.Errorf("reconcile lifecycle budget consumption: %w", err)
-		}
-	}
-	tracker.lastMirroredElapsed = run.Budget.ElapsedSeconds
+	tracker.lastMirroredElapsed = durableConsumed.ElapsedSeconds
 	return nil
 }
 
@@ -1611,6 +1623,29 @@ func latestCheckpointArtifact(items []domain.CheckpointArtifact, kind string) (d
 		}
 	}
 	return domain.CheckpointArtifact{}, false
+}
+
+// restoredRunBudgetCounters 合并 durable run counters 与 checkpoint elapsed。
+// active PostgreSQL run 的 elapsed_ms 为 NULL，因此只有该维度允许由 checkpoint
+// 恢复；model/tool/byte/cost counters 始终由 remediation_run 掌权。
+func restoredRunBudgetCounters(tracker *resilientRunState, durable domain.BudgetCounters) domain.BudgetCounters {
+	if tracker == nil || tracker.alloc == nil || durable.ElapsedSeconds != 0 {
+		return durable
+	}
+	checkpointElapsed := tracker.alloc.Projection().Consumed.ElapsedSeconds
+	if checkpointElapsed > durable.ElapsedSeconds {
+		durable.ElapsedSeconds = checkpointElapsed
+	}
+	return durable
+}
+
+// restoredRunBudgetLimits 优先返回 checkpoint 内 immutable budget plan 的
+// hard ceiling；fallback 仅用于没有 durable allocator 的旧 checkpoint。
+func restoredRunBudgetLimits(fallback domain.BudgetLimits, tracker *resilientRunState) domain.BudgetLimits {
+	if tracker != nil && tracker.alloc != nil {
+		return tracker.alloc.plan.Ceiling
+	}
+	return fallback
 }
 
 func resumeRunBudget(limits domain.BudgetLimits, used domain.BudgetCounters) *runBudget {

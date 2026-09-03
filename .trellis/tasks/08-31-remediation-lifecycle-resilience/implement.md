@@ -354,18 +354,22 @@ tool/context challenge unification and full lifecycle restart coverage remain op
       remediation PostgreSQL adapter package passes against the development
       database at schema version 17, including checkpoint/evidence continuation
       and concurrent audit sequence coverage.
-- [ ] Pass the `INC-2270`, code-first-to-logs, continuation rehydration, malformed
+- [x] Pass the `INC-2270`, code-first-to-logs, continuation rehydration, malformed
       envelope, no-progress, and hard-blocker test matrix before enabling the
       feature flag for any project.
-      Status (2026-09-05): the named diagnosis scenarios are covered and green,
-      but this aggregate remains pending because AC7 is only partially covered.
-      Existing tests prove durable reconstruction, durable-first phase
-      reconciliation, and idempotent recovery of workspace/patch/validation/
-      publication effects. They do not yet provide an explicit before-transition
-      and after-transition crash test for every phase boundary as AC7 requires;
-      several rows below compose assertions from different tests rather than
-      exercising both crash windows at that boundary. Do not enable the feature
-      flag based on this aggregate until that matrix is added.
+      Completed: the named diagnosis scenarios and AC7's explicit restart matrix
+      are green. `TestResilientRestartPhaseBoundaryMatrix` runs 20 table-driven
+      cases with a fresh coordinator/model for each crash window. The initial
+      preparing→diagnosing boundary intentionally has no predecessor checkpoint:
+      only preparing or diagnosing with zero durable model calls may rebuild from
+      run/bootstrap authority. Every later row uses the same durable run and a
+      provider-neutral checkpoint, never an opaque provider session. It verifies
+      matching source checkpoints before a transition, stale checkpoint
+      reconstruction after a transition, durable run/series/context/version
+      identity, hard-budget restoration, and no duplicate succeeded workspace,
+      patch, validation, or publication effect. Tool-complete collection rows
+      additionally prove that bounded durable action progress reaches the fresh
+      model without parameters, summaries, or raw tool output.
 
       Diagnosis subset delivered (2026-09-04): additive regression matrix
       `backend/internal/modules/remediation/application/inc2270_regression_test.go`
@@ -394,17 +398,42 @@ tool/context challenge unification and full lifecycle restart coverage remain op
 
       Existing coverage reused without modification: `TestCoordinator_EvidenceCorrectionChallengeThenPlanning` (AC1/AC5), `TestCoordinatorContinueRendersSameSeriesEvidenceIndex` + `evidence_read_test.go` (AC2), Docker refinement + `TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead` (AC3), `TestCoordinator_ConnectorFailureIsModelVisibleAndSafe` / `TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn` (AC4), `TestResilient_ContinuationReconstructsFromDurableCheckpoint` (AC7), `TestCoordinator_ResilientIncompleteExhaustionProposalChallengesAndRetries` + `TestValidateExhaustionProposal` (AC8).
 
-      AC7 partial restart coverage inventory (verified green 2026-09-05; this is
-      not yet the required explicit every-boundary before/after crash matrix):
+      AC7 restart matrix delivered: `TestResilientRestartPhaseBoundaryMatrix`
+      directly exercises both crash windows for every executable remediation
+      boundary. The matrix covers preparing_context→diagnosing,
+      diagnosing→collecting_more_context→diagnosing, diagnosing→planning,
+      planning→diagnosis_ready_for_review, explicit
+      diagnosis_ready_for_review→patching through `ApplyPlan`,
+      patching→validating, validating→patching repair,
+      validating→publishing, and publishing→awaiting_human_review. Initial
+      boundary rows prove the only valid no-checkpoint recovery window. Later
+      before-window rows resume from a matching source checkpoint; after-window
+      rows start with the durable target state ahead of a stale checkpoint and
+      assert that the first rebuilt checkpoint uses the reconciled recovery
+      phase and current run version. `collecting_more_context` snapshots are
+      normalized to the diagnosing budget phase; a tool-complete checkpoint
+      plus durable invocation audit reconstructs a bounded `completedActions`
+      entry. The harness does not automatically replay that read; the model may
+      explicitly re-read repository content later when needed and budget allows.
+      Terminal review rows assert intentional idempotent no-op behavior.
+      Durable succeeded effects suppress duplicate external calls and preserve
+      checkpoint/run identity throughout. The matrix exposed and fixed the
+      missing same-attempt analysis restart entry point and collecting substate
+      recovery. `Resume` restores provider-neutral reconstruction plus soft/hard
+      budget state and dispatches lifecycle phases through the existing
+      effect-aware recovery. Dedicated regressions also prove that restart uses
+      the checkpointed immutable hard ceiling despite process configuration
+      drift, restores checkpoint elapsed consumption without a second soft-budget
+      mirror when active PostgreSQL rows have `elapsed_ms = NULL`, attributes a
+      transition's durable counter delta to its source phase before advancing the
+      allocator, and fails closed when an active lifecycle phase has no required
+      checkpoint or policy snapshot.
 
-      | Restart boundary | Before-transition window (crash while still in from-state) | After-transition window (durable state ahead of the checkpoint) | Tests |
-      |---|---|---|---|
-      | Attempt boundary / diagnosing resume | Predecessor terminal `failed` + continuation from durable checkpoint | Child run checkpoints at diagnosing entry (phase boundary before first turn) | `TestINC2270Regression_AC7_RestartReconstructsFromDurableCheckpoint`, `TestResilient_ContinuationReconstructsFromDurableCheckpoint`, `TestResilient_ReconstructionFallsBackToRuntimeBrief` |
-      | diagnosing→planning, planning→diagnosis_ready_for_review | Planning continuation resume from the latest durable same-context `code_fixable` checkpoint (latest may be several attempts behind a polluted predecessor) | Checkpoint ordering around the diagnosing→planning boundary and before the review terminal (observed versions asserted) | `TestCoordinatorContinueResumesPlanningAfterDurableCodeDiagnosis`, `TestCoordinatorContinueRecoversLatestPlanningCheckpointAcrossPollutedChain`, `TestCoordinatorContinuePlanningKeepsCompactBrief`, `TestResilient_CodeFixableCheckpointsAroundPlanning` |
-      | diagnosis_ready_for_review→patching | `ApplyPlan` re-entry from durable D4R state (plan/checkpoint only, no provider session) | `forceLifecycleState(patching)` resumes with real model turns after `ResumeLifecycle`, stale planning-phase checkpoint rebuilt | `TestResilientLifecycleRestartAfterWorkspaceEffectContinuesPatching`, `TestResilientLifecycleRestartReusesWorkspaceAndPatchEffects`, `TestResilientLifecycleRunsPatchValidationPublicationWithCheckpointIdentities` |
-      | patching→validating | Restart in patching with a durable patch effect → transitions to validating without a duplicate patch call | Restart in validating with a durable validation result → skips re-validation and publishes | `TestResilientLifecycleRestartSkipsValidationWhenResultWasDurable` (+ the two patching restart tests above, all asserting zero duplicate external calls and stable artifact/tree/baseline identities) |
-      | validating→publishing (+ validation-repair backward edge) | Passed validation effect resumes to publication | Validation-repair frontier: allocator stays on the validation frontier across the backward validating→patching edge | `TestReconcileLifecycleCheckpointCrashWindows` (incl. `validation repair keeps frontier`), `TestReconcileLifecycleCheckpointAcceptsPersistedValidationRepairFrontier`, `TestReconcileLifecycleCheckpointRejectsEqualVersionPhaseMismatch`, `TestReconcileLifecycleCheckpointRejectsEmbeddedPhaseAndCounterConflicts` |
-      | publishing→awaiting_human_review | `started`/`recoverable` publication effect retries the same run-scoped idempotency key after restart; `failed`/attempt-exhausted states terminalize without a retry | Restart with a `succeeded` publication effect reuses branch/commit/change identifiers and performs no SCM call | `TestResilientLifecyclePublicationEffectRestartStates`, `TestResilientLifecyclePublicationRetryReusesIdempotencyKeyAfterRestart`, `TestResilientLifecycleRestartSkipsPublicationWhenResultWasDurable` |
+      Staged-rollout prerequisite: this delivery is the restart kernel and AC7
+      test proof. Production bootstrap does not yet wire workspace/validation/
+      publication adapters or a single-owner resume worker/lease. Keep
+      `resilient_v1` disabled for production projects until that execution owner
+      is authorized and wired; do not expose unauthenticated `Resume(runID)`.
 
 ## Phase 3: Remaining Lifecycle
 
@@ -440,22 +469,21 @@ additive and requires `resilient_v1` plus the companion stores/ports.
       snapshot target branch/baseline, cap transient retries, restore successful
       branch/commit/change identities, and transition only to
       `awaiting_human_review`.
-- [ ] Add forced checkpoint and restart tests before/after every phase transition
+- [x] Add forced checkpoint and restart tests before/after every phase transition
       and external effect.
-      Partial: focused fake coverage exercises restart after workspace, patch,
-      validation, and publication effects; it verifies no duplicate external
-      calls, stable artifact/tree/baseline identities, publication policy
-      retention, same-key retry, and final human-review state. Boundary
-      checkpoint ordering and durable-first reconciliation are also covered.
-      Remaining: add an explicit two-window crash matrix (immediately before and
-      immediately after the durable transition) for every phase boundary; the
-      current suite does not prove that full AC7 quantifier.
+      Delivered: `TestResilientRestartPhaseBoundaryMatrix` provides the explicit
+      two-window phase-boundary matrix required by AC7, while the focused
+      lifecycle effect restart tests retain coverage for crashes around
+      workspace, patch, validation, and publication calls. Together they verify
+      no duplicate external calls, stable artifact/tree/baseline and run identity,
+      publication policy retention, same-key retry, stale-checkpoint rebuilding,
+      validation-repair frontier reconciliation, and terminal human-review
+      idempotency.
 
 Delivery status: Phase 3 production contracts, coordinator loop, persistence,
-policy feedback, and external-effect restart regressions are complete. The
-explicit every-phase-boundary before/after crash matrix remains open under AC7.
-Phase 4 is delivered for API/UI recovery projections, rollout observability,
-and low-cardinality metrics.
+policy feedback, external-effect restart regressions, and the complete AC7
+before/after phase-boundary matrix are delivered. Phase 4 is delivered for
+API/UI recovery projections, rollout observability, and low-cardinality metrics.
 
 ## Phase 4: API, UI, Rollout, And Verification
 
@@ -637,6 +665,15 @@ are tracked as open items below.
       integration suite was not run because no dedicated
       `FIXTHE_TEST_POSTGRES_URL` / `FIXTHE_TEST_POSTGRES_ISOLATION` environment
       is configured; the development database was intentionally not reused.
+      AC7 closure addendum (2026-09-05): the 20-row phase-boundary matrix,
+      source-phase allocator attribution, checkpoint-elapsed no-remirror,
+      immutable hard ceiling, bounded completed-action reconstruction, and
+      missing/incomplete lifecycle checkpoint fail-closed regressions pass in
+      normal and race runs. An independent `gpt-5.6-sol` Trellis check reports
+      AC7 PASS with no remaining correctness findings. Production resume
+      ownership/lease and lifecycle adapter wiring remain explicit D9 rollout
+      prerequisites; live PostgreSQL stale/future reconciliation remains an
+      evidence gap until a disposable test database is available.
 - [x] Run GitNexus `detect_changes(scope=compare, base_ref=main)` and verify only
       the expected remediation, persistence, API, and UI flows are affected.
       Final result (2026-09-05): `changed_count 74 / changed_files 21 /

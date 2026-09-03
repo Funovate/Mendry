@@ -165,6 +165,18 @@ func forceLifecycleState(store *fakeRunStore, state domain.RunState) {
 		store.created.State = state
 		store.created.Version++
 	}
+	if store.checkpointStore == nil {
+		return
+	}
+	snapshot, ok := store.checkpointStore.byRun["run-1"]
+	if !ok {
+		return
+	}
+	snapshot.Checkpoint.ValidationCommands = map[string]int64{"unit": 1}
+	snapshot.Checkpoint.PublicationPolicy = &domain.CheckpointPublicationPolicy{
+		TargetBranch: "production", BranchPrefix: "hotfix/remediation/",
+	}
+	store.checkpointStore.byRun["run-1"] = snapshot
 }
 
 type lifecycleWorkspaceFake struct {
@@ -285,6 +297,7 @@ func setupLifecycleCoordinator(t *testing.T, responses []string) (*application.R
 	store := newFakeRunStore()
 	store.mode = domain.AgentLoopModeResilientV1
 	checkpoints := &fakeCheckpointStore{runStore: store}
+	store.checkpointStore = checkpoints
 	model := &scriptedModel{responses: responses}
 	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
 	coord.SetCheckpointStore(checkpoints)

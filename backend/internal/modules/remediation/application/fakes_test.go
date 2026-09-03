@@ -26,6 +26,7 @@ type fakeRunStore struct {
 	budget            domain.BudgetCounters
 	provider          string
 	modelName         string
+	checkpointStore   *fakeCheckpointStore
 	createErr         error
 	invocationErr     error
 	submittedErr      error
@@ -155,6 +156,9 @@ func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate
 		run.DeployedCommit = f.created.DeployedCommit
 		run.SeriesID = f.created.SeriesID
 		run.AttemptNumber = f.created.AttemptNumber
+		run.Origin = f.created.Origin
+		run.TriggerReason = f.created.TriggerReason
+		run.ContextVersion = f.created.ContextVersion
 		run.Version = f.created.Version
 		run.AgentLoopMode = f.created.AgentLoopMode
 		run.AgentLoopPolicyVersion = f.created.AgentLoopPolicyVersion

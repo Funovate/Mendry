@@ -1204,6 +1204,67 @@ request := domain.PublicationRequest{
 publisher.Publish(ctx, request)
 ```
 
+## Scenario: Same-Attempt Phase-Boundary Restart
+
+### 1. Scope / Trigger
+- Trigger: resuming an existing `resilient_v1` run after process loss in any durable analysis or repair state.
+- This contract covers both windows at each transition: crash while the durable run is still in the source state, and crash after the durable transition commits but before the target checkpoint append.
+
+### 2. Signatures
+```go
+func (*application.RemediationCoordinator) Resume(context.Context, string) (domain.Run, error)
+func (*application.RemediationCoordinator) ResumeLifecycle(context.Context, string) (domain.Run, error)
+```
+
+### 3. Contracts
+- `Resume` loads the same run/series/context identity and creates a fresh coordinator conversation. It never requires or persists an opaque provider session.
+- `preparing_context`, and `diagnosing` with zero durable model calls, are the only legal no-checkpoint restart windows. They rebuild from the durable run plus authorized bootstrap evidence.
+- Later analysis states require the latest checkpoint. A stale checkpoint is reconciled to the durable run state/version and checkpointed before the next provider call; a future or identity-mismatched checkpoint is rejected.
+- `collecting_more_context` is a durable diagnosing substate. Checkpoint phase and soft-budget phase are normalized to `diagnosing`. Restart transitions it without an effect back to `diagnosing`; durable invocation audit is rendered as bounded `completedActions` (`actionRef`, capability, outcome, evidence IDs only). The harness never automatically replays that read, but the model may explicitly re-read repository content when the raw result was not evidence-persisted.
+- Stale-transition counter delta is consumed against the checkpoint/source allocator phase before close/admit advances to the durable target phase. This prevents diagnosis usage from consuming planning reserve.
+- Hard budget reconstruction uses `checkpoint.Budget.Plan.Ceiling`, never current process configuration. Model/tool/cost/byte counters come from `remediation_run`; because active PostgreSQL rows have `elapsed_ms = NULL`, elapsed consumption comes from the checkpoint allocator snapshot.
+- Active patching/validating/publishing recovery requires a checkpoint and durable lifecycle effect store. A missing checkpoint fails closed with `ErrLifecycleUnavailable`; it must not substitute current validation commands or publication policy.
+- Terminal review/failed/exhausted states are idempotent no-ops. Before rollout enables `resilient_v1`, the execution owner must invoke `Resume` under a single-owner/lease boundary; an unauthenticated run-ID endpoint is forbidden.
+
+### 4. Validation & Error Matrix
+| Condition | Required behavior |
+|---|---|
+| Legacy mode or no checkpoint store | Return `ErrLifecycleUnavailable`; preserve legacy execution. |
+| Preparing, no checkpoint | Rebuild bootstrap and continue diagnosis. |
+| Diagnosing, no checkpoint, zero model calls | Treat as initial transition-after window and rebuild bootstrap. |
+| Diagnosing/planning after any model call, no checkpoint | Fail closed; do not re-prompt. |
+| Collecting with stale diagnosing checkpoint | Return durably to diagnosing, reconcile source-phase counters, expose bounded completed action progress, checkpoint, then continue. |
+| Checkpoint version behind durable run | Durable run wins; reconcile phase/frontier/counter delta and append rebuilt checkpoint. |
+| Checkpoint version ahead, wrong run/series/context, or invalid allocator | Reject as consistency/corruption failure. |
+| Process budget config differs from checkpoint ceiling | Use checkpoint ceiling and preserve the same admission decision. |
+| Active PostgreSQL run has zero projected elapsed | Restore checkpoint elapsed; never regain wall-clock capacity. |
+| Lifecycle state has no checkpoint | Return `ErrLifecycleUnavailable`; do not use mutable process policy. |
+
+### 5. Good/Base/Bad Cases
+- Good: a validation transition commits, the process dies before the new checkpoint, and restart reconciles the stale patching checkpoint to validating without repeating a succeeded patch effect.
+- Base: a process dies immediately after preparing transitions to diagnosing; no model call exists, so bootstrap authority is reloaded and the first diagnosing checkpoint is created.
+- Bad: instantiate hard budget from `c.budgetLimits`, charge transition usage to the target phase, remirror restored elapsed, accept a missing/incomplete lifecycle checkpoint, automatically replay a checkpointed read, or expose `Resume(runID)` without authorization and single-owner execution.
+
+### 6. Tests Required
+- A table-driven two-window matrix covers `preparing→diagnosing`, `diagnosing→collecting→diagnosing`, `diagnosing→planning`, `planning→diagnosis_ready_for_review`, explicit plan acceptance, patching, validation repair/publication, and terminal human review.
+- Every row uses a fresh coordinator/model, asserts run/series/context/version identity, and verifies expected model, repository, workspace, patch, validation, and publication call counts. Tool-complete collection rows also assert the bounded completed action identity reaches the first fresh model turn without raw parameters/results.
+- Allocator tests assert transition counter delta remains in the source phase and checkpoint-restored elapsed is not mirrored twice.
+- Configuration-drift tests prove immutable hard ceiling restoration. Active-row tests prove checkpoint elapsed restoration when durable `elapsed_ms` is absent.
+- PostgreSQL integration must verify stale/future version behavior against a disposable test database; package tests without `FIXTHE_TEST_POSTGRES_URL` do not satisfy that integration assertion.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+budget := resumeRunBudget(c.budgetLimits, run.Budget)
+```
+
+#### Correct
+```go
+limits := restoredRunBudgetLimits(c.budgetLimits, tracker)
+used := restoredRunBudgetCounters(tracker, run.Budget)
+budget := resumeRunBudget(limits, used)
+```
+
 ## Scenario: Automatic Byte-Threshold Checkpoint Trigger
 
 ### 1. Scope / Trigger

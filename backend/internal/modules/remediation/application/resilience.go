@@ -960,20 +960,30 @@ type checkpointReconstructionEnvelope struct {
 	ActiveHypotheses []domain.CheckpointHypothesis        `json:"activeHypotheses"`
 	NextActions      []string                             `json:"nextActions"`
 	EvidenceIndex    []domain.CheckpointEvidenceIndexItem `json:"evidenceIndex"`
+	CompletedActions []checkpointCompletedAction          `json:"completedActions,omitempty"`
 	Budget           domain.BudgetPlanProjection          `json:"budget"`
+}
+
+type checkpointCompletedAction struct {
+	ActionRef   string   `json:"actionRef"`
+	Capability  string   `json:"capability"`
+	Outcome     string   `json:"outcome"`
+	EvidenceIDs []string `json:"evidenceIds,omitempty"`
 }
 
 // renderCheckpointReconstruction 把 predecessor 的 durable working-memory
 // checkpoint 渲染为 bounded、可安全进入模型上下文的 reconstruction 块（D2）：
 // objective、verified facts（保留 evidence IDs）、active hypotheses、next
-// actions、evidence index 与 soft-budget projection。它不内联原始证据内容，
-// 模型需要原文时必须用 evidence.read 按 ID 重读；summaries 永不升级为证据
+// actions、evidence index、completed action identity 与 soft-budget projection。
+// completed actions 只含 invocation ref/capability/outcome/evidence IDs，不含参数、
+// result summary 或 raw output；模型需要原文时必须用 evidence.read 或显式重读
 // （R15）。budget 通过纯构造函数 restore 后再投影，保证与 allocator 决策
 // 一致（D7）。
 func renderCheckpointReconstruction(
 	snapshot domain.CheckpointSnapshot,
 	priorRuntime []domain.StoredEvidence,
 	priorIndex []domain.EvidenceIndexEntry,
+	priorInvocations []domain.ToolInvocation,
 ) string {
 	checkpoint := snapshot.Checkpoint
 	evidenceIndex := reconstructionEvidenceIndex(checkpoint.EvidenceIndex, priorRuntime, priorIndex)
@@ -988,16 +998,41 @@ func renderCheckpointReconstruction(
 		ActiveHypotheses: boundedCheckpointHypotheses(checkpoint.ActiveHypotheses, 16),
 		NextActions:      boundedContinuationList(checkpoint.NextActions),
 		EvidenceIndex:    boundedCheckpointIndex(evidenceIndex, 32),
+		CompletedActions: boundedCheckpointCompletedActions(priorInvocations, 32),
 	}
 	if restored, err := restorePhaseBudgetPlan(checkpoint.Budget); err == nil {
 		envelope.Budget = restored.Projection()
 	}
 	encoded := encodeCheckpointReconstruction(envelope)
-	return "## Reconstructed working memory (durable checkpoint of the predecessor attempt; re-read evidence by evidenceId)\n" + string(encoded)
+	return "## Reconstructed working memory (durable checkpoint; re-read evidence by evidenceId)\n" + string(encoded)
+}
+
+func boundedCheckpointCompletedActions(invocations []domain.ToolInvocation, limit int) []checkpointCompletedAction {
+	if len(invocations) > limit {
+		invocations = invocations[len(invocations)-limit:]
+	}
+	actions := make([]checkpointCompletedAction, 0, len(invocations))
+	for _, invocation := range invocations {
+		capability := toolCapabilityClass(invocation.ToolName)
+		actionRef := boundedContinuationText(invocation.InvocationID, 128)
+		if capability == "" || actionRef == "" {
+			continue
+		}
+		outcome := "succeeded"
+		if invocation.Error != "" {
+			outcome = "failed"
+		}
+		actions = append(actions, checkpointCompletedAction{
+			ActionRef: actionRef, Capability: capability, Outcome: outcome,
+			EvidenceIDs: boundedContinuationList(invocation.EvidenceIDs),
+		})
+	}
+	return actions
 }
 
 // encodeCheckpointReconstruction 有界编码 reconstruction 块；超限时先丢弃
-// hypotheses，再丢弃 evidence index，最后只保留 objective/nextActions/budget。
+// hypotheses/evidence index，再丢弃 facts/next actions/completed actions；仍超限
+// 时返回最小安全 envelope。
 func encodeCheckpointReconstruction(envelope checkpointReconstructionEnvelope) []byte {
 	encoded, err := json.Marshal(envelope)
 	if err == nil && len(encoded) <= maxContinuationBriefBytes {
@@ -1011,8 +1046,9 @@ func encodeCheckpointReconstruction(envelope checkpointReconstructionEnvelope) [
 	}
 	envelope.VerifiedFacts = nil
 	envelope.NextActions = nil
+	envelope.CompletedActions = nil
 	encoded, err = json.Marshal(envelope)
-	if err == nil {
+	if err == nil && len(encoded) <= maxContinuationBriefBytes {
 		return encoded
 	}
 	return []byte(`{"kind":"working_memory_reconstruction","objective":{"goal":"Diagnose the incident from trusted evidence and repository inspection."},"budget":{}}`)

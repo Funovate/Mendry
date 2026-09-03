@@ -45,6 +45,54 @@ func TestReconcileLifecycleCheckpointCrashWindows(t *testing.T) {
 	}
 }
 
+func TestReconcileLifecycleCheckpointAttributesTransitionDeltaToSourcePhase(t *testing.T) {
+	t.Parallel()
+	tracker := lifecycleBudgetTrackerAt(t, domain.RunStatePlanning)
+	snapshot := domain.CheckpointSnapshot{NeedsRebuild: true, Checkpoint: domain.WorkingMemoryCheckpointV1{
+		Phase: string(domain.RunStatePlanning), ObservedRunVersion: 4,
+	}}
+	if err := reconcileLifecycleCheckpoint(tracker, snapshot, domain.Run{
+		State: domain.RunStatePatching, Version: 6, Budget: domain.BudgetCounters{ModelCalls: 1},
+	}); err != nil {
+		t.Fatalf("reconcileLifecycleCheckpoint() error = %v", err)
+	}
+	if got := tracker.alloc.consumed[domain.RunStatePlanning].ModelCalls; got != 1 {
+		t.Fatalf("planning transition consumption = %d, want 1", got)
+	}
+	if got := tracker.alloc.consumed[domain.RunStatePatching].ModelCalls; got != 0 {
+		t.Fatalf("patching consumption = %d, want 0", got)
+	}
+}
+
+func TestReconcileLifecycleCheckpointDoesNotRemirrorRestoredElapsed(t *testing.T) {
+	t.Parallel()
+	tracker := lifecycleBudgetTrackerAt(t, domain.RunStatePlanning)
+	if _, err := tracker.alloc.Consume(domain.RunStatePlanning, domain.BudgetAmount{ElapsedSeconds: 5}); err != nil {
+		t.Fatalf("Consume() error = %v", err)
+	}
+	snapshot := domain.CheckpointSnapshot{Checkpoint: domain.WorkingMemoryCheckpointV1{
+		Phase: string(domain.RunStatePlanning), ObservedRunVersion: 5,
+	}}
+	if err := reconcileLifecycleCheckpoint(tracker, snapshot, domain.Run{
+		State: domain.RunStatePlanning, Version: 5, Budget: domain.BudgetCounters{},
+	}); err != nil {
+		t.Fatalf("reconcileLifecycleCheckpoint() error = %v", err)
+	}
+	if tracker.lastMirroredElapsed != 5 {
+		t.Fatalf("last mirrored elapsed = %d, want 5", tracker.lastMirroredElapsed)
+	}
+	tracker.conversation = NewAgentConversation("restart")
+	limits := DefaultBudgetLimits()
+	budget := resumeRunBudget(limits, domain.BudgetCounters{ElapsedSeconds: 5})
+	ctx := withResilientRunState(context.Background(), tracker)
+	if err := (&RemediationCoordinator{}).softBudgetRecovery(ctx, budget, domain.RunStatePlanning, domain.Effect{}, false); err != nil {
+		t.Fatalf("softBudgetRecovery() error = %v", err)
+	}
+	if got := tracker.alloc.Projection().Consumed.ElapsedSeconds; got != 5 {
+		t.Fatalf("elapsed consumption after first resumed mirror = %d, want 5", got)
+	}
+}
+
 func TestReconcileLifecycleCheckpointRejectsEqualVersionPhaseMismatch(t *testing.T) {
 	t.Parallel()
 	tracker := lifecycleBudgetTrackerAt(t, domain.RunStatePlanning)
