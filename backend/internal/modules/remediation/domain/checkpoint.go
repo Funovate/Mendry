@@ -230,6 +230,12 @@ type CheckpointRecoveryProgress struct {
 	ValidationNoProgress             int    `json:"validationNoProgress"`
 	LastValidationFingerprint        string `json:"lastValidationFingerprint,omitempty"`
 	ExhaustionProposalAttempts       int    `json:"exhaustionProposalAttempts"`
+	// EpisodeRecoveryAttempts 是当前（最新）recovery episode 已执行的 recovery
+	// checkpoint 数（D8 attempt）：每次 recovery 触发的 checkpoint 追加时递增，
+	// 非 recovery checkpoint（durable 前进/终态）关闭 episode 后归零。它是
+	// review/API 的 D8 attempt 唯一权威来源，不等于跨 episode 累计的 journal
+	// 长度（journal 仅作 audit 历史，可能跨多个 episode）。
+	EpisodeRecoveryAttempts int `json:"episodeRecoveryAttempts"`
 }
 
 // CheckpointSnapshot 是 latest working-memory snapshot 与解析后的 checkpoint。
@@ -589,6 +595,7 @@ func (p CheckpointRecoveryProgress) validate() error {
 		"lifecycle stop attempts":      p.LifecycleStopAttempts,
 		"validation no progress":       p.ValidationNoProgress,
 		"exhaustion proposal attempts": p.ExhaustionProposalAttempts,
+		"episode recovery attempts":    p.EpisodeRecoveryAttempts,
 	} {
 		if value < 0 || value > maxRecoveryProgressCount {
 			return fmt.Errorf("%s is out of bounds", label)

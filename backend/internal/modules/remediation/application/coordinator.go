@@ -62,6 +62,9 @@ type RemediationCoordinator struct {
 	lifecycleTools     *LifecycleToolGateway
 	validationCommands map[string]int64
 	publicationPolicy  LifecyclePublicationPolicy
+	// resilienceMetrics 是可选的低基数恢复/生命周期指标 observer（Phase 4）。
+	// nil 或缺省时走 no-op，metrics 绝不改变 run/预算/检查点语义。
+	resilienceMetrics ResilienceMetricObserver
 }
 
 // IncidentIdentity 是 remediation 需要的事故身份，不含凭据或客户端。
@@ -237,6 +240,13 @@ func (c *RemediationCoordinator) SetBootstrapEvidenceLoader(loader domain.Bootst
 // 补齐而不改变 run 语义。
 func (c *RemediationCoordinator) SetCheckpointStore(store domain.CheckpointStore) {
 	c.checkpointStore = store
+}
+
+// SetResilienceMetricObserver 注入可选的低基数恢复/生命周期指标 observer。
+// nil/缺省保持 no-op；metrics 事件只携带枚举 kind、run 身份、mode 与 reason
+// code，绝不包含 evidence/model 内容，也绝不改变 run 语义（Phase 4）。
+func (c *RemediationCoordinator) SetResilienceMetricObserver(observer ResilienceMetricObserver) {
+	c.resilienceMetrics = normalizeResilienceMetricObserver(observer)
 }
 
 // SetDockerEvidencePort wires the credential-free Docker log port at the
@@ -439,6 +449,14 @@ func (c *RemediationCoordinator) prepareContinuation(
 			// 损坏或身份不一致的 checkpoint 不阻断 continuation（best-effort）。
 		}
 	}
+	// Phase 4 指标：resilient_v1 diagnosis continuation 从 predecessor durable
+	// checkpoint 重建工作记忆（D2/AC7）时发一次 low-cardinality 事件。
+	if reconstruction != "" {
+		c.emitResilienceMetric(ctx, ResilienceMetric{
+			Run: runIdentity(child), Mode: metricMode(child.AgentLoopMode),
+			Kind: ResilienceMetricReconstruction, Phase: domain.RunStateDiagnosing,
+		})
+	}
 	return preparedContinuation{
 		child: child, brief: brief, priorEvidence: priorEvidence, reconstruction: reconstruction,
 		resumePhase: resumePhase, priorInvocations: predecessor.ToolInvocations,
@@ -516,6 +534,10 @@ func (c *RemediationCoordinator) runQueued(
 	}
 	c.observer.RunStarted(ctx, RunStartedObservation{
 		Run: runIdentity(run), Phase: run.State, TriggerReason: triggerReason, Priority: priority,
+		AgentLoopMode: domain.ParseAgentLoopMode(string(run.AgentLoopMode)), AgentLoopPolicyVersion: max(run.AgentLoopPolicyVersion, 0),
+	})
+	c.emitResilienceMetric(ctx, ResilienceMetric{
+		Run: runIdentity(run), Mode: metricMode(run.AgentLoopMode), Kind: ResilienceMetricRunStarted, Phase: run.State,
 	})
 	c.observer.StateTransitioned(ctx, StateTransitionObservation{
 		Run: runIdentity(run), From: domain.RunStateQueued, To: domain.RunStatePreparingContext,
@@ -847,7 +869,7 @@ func (c *RemediationCoordinator) drive(
 				if err != nil || exhausted {
 					return err
 				}
-				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				c.appendRequiredDetailCorrection(ctx, conversation)
 				continue
 			}
 			done, err := c.handleExhaustionEnvelope(ctx, budget, runID, usage, env.Exhaustion, catalog, conversation)
@@ -885,7 +907,7 @@ func (c *RemediationCoordinator) drive(
 				if err != nil || exhausted {
 					return err
 				}
-				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				c.appendRequiredDetailCorrection(ctx, conversation)
 				continue
 			}
 			challenged, terminal, err := c.challengePendingDockerRefinement(
@@ -976,7 +998,7 @@ func (c *RemediationCoordinator) drive(
 				if err != nil || exhausted {
 					return err
 				}
-				conversation.AppendProtocolError(domain.RunStateDiagnosing, requiredTencentDetailCorrection())
+				c.appendRequiredDetailCorrection(ctx, conversation)
 				continue
 			}
 			challenged, terminal, err := c.challengePendingDockerRefinement(
@@ -1133,7 +1155,9 @@ func (c *RemediationCoordinator) challengeEvidenceCorrections(
 			return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 		}
 	}
-	conversation.AppendRecoveryChallenge(challenge)
+	// D5 challenge 追加与 per-kind 指标在同一共享出口完成（见
+	// appendRecoveryChallenge），legacy run 只追加不计数。
+	c.appendRecoveryChallenge(ctx, domain.RunStateDiagnosing, conversation, challenge)
 	return nil
 }
 
@@ -1191,7 +1215,7 @@ func (c *RemediationCoordinator) challengeFactCheck(
 	if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
 		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 	}
-	conversation.AppendRecoveryChallenge(challenge)
+	c.appendRecoveryChallenge(ctx, domain.RunStateDiagnosing, conversation, challenge)
 	return nil
 }
 
@@ -1293,6 +1317,13 @@ func (c *RemediationCoordinator) routeDiagnosis(
 		return done, err
 
 	case domain.FixabilityCodeFixable:
+		// 收敛复位（F1）：gate 准入的 code_fixable 诊断是 durable 前进。清空
+		// diagnosing 的 fact-check/exhaustion 连续 no-progress 计数，避免已结算
+		// 的 loop 把进入 planning 后的 checkpoint（phase boundary / 后续
+		// lifecycle recovery）长期误标为 no-progress。
+		if tracker := resilientStateFrom(ctx); tracker != nil {
+			tracker.resetDiagnosisNoProgress()
+		}
 		// (c) D2 forced set：进入 planning 边界前的强制 checkpoint。
 		if checkpointErr := c.checkpointRun(ctx, resilientStateFrom(ctx), domain.RunStateDiagnosing, domain.CheckpointReasonPhaseBoundary); checkpointErr != nil {
 			return true, c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(checkpointErr))
@@ -1507,12 +1538,21 @@ func (c *RemediationCoordinator) notifyTerminal(ctx context.Context, runID strin
 	if kind == "" || c.notifications == nil {
 		return nil
 	}
+	// 审计元数据记录 run 创建时快照的 D9 政策模式（agentLoopMode），
+	// 读取失败保持 legacy 缺省，通知本身不受影响。
+	mode := domain.AgentLoopModeLegacy
+	if current, err := c.store.Get(context.WithoutCancel(ctx), runID); err == nil &&
+		domain.ParseAgentLoopMode(string(current.Run.AgentLoopMode)).IsKnown() {
+		mode = domain.ParseAgentLoopMode(string(current.Run.AgentLoopMode))
+	}
 	if err := c.notifications.Notify(ctx, TerminalNotification{
 		RunID:      runID,
 		Kind:       kind,
 		Summary:    notificationSummary(kind),
 		Fixability: fixability,
 		State:      state,
+		// AgentLoopMode 记录到 audit metadata 白名单，不进 summary。
+		AgentLoopMode: mode,
 	}); err != nil {
 		return fmt.Errorf("notify terminal %s: %w", kind, err)
 	}
@@ -1674,7 +1714,7 @@ func (c *RemediationCoordinator) handleTurnError(
 				return true, c.fail(ctx, runID, phase, markPersistenceFailure(checkpointErr))
 			}
 			if conversation != nil {
-				conversation.AppendRecoveryChallenge(challenge)
+				c.appendRecoveryChallenge(ctx, phase, conversation, challenge)
 			}
 			return false, nil
 		}
@@ -1791,10 +1831,18 @@ func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID
 		// Terminal persistence must survive a caller/run operation deadline; the
 		// run budget and database transaction still bound the actual write.
 		transitionContext = context.WithoutCancel(ctx)
+		tracker := resilientStateFrom(ctx)
+		// 放弃型终态（failed/budget_exhausted/blocked_manual_review）先静默关闭
+		// recovery episode，使随后的 phase_boundary checkpoint 不结算
+		// recovery-success：run 没有从 recovery 收敛回前进路径。业务结论终态
+		// （diagnosis_ready_for_review 等）保留 open episode，由其终态前
+		// checkpoint 结算一次 success。
+		if tracker != nil && metricAbandonmentTerminal(to) {
+			tracker.recoveryEpisodeOpen = false
+		}
 		// required terminal checkpoint 失败本身就是 persistence/consistency
 		// terminal blocker。直接把本次 transition 改为 failed，不能继续原终态，
 		// 也不能递归重试已经标记 unavailable 的 checkpoint store。
-		tracker := resilientStateFrom(ctx)
 		if tracker == nil || !tracker.checkpointUnavailable {
 			checkpointErr = c.checkpointRun(transitionContext, tracker, from, domain.CheckpointReasonPhaseBoundary)
 		}
@@ -1811,6 +1859,25 @@ func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID
 	c.observer.StateTransitioned(ctx, StateTransitionObservation{
 		Run: observationRun(ctx), From: from, To: to, Effect: effect, BudgetExhaustedReason: string(reason),
 	})
+	// Phase 4 指标：resilient run 的每次 durable transition 与进入终态事件都只
+	// 携带低基数 state/reason code，不影响 run 语义。
+	if tracker := resilientStateFrom(ctx); tracker != nil {
+		mode := metricMode(tracker.run.AgentLoopMode)
+		transitionMetric := ResilienceMetric{
+			Run: observationRun(ctx), Mode: mode, Kind: ResilienceMetricStateTransitioned,
+			From: from, To: to,
+		}
+		if reason != "" {
+			transitionMetric.Reason = string(reason)
+		}
+		c.emitResilienceMetric(ctx, transitionMetric)
+		if isTerminalStateForApplication(to) {
+			c.emitResilienceMetric(ctx, ResilienceMetric{
+				Run: observationRun(ctx), Mode: mode, Kind: ResilienceMetricRunTerminal,
+				Phase: to, TerminalReason: effect.TerminalReason,
+			})
+		}
+	}
 	if checkpointErr != nil {
 		return fmt.Errorf("persist required checkpoint before terminal transition: %w", checkpointErr)
 	}

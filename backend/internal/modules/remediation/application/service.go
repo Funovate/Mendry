@@ -50,19 +50,24 @@ type BackgroundTriggerContinuer interface {
 }
 
 // ServiceOptions 声明 remediation 手动用例依赖。
+// Checkpoints 是可选的 durable checkpoint 摘要 reader：注入后 GET review 会为
+// resilient_v1 run 附加 D8 recovery/checkpoint projection；legacy 与既有部署
+// 不注入时行为不变。
 type ServiceOptions struct {
-	Projects  ProjectAccess
-	Incidents IncidentLookup
-	Trigger   TriggerStarter
-	Reviews   ReviewQuery
+	Projects    ProjectAccess
+	Incidents   IncidentLookup
+	Trigger     TriggerStarter
+	Reviews     ReviewQuery
+	Checkpoints CheckpointReviewReader
 }
 
 // Service 组合 remediation 手动启动和 review 读取用例；自动触发仍由 incidents.Service 调用 Trigger。
 type Service struct {
-	projects  ProjectAccess
-	incidents IncidentLookup
-	trigger   TriggerStarter
-	reviews   ReviewQuery
+	projects    ProjectAccess
+	incidents   IncidentLookup
+	trigger     TriggerStarter
+	reviews     ReviewQuery
+	checkpoints CheckpointReviewReader
 }
 
 // NewService 验证并创建 remediation application service。
@@ -71,10 +76,11 @@ func NewService(options ServiceOptions) (*Service, error) {
 		return nil, fmt.Errorf("remediation service dependencies are required")
 	}
 	return &Service{
-		projects:  options.Projects,
-		incidents: options.Incidents,
-		trigger:   options.Trigger,
-		reviews:   options.Reviews,
+		projects:    options.Projects,
+		incidents:   options.Incidents,
+		trigger:     options.Trigger,
+		reviews:     options.Reviews,
+		checkpoints: options.Checkpoints,
 	}, nil
 }
 
@@ -260,5 +266,14 @@ func (s *Service) GetRemediation(ctx context.Context, principal authdomain.User,
 	review := buildReview(agg)
 	review.ContinuationAvailable = project.CanWriteIncidents() &&
 		isManualContinuationState(agg.Run.State) && !aggregateHasActiveAttempt(agg)
+	// D8：resilient_v1 run 且注入了 checkpoint reader 时附加最新 durable
+	// checkpoint/recovery projection。任何加载/校验错误都只跳过 projection，
+	// review 页面保持可用（legacy run 与未注入部署完全不受影响）。
+	if s.checkpoints != nil && agg.Run.AgentLoopMode == domain.AgentLoopModeResilientV1 {
+		snapshot, loadErr := s.checkpoints.LoadLatestCheckpoint(ctx, agg.Run.RunID)
+		if loadErr == nil {
+			attachReviewCheckpoint(&review, snapshot)
+		}
+	}
 	return review, nil
 }

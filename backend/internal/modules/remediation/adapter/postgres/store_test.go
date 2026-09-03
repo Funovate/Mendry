@@ -889,14 +889,14 @@ func TestRunStore_NotifyWritesAllowlistedAuditMetadata(t *testing.T) {
 		Summary:    "Remediation diagnosis is ready for review.",
 		Fixability: domain.FixabilityCodeFixable, State: domain.RunStateDiagnosisReadyForReview,
 	}
-	// 白名单元数据：允许的键仅 runId/state/fixability/kind。
+	// 白名单元数据：允许的键仅 runId/state/fixability/kind/agentLoopMode。
 	meta := application.NotificationMetadata(notification)
-	if len(meta) != 4 || meta["runId"] != run.RunID || meta["kind"] != application.NotificationDiagnosisReadyForReview {
+	if len(meta) != 5 || meta["runId"] != run.RunID || meta["kind"] != application.NotificationDiagnosisReadyForReview {
 		t.Fatalf("metadata = %#v", meta)
 	}
 	for key := range meta {
 		switch key {
-		case "runId", "state", "fixability", "kind":
+		case "runId", "state", "fixability", "kind", "agentLoopMode":
 		default:
 			t.Fatalf("unexpected metadata key %q", key)
 		}

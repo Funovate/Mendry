@@ -66,6 +66,14 @@ Do not add a generic component abstraction for a one-off layout.
 
 - Icon-only buttons require an accessible label and tooltip (`IconButton`).
 - Loading states use `role="status"`; request failures use `role="alert"`.
+- A remediation recovery projection uses `role="status"` and remains visually
+  distinct from terminal manual review. Render recovery only when
+  `recovery.active` is true; render the manual-fix panel only when status is
+  `blocked_manual_review`. Never infer either state from missing evidence text.
+- Recovery UI may show only phase, checkpoint age/sequence, allowlisted reason
+  code, current episode attempt, capability classes, next action, and numeric
+  budget summary. Do not render checkpoint journals, evidence indexes, outcome
+  references, connector messages, model turns, or tool output.
 - Active navigation uses `NavLink` state and semantic anchors.
 - Form fields require accessible labels; native select, radio, and checkbox controls are preferred.
 - Mobile navigation must close after route selection, and the stable state must not overflow the viewport.

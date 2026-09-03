@@ -17,11 +17,15 @@ type RunIdentity struct {
 }
 
 // RunStartedObservation 描述已持久化 queued run 的启动边界。
+// AgentLoopMode/AgentLoopPolicyVersion 是 run 创建时快照的 D9 项目政策；
+// legacy run 保持 legacy，观察/审计可以按 mode 区分行为。
 type RunStartedObservation struct {
-	Run           RunIdentity
-	Phase         domain.RunState
-	TriggerReason string
-	Priority      string
+	Run                    RunIdentity
+	Phase                  domain.RunState
+	TriggerReason          string
+	Priority               string
+	AgentLoopMode          domain.AgentLoopMode
+	AgentLoopPolicyVersion int64
 }
 
 // StateTransitionObservation 描述一次成功提交的状态迁移及本次预算 effect。

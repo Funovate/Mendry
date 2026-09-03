@@ -277,6 +277,10 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 		tracker.publicationPolicy = cloneCheckpointPublicationPolicy(checkpoint.PublicationPolicy)
 		tracker.validationCommands = cloneValidationCommands(checkpoint.ValidationCommands)
 		tracker.recoveries = append([]domain.CheckpointRecovery(nil), checkpoint.Recoveries...)
+		// restart 中途 recovery：最近 durable checkpoint 是 recovery 触发时，把
+		// episode 保持打开，使恢复后的第一个非 recovery durable checkpoint 结算
+		// recovery-success（AC7 durable tracker state）。
+		tracker.recoveryEpisodeOpen = checkpoint.Reason == domain.CheckpointReasonRecovery
 		if checkpoint.RecoveryProgress != nil {
 			tracker.restoreRecoveryProgressSnapshot(*checkpoint.RecoveryProgress)
 		} else {
@@ -1385,10 +1389,10 @@ func (c *RemediationCoordinator) appendLifecycleChallenge(ctx context.Context, k
 		outcomeRef = recoveryProgressRef(code, tracker.lastValidationFingerprint)
 	}
 	tracker.appendRecovery(domain.CheckpointRecovery{Kind: string(kind), Action: journalAction, OutcomeRef: outcomeRef})
-	if tracker.conversation != nil {
-		tracker.conversation.AppendRecoveryChallenge(challenge)
-	}
 	phase := lifecyclePhaseFromTracker(tracker)
+	// D5 challenge 追加与 per-kind 指标在同一共享出口完成；nil conversation 时
+	// 跳过，与既有行为一致。
+	c.appendRecoveryChallenge(ctx, phase, tracker.conversation, challenge)
 	if err := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonRecovery); err != nil {
 		return c.fail(ctx, tracker.run.RunID, phase, markPersistenceFailure(err))
 	}

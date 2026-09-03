@@ -59,6 +59,18 @@ type resilientRunState struct {
 	evidenceIndex       []domain.CheckpointEvidenceIndexItem
 	recoveries          []domain.CheckpointRecovery
 	recoveryAttempt     int
+	// episodeRecoveryAttempts 是当前 recovery episode 已追加的 recovery
+	// checkpoint 数（D8 attempt，F3）。它由 checkpointRun 维护：recovery 触发
+	// checkpoint 递增，非 recovery checkpoint（durable 前进/终态）归零；与
+	// recoveryEpisodeOpen 同源的 episode 边界语义，随 checkpoint 持久化以便
+	// restart/续跑恢复精确 attempt。
+	episodeRecoveryAttempts int
+	// recoveryEpisodeOpen 表示 run 当前处于一次 active recovery episode：最近
+	// 一次 durable checkpoint 是 recovery 触发（或 restart 从 checkpoint 恢复为
+	// recovery）且尚未被非 recovery durable 前进结算。episode 打开后，第一个
+	// 非 recovery checkpoint 只结算一次 recovery-success 并关闭；放弃型终态在
+	// transitionWithReason 先静默关闭，不产生 success。
+	recoveryEpisodeOpen bool
 	// evidenceCorrectionAttempts 是本次 run 已回喂的 evidence_correction
 	// challenge 次数，用作 challenge Attempt 字段的进度计数。
 	evidenceCorrectionAttempts int
@@ -216,6 +228,9 @@ func (t *resilientRunState) restoreRecoveryProgress() {
 			t.exhaustionProposalAttempts++
 		}
 	}
+	// legacy journal 没有 episode 边界标记；以 journal 长度近似当前 episode
+	// attempt（保守回退，仅限 pre-change v1 无 progress 快照的 checkpoint）。
+	t.episodeRecoveryAttempts = len(t.recoveries)
 }
 
 func isLegacyLifecycleRecoveryAction(action string) bool {
@@ -256,6 +271,7 @@ func (t *resilientRunState) restoreRecoveryProgressSnapshot(progress domain.Chec
 	t.validationNoProgress = progress.ValidationNoProgress
 	t.lastValidationFingerprint = progress.LastValidationFingerprint
 	t.exhaustionProposalAttempts = progress.ExhaustionProposalAttempts
+	t.episodeRecoveryAttempts = progress.EpisodeRecoveryAttempts
 }
 
 func (t *resilientRunState) recoveryProgressSnapshot() *domain.CheckpointRecoveryProgress {
@@ -271,6 +287,7 @@ func (t *resilientRunState) recoveryProgressSnapshot() *domain.CheckpointRecover
 		LifecycleChallengeAttempts:       t.lifecycleChallengeAttempts, LifecycleStopAttempts: t.lifecycleStopAttempts,
 		ValidationNoProgress: t.validationNoProgress, LastValidationFingerprint: t.lastValidationFingerprint,
 		ExhaustionProposalAttempts: t.exhaustionProposalAttempts,
+		EpisodeRecoveryAttempts:    t.episodeRecoveryAttempts,
 	}
 }
 
@@ -303,6 +320,37 @@ func (t *resilientRunState) resetLifecycleNoProgress() {
 	t.lastLifecycleRecoveryFingerprint = ""
 	t.lastLifecycleRecoveryClass = ""
 	t.lifecycleStopAttempts = 0
+}
+
+// resetDiagnosisNoProgress 在 gate 准入的 code_fixable 诊断收敛时清空
+// diagnosing 的 no-progress 连续计数与 exhaustion 请求计数（F1）。这些计数
+// 只在同一连续无进展 loop 内有意义：一次成功的 durable 前进（gate 准入、
+// 进入 planning）后，后续 checkpoint 不应继续携带已结算 loop 的标记
+// （lifetime stickiness）。绝不重置 validation/lifecycle 计数（那些由各自的
+// 收敛点与修复边界复位方法管理）。
+func (t *resilientRunState) resetDiagnosisNoProgress() {
+	if t == nil {
+		return
+	}
+	t.factCheckNoProgress = 0
+	t.lastFactCheckFingerprint = ""
+	t.exhaustionProposalAttempts = 0
+}
+
+// advanceRecoveryEpisode 在每次 durable checkpoint 追加前更新当前 recovery
+// episode 的 attempt 计数（D8 attempt，F3）：recovery 触发 checkpoint 递增；
+// 非 recovery checkpoint（phase boundary / threshold / process shutdown，即
+// durable 前进或终态）关闭 episode 并从 1 重新计数。计数随 checkpoint 持久化，
+// restart/续跑经 restoreRecoveryProgressSnapshot 精确恢复。
+func (t *resilientRunState) advanceRecoveryEpisode(reason string) {
+	if t == nil {
+		return
+	}
+	if reason == domain.CheckpointReasonRecovery {
+		t.episodeRecoveryAttempts++
+	} else {
+		t.episodeRecoveryAttempts = 0
+	}
 }
 
 func (t *resilientRunState) resetValidationNoProgress() {
@@ -383,6 +431,10 @@ func (c *RemediationCoordinator) checkpointRun(ctx context.Context, tracker *res
 	} else if budgetPhase, ok := domain.BudgetPhaseFor(phase); ok {
 		phase = budgetPhase
 	}
+	// D8 attempt 的 episode 边界（F3）：recovery 触发的 checkpoint 递增当前
+	// episode attempt，非 recovery checkpoint 关闭 episode 归零。必须在构造
+	// checkpoint payload 之前更新，使持久化的 RecoveryProgress 携带最新值。
+	tracker.advanceRecoveryEpisode(reason)
 	checkpoint, err := tracker.buildCheckpoint(phase, reason)
 	if err != nil {
 		tracker.checkpointUnavailable = true
@@ -391,6 +443,27 @@ func (c *RemediationCoordinator) checkpointRun(ctx context.Context, tracker *res
 	if _, err := tracker.store.AppendCheckpoint(ctx, tracker.run.RunID, checkpoint); err != nil {
 		tracker.checkpointUnavailable = true
 		return fmt.Errorf("append remediation checkpoint: %w", err)
+	}
+	// Phase 4 指标：每次 durable checkpoint 都只发出 reason/phase/no-progress
+	// 标记与 recovery journal 长度；recovery 触发(checkpoint reason=recovery)可
+	// 在 phase_boundary/threshold 事件旁推导 recovery 收敛率。
+	c.emitResilienceMetric(ctx, ResilienceMetric{
+		Run: observationRun(ctx), Mode: metricMode(tracker.run.AgentLoopMode),
+		Kind: ResilienceMetricCheckpoint, Phase: phase, Reason: reason,
+		NoProgress: checkpointNoProgress(checkpoint.RecoveryProgress), Attempts: len(checkpoint.Recoveries),
+	})
+	// Recovery episode 结算（durable tracker state）：recovery 触发 checkpoint
+	// 打开/保持 episode；之后第一个非 recovery checkpoint 表示 durable 前进，
+	// 恰好结算一次 recovery-success 并关闭 episode。被放弃型终态静默关闭的
+	// episode 不会走到这里，因此不会误报 success。
+	if reason == domain.CheckpointReasonRecovery {
+		tracker.recoveryEpisodeOpen = true
+	} else if tracker.recoveryEpisodeOpen {
+		tracker.recoveryEpisodeOpen = false
+		c.emitResilienceMetric(ctx, ResilienceMetric{
+			Run: observationRun(ctx), Mode: metricMode(tracker.run.AgentLoopMode),
+			Kind: ResilienceMetricRecoverySuccess, Phase: phase, Reason: reason,
+		})
 	}
 	return nil
 }
@@ -610,12 +683,19 @@ func (c *RemediationCoordinator) softBudgetRecovery(ctx context.Context, budget 
 	if err != nil {
 		return fmt.Errorf("build soft budget recovery challenge: %w", err)
 	}
+	// Phase 4 指标：soft-budget 信号增强（soft_crossed/reserve_touched）发出
+	// low-cardinality budget signal；只有增强时发一次，避免重复告警刷屏。
+	c.emitResilienceMetric(ctx, ResilienceMetric{
+		Run: observationRun(ctx), Mode: metricMode(tracker.run.AgentLoopMode),
+		Kind: ResilienceMetricBudgetSignal, Phase: phase, Reason: softBudgetReasonCode(signal),
+	})
 	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind:       string(challenge.Kind),
 		Action:     string(signal),
 		OutcomeRef: "challenge:" + challenge.ReasonCode,
 	})
-	tracker.conversation.AppendRecoveryChallenge(challenge)
+	// D5 challenge 追加与 per-kind 指标在同一共享出口完成。
+	c.appendRecoveryChallenge(ctx, phase, tracker.conversation, challenge)
 	if err := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonRecovery); err != nil {
 		return err
 	}

@@ -516,10 +516,20 @@ func TestNotificationKindAndMetadataStayAllowlisted(t *testing.T) {
 	meta := application.NotificationMetadata(application.TerminalNotification{
 		RunID: "run-1", Kind: application.NotificationDiagnosisReadyForReview,
 		Fixability: domain.FixabilityCodeFixable, State: domain.RunStateDiagnosisReadyForReview,
-		Summary: "should not appear in metadata",
+		AgentLoopMode: domain.AgentLoopModeResilientV1,
+		Summary:       "should not appear in metadata",
 	})
-	if len(meta) != 4 || meta["kind"] != application.NotificationDiagnosisReadyForReview || meta["runId"] != "run-1" {
+	if len(meta) != 5 || meta["kind"] != application.NotificationDiagnosisReadyForReview ||
+		meta["runId"] != "run-1" || meta["agentLoopMode"] != "resilient_v1" {
 		t.Fatalf("metadata = %#v", meta)
+	}
+	// 未设置 mode 的旧构造回退到 legacy，仍写入白名单键。
+	legacyMeta := application.NotificationMetadata(application.TerminalNotification{
+		RunID: "run-2", Kind: application.NotificationInsufficientEvidence,
+		Fixability: domain.FixabilityInsufficientEvidence, State: domain.RunStateBlockedManualReview,
+	})
+	if legacyMeta["agentLoopMode"] != "legacy" || len(legacyMeta) != 5 {
+		t.Fatalf("legacy metadata = %#v", legacyMeta)
 	}
 	if _, ok := meta["summary"]; ok {
 		t.Fatalf("summary leaked into metadata: %#v", meta)

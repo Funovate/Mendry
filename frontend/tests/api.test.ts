@@ -290,6 +290,115 @@ describe("API contract boundary", () => {
     });
   });
 
+  it("unwraps an active recovery projection on a resilient review", async () => {
+    const review = {
+      runId: "run-1",
+      seriesId: "series-1",
+      status: "diagnosing",
+      generation: 1,
+      deployedCommit: "abc123",
+      attemptNumber: 1,
+      version: 7,
+      origin: "automatic",
+      terminalReason: "",
+      manualSuggestion: "",
+      retryable: false,
+      continuationAvailable: false,
+      agentLoopMode: "resilient_v1",
+      agentLoopPolicyVersion: 3,
+      attempts: [],
+      diagnosis: null,
+      plans: [],
+      suggestedDiff: "",
+      risk: "",
+      checkpoint: {
+        sequence: 5,
+        phase: "diagnosing",
+        reason: "recovery",
+        observedRunVersion: 7,
+        updatedAt: "2026-09-04T12:00:00Z",
+      },
+      recovery: {
+        active: true,
+        kind: "tool_failure",
+        reason: "connector_timeout",
+        attempt: 2,
+        attemptedPathClasses: ["runtime_logs", "repository"],
+        nextAction: "inspect the exact deployed source",
+        remainingBudget: {
+          schemaVersion: "v1",
+          phase: "diagnosing",
+          consumed: { elapsedSeconds: 12, modelCalls: 3, modelCostCents: 2, toolCalls: 2, evidenceBytes: 100, repositoryBytes: 50 },
+          remaining: { elapsedSeconds: 480, modelCalls: 97, modelCostCents: 98, toolCalls: 98, evidenceBytes: 1048476, repositoryBytes: 1048476 },
+          unreserved: { elapsedSeconds: 60, modelCalls: 40, modelCostCents: 40, toolCalls: 40, evidenceBytes: 100, repositoryBytes: 100 },
+          recovery: { min: { elapsedSeconds: 60, modelCalls: 5, modelCostCents: 5, toolCalls: 5, evidenceBytes: 100, repositoryBytes: 100 } },
+          ceiling: { maxElapsed: 900, maxModelCalls: 100, maxModelCostCents: 100, maxToolCalls: 100, maxEvidenceBytes: 1000, maxRepositoryBytes: 1000 },
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: review,
+      meta: { requestId: "request-12", durationMs: 1 },
+    }), { status: 200 })));
+    const parsed = await api.getRemediation("payments", "INC-2049");
+    expect(parsed).toMatchObject({
+      runId: "run-1",
+      agentLoopMode: "resilient_v1",
+      agentLoopPolicyVersion: 3,
+      recovery: {
+        active: true,
+        kind: "tool_failure",
+        attemptedPathClasses: ["runtime_logs", "repository"],
+        nextAction: "inspect the exact deployed source",
+      },
+      checkpoint: { sequence: 5, reason: "recovery" },
+    });
+    expect(parsed.recovery?.remainingBudget?.remaining?.modelCalls).toBe(97);
+  });
+
+  it("rejects a recovery projection whose budget amount is malformed", async () => {
+    const review = {
+      runId: "run-1",
+      seriesId: "series-1",
+      status: "diagnosing",
+      generation: 1,
+      deployedCommit: "abc123",
+      attemptNumber: 1,
+      version: 7,
+      origin: "automatic",
+      terminalReason: "",
+      retryable: false,
+      continuationAvailable: false,
+      agentLoopMode: "resilient_v1",
+      attempts: [],
+      diagnosis: null,
+      plans: [],
+      suggestedDiff: "",
+      risk: "",
+      checkpoint: { sequence: 5, phase: "diagnosing", reason: "recovery", observedRunVersion: 7, updatedAt: "2026-09-04T12:00:00Z" },
+      recovery: {
+        active: true,
+        attemptedPathClasses: ["runtime_logs"],
+        remainingBudget: {
+          phase: "diagnosing",
+          consumed: { elapsedSeconds: -1, modelCalls: 1, modelCostCents: 1, toolCalls: 1, evidenceBytes: 1, repositoryBytes: 1 },
+          remaining: {},
+          unreserved: {},
+          recovery: {},
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: review,
+      meta: { requestId: "request-13", durationMs: 1 },
+    }), { status: 200 })));
+    await expect(api.getRemediation("payments", "INC-2049")).rejects.toBeInstanceOf(ApiContractError);
+  });
+
   it("posts a strict remediation retry request and validates the new attempt", async () => {
     const action = {
       runId: "run-2",

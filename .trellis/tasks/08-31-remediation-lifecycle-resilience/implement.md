@@ -374,20 +374,190 @@ acceptance.
 
 ## Phase 4: API, UI, Rollout, And Verification
 
-- [ ] Add optional recovery/checkpoint projections to backend HTTP response and
+Progress markers: `[x]` = delivered (2026-09-04, first pass). Remaining follow-ups
+are tracked as open items below.
+
+- [x] Add optional recovery/checkpoint projections to backend HTTP response and
       frontend schemas; preserve compatibility with legacy runs.
-- [ ] Render active recovery separately from terminal manual review, including
+      Delivered (2026-09-04): `application.Review` gains additive `AgentLoopMode` /
+      `AgentLoopPolicyVersion` (from the run's immutable snapshot; legacy runs
+      report `legacy`/0) plus optional `Checkpoint *ReviewCheckpoint` (sequence /
+      phase / known reason / observedRunVersion / updatedAt) and
+      `Recovery *ReviewRecovery` (active, kind, bounded reason code, attempt,
+      attemptedPathClasses derived from the durable recovery journal via the
+      same `toolCapabilityClass` mapping as exhaustion validation, nextAction,
+      and a pure-numeric `domain.BudgetPlanProjection` restored from the
+      checkpoint's `BudgetPlanRecoveryV1` through `restorePhaseBudgetPlan`).
+      New optional port `application.CheckpointReviewReader` is a subset of
+      `domain.CheckpointStore`; `Service.GetRemediation` loads the latest
+      checkpoint only when the injected reader exists AND the run snapshot mode
+      is `resilient_v1` (legacy runs never read it), and any load/validation
+      error degrades to omitting the projections so the review GET stays
+      available (R23). `ReviewCheckpoint.UpdatedAt` lets the UI render
+      checkpoint age. HTTP DTOs map the projections additively (`omitempty`,
+      `attemptedPathClasses` always an array, raw checkpoint fields such as
+      `verifiedFacts`/`evidenceIndex`/`recoveries`/`outcomeRef` never serialized
+      and asserted absent). Composition root injects the durable checkpoint
+      store into the remediation Service.
+- [x] Render active recovery separately from terminal manual review, including
       safe reason, attempted capability classes, next action, checkpoint age,
       and budget summary.
-- [ ] Add and snapshot `agentLoopMode`; default to `legacy`, enable
+      Delivered (2026-09-04): review recovery is active ONLY while the run is in
+      an active phase AND the durable checkpoint shows recovery work (reason
+      `recovery`, non-empty recovery journal, or no-progress counters) — a
+      terminal run keeps its checkpoint summary but never reports `recovering`
+      (R24/AC12). `RemediationPanel` renders a distinct blue
+      `remediation-recovery` aside (`role="status"`) showing phase, checkpoint
+      sequence + relative age, recovery class/kind + reason code + attempt,
+      tried path classes, next action, and remaining/unreserved budget summary;
+      the existing amber manual-fix panel is rendered only for
+      `blocked_manual_review`. The facts grid adds loop mode + policy version.
+      Frontend zod schemas are additive (`agentLoopMode`, checkpoint, recovery,
+      budget projection with strict per-dimension amounts); omitting the fields
+      keeps legacy payloads valid.
+- [x] Add and snapshot `agentLoopMode`; default to `legacy`, enable
       `resilient_v1` project by project, and record mode in audit/observability.
-- [ ] Add metrics for challenge kind, recovery success, no-progress loops,
+      The project-configuration policy row, root-run immutable snapshot, and
+      continuation inheritance were delivered in Phase 1 slice 4.5 (including
+      policy-change-between-root-and-continuation tests); rollback = switch new
+      root runs to `legacy` while in-progress series retain their snapshot
+      (AC13). Phase 4 closes the audit/observability recording gap: the
+      `remediation.run.started` log record now carries `agent_loop_mode` and
+      `agent_loop_policy_version` (`RunStartedObservation` gains both fields,
+      populated from the run snapshot), and terminal audit notifications write
+      an allowlisted `agentLoopMode` metadata key (`TerminalNotification` +
+      `NotificationMetadata` whitelist is now
+      runId/state/fixability/kind/agentLoopMode; coordinator `notifyTerminal`
+      reads the run snapshot so the mode survives into audit_events). Review UI
+      shows the snapshotted mode per run.
+      Open follow-up: an operator-facing frontend control to flip the project
+      `agentLoopMode` (the backend `configuration` `remediation-policy` API and
+      run-snapshot semantics already exist and are tested; the rollout switch is
+      exercised through that API).
+- [x] Add metrics for challenge kind, recovery success, no-progress loops,
       compaction/reconstruction, exhaustion rejection/acceptance, phase budget,
       and terminal reason without high-cardinality evidence/model content.
-- [ ] Run focused and race tests, backend-wide tests, frontend tests/type checks,
+      Delivered (2026-09-04): new optional `application.ResilienceMetricObserver`
+      (`ResilienceMetric` events carry only run identity, snapshotted mode,
+      bounded kind, phase, reason/reason-code, and bool/int flags) + coordinator
+      `SetResilienceMetricObserver` with a no-op default. Emissions stay in
+      focused resilient chokepoints: `runQueued` (run_started), the single
+      `transitionWithReason` primitive (state_transitioned for every resilient
+      transition, plus run_terminal with the durable terminal reason), the
+      `checkpointRun` choke point (checkpoint.persisted by trigger reason/phase
+      with a no-progress flag derived from the durable recovery-progress
+      counters), `softBudgetRecovery` (budget_signal only when the signal
+      strictly strengthens), `handleExhaustionEnvelope` (exhaustion accepted /
+      rejected), and continuation reconstruction (reconstructed). New
+      `adapter/metrics` package maps events to stable low-cardinality OTel
+      counters (`fixthe.remediation.run.started`,
+      `.state.transitioned`, `.run.terminal`, `.checkpoint.persisted`,
+      `.recovery.no_progress`, `.budget.signal`, `.exhaustion.decided`,
+      `.continuation.reconstructed`, `.recovery.challenge`, `.recovery.success`);
+      unknown kinds are a no-op. Composition root constructs the observer from
+      the process meter and injects it.
+      Parent-review follow-up (2026-09-05): added the dedicated per-challenge-kind
+      and explicit recovery-success metrics that the first-pass checklist had
+      omitted while marked complete, plus strict low-cardinality reason
+      allowlists.
+      - Per-challenge-kind counter: `application.RemediationCoordinator
+        .appendRecoveryChallenge` / `.appendExhaustionProposalRequest` are now the
+        only writers of D5 recovery observations into a conversation (shared
+        choke point across diagnosing/planning/lifecycle); each append emits one
+        `ResilienceMetricChallenge` event carrying the challenge `Kind`, so every
+        appended `evidence_correction` / `protocol_correction` / `tool_failure` /
+        `context_rehydration` / `validation_revision` / `publication_retry` /
+        `budget` / `exhaustion` challenge is counted exactly once with no
+        duplicate counting. Legacy runs (nil resilient tracker) still append
+        without counting.
+      - Recovery-success semantic: durable tracker state
+        (`resilientRunState.recoveryEpisodeOpen`) is opened only when a durable
+        checkpoint appends with trigger `recovery` (and re-opened on lifecycle
+        restart when the latest durable checkpoint reason is `recovery`); the
+        first durable checkpoint with a non-recovery trigger then settles exactly
+        one `recovery_success` event and closes the episode. Abandonment
+        terminals (`failed` / `budget_exhausted` / `blocked_manual_review`) close
+        the episode silently in `transitionWithReason` before the pre-terminal
+        checkpoint, so runs that never converged back to forward progress emit no
+        recovery-success; business-conclusion terminals
+        (`diagnosis_ready_for_review` / `completed_non_code` /
+        `awaiting_human_review`) keep the episode open so their pre-terminal
+        phase-boundary checkpoint settles the success.
+      - Strict reason allowlists: the adapter no longer truncates arbitrary
+        reason text (truncation cannot bound cardinality). Every reason/kind
+        attribute maps through a strict allowlist with a single `unknown`
+        fallback: checkpoint trigger (threshold/phase_boundary/recovery/
+        process_shutdown), budget signal (soft_budget_crossed /
+        soft_budget_reserve_touched), exhaustion decision (accepted/rejected),
+        terminal reason (full durable terminal-reason vocabulary incl.
+        exhaustion_proof / plan-policy / lifecycle reasons), challenge kind (D5
+        enum), and mode/phase/state via domain enum parsers.
+      Focused tests: resilient evidence-correction flow emits exactly one
+      evidence_correction challenge and one recovery-success; plan-policy
+      feedback emits validation_revision at planning with one convergence;
+      stop→incomplete→accepted exhaustion emits two exhaustion challenges and
+      zero recovery-success with `exhaustion_proof` terminal; lifecycle transient
+      publication failure emits one publication_retry challenge and converges to
+      one recovery-success across ResumeLifecycle restart; legacy runs emit only
+      run_started; adapter counter mapping, challenge-kind allowlist,
+      strict-reason allowlist/fallback, unknown-kind no-op, and meter-required
+      matrix. Full remediation application/HTTP/metrics suites, focused `-race`
+      runs, vet, build, gofmt, and `git diff --check` stay green.
+      Phase 4 trellis-check follow-up (2026-09-05, F1-F4):
+      - F1 `recovery.no_progress` accuracy: `checkpointNoProgress` now reports a
+        checkpoint only when a durable no-progress streak is at/above its
+        escalation threshold (fact check >= 3, plan feedback >= 3, validation
+        >= 3, lifecycle tool/stop >= 3, exhaustion re-request >= 2) instead of
+        any non-zero counter; single/double repeats are bounded retry, not
+        loops. Stickiness is removed by a convergence reset
+        (`resetDiagnosisNoProgress`) when the gate admits a `code_fixable`
+        diagnosis (clears fact-check/exhaustion counters so planning/later
+        checkpoints no longer carry a settled loop), joining the existing
+        lifecycle/validation progress resets. Protocol/exhaustion loops are
+        covered via the lifecycle recovery/stop and exhaustion re-request
+        thresholds (an exhaustion proof is re-requested only when the loop
+        repeats). Coordinator-level tests prove exactly one flagged checkpoint
+        in a 3x fact-check loop that converges, two in a double-stop
+        exhaustion abandonment, and none for bounded retries or post-convergence
+        boundaries.
+      - F2 per-kind challenge metric for the Tencent mandatory-detail gate:
+        `required_direct_evidence` recoverable corrections (exhaustion/diagnosis/
+        stop envelopes rejected while the gate is closed) now route through the
+        shared per-kind metric exit (`emitChallengeMetric` inside
+        `appendRequiredDetailCorrection`) and count exactly one
+        `protocol_correction` challenge per correction in resilient_v1, with the
+        model-visible `AppendProtocolError` observation and legacy semantics
+        unchanged (legacy still emits no challenge metrics).
+      - F3 `ReviewRecovery.Attempt`: the D8 attempt now is the durable
+        current-recovery-episode count (`CheckpointRecoveryProgress
+        .EpisodeRecoveryAttempts`, incremented by recovery checkpoints and reset
+        at non-recovery checkpoints via `advanceRecoveryEpisode`, restored on
+        restart), not the cumulative journal length; legacy-format checkpoints
+        without a progress snapshot fall back to journal length. Multiple-episode
+        tests assert a later episode reports attempt 1 despite a longer journal.
+      - F4 review identity guard: `attachReviewCheckpoint` requires
+        `snapshot.RunID == review.RunID` before attaching, so a checkpoint
+        reader returning another run's snapshot can never render foreign
+        recovery state (GET stays available).
+- [x] Run focused and race tests, backend-wide tests, frontend tests/type checks,
       vet/build/diff checks, migration tests, and Trellis check.
-- [ ] Run GitNexus `detect_changes(scope=compare, base_ref=main)` and verify only
+      Final verification (2026-09-05): focused remediation application/http/
+      metrics tests and race tests, the full remediation and backend `go test
+      ./...`, migration source/version tests included by that suite, `go vet
+      ./...`, `go build ./cmd/...`, `gofmt`, and `git diff --check` all pass.
+      Frontend unit tests (37), lint, typecheck, and production build all pass.
+      The full Trellis check found one medium metrics-semantics issue and three
+      low/informational projection/coverage issues; F1-F4 above were fixed and
+      the complete gates re-ran green. The opt-in destructive PostgreSQL
+      integration suite was not run because no dedicated
+      `FIXTHE_TEST_POSTGRES_URL` / `FIXTHE_TEST_POSTGRES_ISOLATION` environment
+      is configured; the development database was intentionally not reused.
+- [x] Run GitNexus `detect_changes(scope=compare, base_ref=main)` and verify only
       the expected remediation, persistence, API, and UI flows are affected.
+      Final result (2026-09-05): `changed_count 74 / changed_files 21 /
+      affected_count 0 / risk low`; touched symbols are confined to the
+      remediation application/domain/http/logging/metrics packages, bootstrap
+      wiring, task/spec records, and the remediation frontend review surface.
 
 ## Validation Scenarios
 

@@ -405,6 +405,35 @@
   font-size: 12px;
 }
 
+.remediation-recovery {
+  padding: 14px 16px;
+  color: #14434f;
+  background: #eef6fa;
+  border: 1px solid #c3dbe7;
+  border-left: 4px solid #2d7fa4;
+  border-radius: var(--radius-control);
+  overflow-wrap: anywhere;
+}
+
+.remediation-recovery h3 {
+  margin: 0 0 7px;
+  color: #1d5d79;
+  font-size: 14px;
+}
+
+.remediation-recovery p {
+  margin: 3px 0;
+  color: #14434f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remediation-recovery .readonly-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #d7e6ee;
+}
+
 .remediation-attempts {
   border-top: 1px solid #e2e8eb;
   padding-top: 13px;

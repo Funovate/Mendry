@@ -110,23 +110,52 @@ type reviewPlanResponse struct {
 }
 
 type reviewResponse struct {
-	RunID                 string                    `json:"runId"`
-	SeriesID              string                    `json:"seriesId"`
-	Status                domain.RunState           `json:"status"`
-	Generation            int64                     `json:"generation"`
-	DeployedCommit        string                    `json:"deployedCommit"`
-	AttemptNumber         int32                     `json:"attemptNumber"`
-	Version               int64                     `json:"version"`
-	Origin                string                    `json:"origin"`
-	TerminalReason        string                    `json:"terminalReason"`
-	ManualSuggestion      string                    `json:"manualSuggestion"`
-	Retryable             bool                      `json:"retryable"`
-	ContinuationAvailable bool                      `json:"continuationAvailable"`
-	Attempts              []reviewAttemptResponse   `json:"attempts"`
-	Diagnosis             *reviewDiagnosisResponse  `json:"diagnosis"`
-	Plans                 []reviewPlanResponse      `json:"plans"`
-	SuggestedDiff         string                    `json:"suggestedDiff"`
-	Risk                  domain.RiskClassification `json:"risk"`
+	RunID                  string                    `json:"runId"`
+	SeriesID               string                    `json:"seriesId"`
+	Status                 domain.RunState           `json:"status"`
+	Generation             int64                     `json:"generation"`
+	DeployedCommit         string                    `json:"deployedCommit"`
+	AttemptNumber          int32                     `json:"attemptNumber"`
+	Version                int64                     `json:"version"`
+	Origin                 string                    `json:"origin"`
+	TerminalReason         string                    `json:"terminalReason"`
+	ManualSuggestion       string                    `json:"manualSuggestion"`
+	Retryable              bool                      `json:"retryable"`
+	ContinuationAvailable  bool                      `json:"continuationAvailable"`
+	Attempts               []reviewAttemptResponse   `json:"attempts"`
+	Diagnosis              *reviewDiagnosisResponse  `json:"diagnosis"`
+	Plans                  []reviewPlanResponse      `json:"plans"`
+	SuggestedDiff          string                    `json:"suggestedDiff"`
+	Risk                   domain.RiskClassification `json:"risk"`
+	AgentLoopMode          string                    `json:"agentLoopMode"`
+	AgentLoopPolicyVersion int64                     `json:"agentLoopPolicyVersion"`
+	// Checkpoint 是可选的最新 durable checkpoint 摘要（D8），仅 resilient_v1
+	// run 且有 checkpoint 时出现；永不包含原始 checkpoint 内容。
+	Checkpoint *reviewCheckpointResponse `json:"checkpoint,omitempty"`
+	// Recovery 是可选的活动 recovery projection（R23/R24），仅活动 run 在恢复
+	// 中时出现；与 blocked_manual_review 的人工修复面板语义互斥。
+	Recovery *reviewRecoveryResponse `json:"recovery,omitempty"`
+}
+
+// reviewCheckpointResponse 是最新 durable checkpoint 的安全摘要。
+type reviewCheckpointResponse struct {
+	Sequence           int64     `json:"sequence"`
+	Phase              string    `json:"phase"`
+	Reason             string    `json:"reason"`
+	ObservedRunVersion int64     `json:"observedRunVersion"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+// reviewRecoveryResponse 是活动 recovery 的安全摘要；attemptedPathClasses 永远
+// 序列化为数组（空数组也返回），remainingBudget 只含纯数值投影。
+type reviewRecoveryResponse struct {
+	Active               bool                         `json:"active"`
+	Kind                 string                       `json:"kind,omitempty"`
+	Reason               string                       `json:"reason,omitempty"`
+	Attempt              int                          `json:"attempt,omitempty"`
+	AttemptedPathClasses []string                     `json:"attemptedPathClasses"`
+	NextAction           string                       `json:"nextAction,omitempty"`
+	RemainingBudget      *domain.BudgetPlanProjection `json:"remainingBudget,omitempty"`
 }
 
 type reviewAttemptResponse struct {
@@ -261,6 +290,32 @@ func mapReview(review application.Review) reviewResponse {
 	}
 	for _, attempt := range review.Attempts {
 		response.Attempts = append(response.Attempts, mapReviewAttempt(attempt))
+	}
+	response.AgentLoopMode = string(domain.ParseAgentLoopMode(string(review.AgentLoopMode)))
+	response.AgentLoopPolicyVersion = max(review.AgentLoopPolicyVersion, 0)
+	if review.Checkpoint != nil {
+		response.Checkpoint = &reviewCheckpointResponse{
+			Sequence:           max(review.Checkpoint.Sequence, 0),
+			Phase:              review.Checkpoint.Phase,
+			Reason:             review.Checkpoint.Reason,
+			ObservedRunVersion: max(review.Checkpoint.ObservedRunVersion, 0),
+			UpdatedAt:          review.Checkpoint.UpdatedAt,
+		}
+	}
+	if review.Recovery != nil {
+		classes := review.Recovery.AttemptedPathClasses
+		if classes == nil {
+			classes = []string{}
+		}
+		response.Recovery = &reviewRecoveryResponse{
+			Active:               review.Recovery.Active,
+			Kind:                 review.Recovery.Kind,
+			Reason:               review.Recovery.Reason,
+			Attempt:              max(review.Recovery.Attempt, 0),
+			AttemptedPathClasses: classes,
+			NextAction:           review.Recovery.NextAction,
+			RemainingBudget:      review.Recovery.RemainingBudget,
+		}
 	}
 	return response
 }

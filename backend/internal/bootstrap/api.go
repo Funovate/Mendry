@@ -32,6 +32,7 @@ import (
 	remediationhttp "fixthe/backend/internal/modules/remediation/adapter/http"
 	remediationlogging "fixthe/backend/internal/modules/remediation/adapter/logging"
 	remediationmcp "fixthe/backend/internal/modules/remediation/adapter/mcp"
+	remediationmetrics "fixthe/backend/internal/modules/remediation/adapter/metrics"
 	remediationopenai "fixthe/backend/internal/modules/remediation/adapter/openai"
 	remediationpostgres "fixthe/backend/internal/modules/remediation/adapter/postgres"
 	remediationsshlog "fixthe/backend/internal/modules/remediation/adapter/sshlog"
@@ -270,6 +271,16 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create remediation observer: %w", err),
 		)
 	}
+	// Phase 4：resilient_v1 恢复/生命周期事件的低基数 counters。observer 可选，
+	// metrics 只携带枚举 kind/mode/reason code，绝不影响 coordinator 语义。
+	remediationMetricsObserver, metricsErr := remediationmetrics.NewObserver(remediationmetrics.Options{
+		Meter: telemetryRuntime.MeterProvider().Meter("fixthe/backend/remediation"),
+	})
+	if metricsErr != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation metrics observer: %w", metricsErr),
+		)
+	}
 	// 真实 Git / SSH 日志 / OpenAI 适配器替换占位实现；observer 只接收无凭据语义记录。
 	remediationCoordinator := remediationapplication.NewRemediationCoordinatorWithDynamicRuntime(
 		remediationStore, repositoryReader, evidenceReader, evidenceReader, modelClient, incidentLookup, repositoryReader,
@@ -298,6 +309,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 	remediationCoordinator.SetCheckpointStore(remediationCheckpointStore)
+	remediationCoordinator.SetResilienceMetricObserver(remediationMetricsObserver)
 	remediationFailureReporter, err := remediationlogging.NewFailureReporter(logger)
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -343,6 +355,9 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 	}
 	remediationService, err := remediationapplication.NewService(remediationapplication.ServiceOptions{
 		Projects: projectService, Incidents: incidentLookup, Trigger: remediationTrigger, Reviews: remediationStore,
+		// D8：resilient_v1 run 的 GET review 附加 durable checkpoint/recovery
+		// projection；legacy run 与无 checkpoint 的 run 不受影响。
+		Checkpoints: remediationCheckpointStore,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

@@ -25,6 +25,14 @@ const (
 
 const maxReviewAttempts = 64
 
+// CheckpointReviewReader 读取 run 最新 durable working-memory checkpoint 的
+// 有界摘要。它是 CheckpointStore 的子集 port，供 GET review 在 resilient_v1
+// run 上渲染 D8 recovery/checkpoint projection；legacy run 或未注入时跳过。
+// 读取失败只降级为不渲染 projection，绝不阻塞 review（R23 保持可用）。
+type CheckpointReviewReader interface {
+	LoadLatestCheckpoint(ctx context.Context, runID string) (domain.CheckpointSnapshot, error)
+}
+
 // ReviewRecorder 把计划候选和建议 diff 写入 run，供 GET review chain 读取。
 // 这是冻结 RunStore 之外的 companion port，避免改动已冻结的方法签名。
 type ReviewRecorder interface {
@@ -44,7 +52,8 @@ type NotificationSink interface {
 }
 
 // TerminalNotification 是系统 actor 写入 audit_events 的有界载荷。
-// Metadata 只允许 runId/state/fixability/kind，禁止 prompt、diff、凭据和原始日志。
+// Metadata 只允许 runId/state/fixability/kind/agentLoopMode，禁止 prompt、
+// diff、凭据和原始日志。AgentLoopMode 记录 run 快照的 D9 政策模式。
 type TerminalNotification struct {
 	RunID      string
 	IncidentID string
@@ -52,6 +61,9 @@ type TerminalNotification struct {
 	Summary    string
 	Fixability domain.FixabilityClass
 	State      domain.RunState
+	// AgentLoopMode 是 run 创建时快照的项目 remediation 政策模式；只写
+	// audit_events.metadata 白名单键，不进正文。
+	AgentLoopMode domain.AgentLoopMode
 }
 
 // Review 是给 console GET 的无秘密 DTO，不包含 ModelResult.Content、工具载荷或凭据。
@@ -75,6 +87,49 @@ type Review struct {
 	Plans                 []ReviewPlan
 	SuggestedDiff         string
 	Risk                  domain.RiskClassification
+	// AgentLoopMode 是 run 创建时快照的项目 remediation 政策模式（D9）；
+	// review 页显示它以便区分 legacy 与 resilient_v1 行为。
+	AgentLoopMode domain.AgentLoopMode
+	// AgentLoopPolicyVersion 是 run 快照的项目政策版本。
+	AgentLoopPolicyVersion int64
+	// Checkpoint 是可选的最新 durable checkpoint 摘要（D8）：run 处于
+	// resilient_v1 且有 checkpoint 时才非 nil；不渲染原始 checkpoint 内容。
+	Checkpoint *ReviewCheckpoint
+	// Recovery 是可选的活动 recovery projection（D8/R23/R24）：只有 run 仍
+	// 处于活动 phase 且 durable 状态显示恢复正在进行时才非 nil。终态 run 与
+	// legacy run 保持 nil，人工修复面板仍只由 blocked_manual_review 呈现。
+	Recovery *ReviewRecovery
+}
+
+// ReviewCheckpoint 是最新 durable checkpoint 的安全摘要（D8）。
+type ReviewCheckpoint struct {
+	Sequence           int64
+	Phase              string
+	Reason             string
+	ObservedRunVersion int64
+	UpdatedAt          time.Time
+}
+
+// ReviewRecovery 是活动 recovery 的安全摘要（D8/R23）：只含 kind、reason
+// code、attempt 数、恢复/capability class 与预算数值投影，绝不包含原始模型
+// 轮次、connector 错误文本、凭据或未截断的工具输出。
+//
+// Attempt 是 D8 的当前 recovery episode attempt（F3）：由 checkpoint 的
+// RecoveryProgress.EpisodeRecoveryAttempts 持久化（每次 recovery 触发
+// checkpoint 递增、episode 关闭后重新从 1 计数），不是跨 episode 累计的
+// journal 长度；旧格式 checkpoint（无 progress 快照）才回退到 journal 长度。
+//
+// RemainingBudget 复用 domain.BudgetPlanProjection（D8/D23 专门为 review/API
+// 安全渲染设计的纯数值投影），由 checkpoint 的 BudgetPlanRecoveryV1 经纯
+// validated 构造器恢复后产生，不暴露 allocator 私有字段。
+type ReviewRecovery struct {
+	Active               bool
+	Kind                 string
+	Reason               string
+	Attempt              int
+	AttemptedPathClasses []string
+	NextAction           string
+	RemainingBudget      *domain.BudgetPlanProjection
 }
 
 // ReviewAttempt 是 review 页显示的有界 attempt history；不含 prompt、provider
@@ -217,7 +272,158 @@ func buildReview(agg domain.RunAggregate) Review {
 			}
 		}
 	}
+	review.AgentLoopMode = domain.ParseAgentLoopMode(string(agg.Run.AgentLoopMode))
+	review.AgentLoopPolicyVersion = max(agg.Run.AgentLoopPolicyVersion, 0)
 	return review
+}
+
+// attachReviewCheckpoint 把最新 durable checkpoint 的安全摘要附加到 review。
+// Checkpoint 与 Recovery 都是可选的 additive projection：任何校验失败都只
+// 跳过该 projection，绝不让 review GET 因为 checkpoint 内容异常而失败
+// （D8/R23 review 保持可用；corrupt checkpoint 由 coordinator 在 durable
+// 边界 fail closed）。
+func attachReviewCheckpoint(review *Review, snapshot domain.CheckpointSnapshot) {
+	// F4：只有属于该 run 的 durable checkpoint 才允许附加 projection。加载路径
+	// 以 agg.Run.RunID 读取，身份不匹配说明 reader/存储返回了错误快照，必须
+	// 拒绝而不是渲染另一 run 的恢复状态。
+	if review == nil || review.RunID == "" || snapshot.RunID == "" || snapshot.RunID != review.RunID {
+		return
+	}
+	checkpoint := &ReviewCheckpoint{
+		Sequence:           max(snapshot.Sequence, 0),
+		Phase:              sanitizeReviewText(snapshot.Phase),
+		Reason:             sanitizeCheckpointReason(snapshot.Checkpoint.Reason),
+		ObservedRunVersion: max(snapshot.ObservedRunVersion, 0),
+		UpdatedAt:          snapshot.UpdatedAt,
+	}
+	review.Checkpoint = checkpoint
+	if !isActiveRunState(review.Status) {
+		// R24：只有活动 run 才可能处于 recovery；终态只走手动修复/人工评审面板。
+		return
+	}
+	recovery := reviewRecoveryProjection(snapshot)
+	if recovery == nil {
+		return
+	}
+	review.Recovery = recovery
+}
+
+// reviewRecoveryProjection 从 durable checkpoint 构建 bounded recovery 摘要。
+// “活动 recovery”定义为：run 处于活动 phase（调用方已保证）且最新 checkpoint
+// 由 recovery 触发（reason=recovery）。recovery journal/no-progress 计数只是
+// audit 历史：run 一旦写出后续 phase_boundary/threshold checkpoint（如进入
+// planning 或终态前），即便 journal 仍在也不再渲染“恢复中”（R24）。所有文本都
+// 经 sanitize；数字只含 low-cardinality 计数与预算维度。
+func reviewRecoveryProjection(snapshot domain.CheckpointSnapshot) *ReviewRecovery {
+	checkpoint := snapshot.Checkpoint
+	if checkpoint.Reason != domain.CheckpointReasonRecovery {
+		return nil
+	}
+	projection := &ReviewRecovery{Active: true, AttemptedPathClasses: []string{}}
+	if latest, ok := latestCheckpointRecovery(checkpoint.Recoveries); ok {
+		projection.Kind = sanitizeReviewText(latest.Kind)
+		projection.Reason = sanitizeReviewText(recoveryReasonCode(latest.OutcomeRef, latest.Action))
+	}
+	// D8 attempt = 当前 recovery episode 的持久化 attempt（F3）。progress 快照
+	// 缺失（pre-change v1 旧格式）时才回退到 journal 长度作为保守近似。
+	projection.Attempt = len(checkpoint.Recoveries)
+	if progress := checkpoint.RecoveryProgress; progress != nil {
+		projection.Attempt = max(progress.EpisodeRecoveryAttempts, 0)
+	}
+	projection.AttemptedPathClasses = reviewAttemptedPathClasses(checkpoint.Recoveries)
+	projection.NextAction = firstCheckpointNextAction(checkpoint.NextActions)
+	if alloc, err := restorePhaseBudgetPlan(checkpoint.Budget); err == nil {
+		if budget := alloc.Projection(); budget.Validate() == nil {
+			projection.RemainingBudget = &budget
+		}
+	}
+	return projection
+}
+
+// latestCheckpointRecovery 返回 journal 最后一条 recovery 记录；journal 有界。
+func latestCheckpointRecovery(recoveries []domain.CheckpointRecovery) (domain.CheckpointRecovery, bool) {
+	if len(recoveries) == 0 {
+		return domain.CheckpointRecovery{}, false
+	}
+	return recoveries[len(recoveries)-1], true
+}
+
+// recoveryReasonCode 从 recovery outcome ref 或 action 提取有界 reason code；
+// ref 形如 challenge:<code>[:<sha256>]，hash 部分绝不展示。
+func recoveryReasonCode(outcomeRef, action string) string {
+	if strings.HasPrefix(outcomeRef, "challenge:") {
+		parts := strings.Split(outcomeRef, ":")
+		if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+			return parts[1]
+		}
+	}
+	if strings.TrimSpace(action) != "" && strings.TrimSpace(action) != "model_turn" {
+		return action
+	}
+	return ""
+}
+
+// reviewAttemptedPathClasses 从 recovery journal 派生去重的有界 path class 集合：
+// 工具 action 映射到 D1 capability class；非工具 action 按 recovery class 保留。
+func reviewAttemptedPathClasses(recoveries []domain.CheckpointRecovery) []string {
+	seen := make(map[string]bool, 8)
+	var out []string
+	for _, recovery := range recoveries {
+		class := toolCapabilityClass(recovery.Action)
+		if class == "" {
+			class = reviewRecoveryClass(recovery.Kind, recovery.Action)
+		}
+		if class == "" || seen[class] {
+			continue
+		}
+		seen[class] = true
+		out = append(out, class)
+	}
+	return out
+}
+
+// reviewRecoveryClass 为非工具 action 的 journal 条目派生稳定 label：lifecycle
+// 前缀/发布/验证修订归入 lifecycle，证据/协议/预算修正按 recovery kind 保留，
+// 未知 kind 保守忽略。
+func reviewRecoveryClass(kind, action string) string {
+	switch {
+	case strings.HasPrefix(action, "lifecycle:") || action == "revise_patch" ||
+		action == "stop" || action == "run_validation" || action == "retry_publication" ||
+		action == "inspect_workspace" || action == "apply_changed_patch":
+		return "lifecycle"
+	case action == "correct_citation" || action == "correct_fact_check":
+		return string(domain.RecoveryChallengeKindEvidenceCorrection)
+	case action == "correct_envelope":
+		return string(domain.RecoveryChallengeKindProtocolCorrection)
+	case action == "reject_exhaustion_proposal":
+		return string(domain.RecoveryChallengeKindExhaustion)
+	default:
+		if strings.TrimSpace(kind) == "" {
+			return ""
+		}
+		return kind
+	}
+}
+
+// firstCheckpointNextAction 返回 checkpoint 的首条 next action；只取有界单条。
+func firstCheckpointNextAction(actions []string) string {
+	for _, action := range actions {
+		if cleaned := sanitizeReviewText(action); cleaned != "" {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+// sanitizeCheckpointReason 只透传已知 checkpoint reason，其余一律清空。
+func sanitizeCheckpointReason(reason string) string {
+	switch reason {
+	case domain.CheckpointReasonThreshold, domain.CheckpointReasonPhaseBoundary,
+		domain.CheckpointReasonRecovery, domain.CheckpointReasonProcessShutdown:
+		return reason
+	default:
+		return ""
+	}
 }
 
 func mapReviewAttempt(summary domain.AttemptSummary) ReviewAttempt {
@@ -341,14 +547,19 @@ func sanitizeSuggestedDiff(value string) string {
 }
 
 // NotificationMetadata 是写入 audit_events.metadata 的白名单投影。
-// 只允许 runId/state/fixability/kind，禁止 prompt、diff、凭据和原始日志。
+// 只允许 runId/state/fixability/kind/agentLoopMode，禁止 prompt、diff、凭据
+// 和原始日志。agentLoopMode 空值（旧路径）时省略，保持既有审计行不变。
 func NotificationMetadata(n TerminalNotification) map[string]string {
-	return map[string]string{
+	metadata := map[string]string{
 		"runId":      n.RunID,
 		"state":      string(n.State),
 		"fixability": string(n.Fixability),
 		"kind":       n.Kind,
 	}
+	if mode := domain.ParseAgentLoopMode(string(n.AgentLoopMode)); mode.IsKnown() {
+		metadata["agentLoopMode"] = string(mode)
+	}
+	return metadata
 }
 
 var (

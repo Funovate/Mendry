@@ -26,6 +26,27 @@ const activeStates = new Set([
 
 const continuationBlockingCodes = new Set(["remediation_conflict", "remediation_active", "remediation_unsupported", "forbidden"]);
 
+function formatBudgetAmount(amount: Record<string, number> | undefined): string {
+  if (!amount) return "n/a";
+  const parts: string[] = [];
+  if (typeof amount.modelCalls === "number") parts.push(`${amount.modelCalls} model calls`);
+  if (typeof amount.toolCalls === "number") parts.push(`${amount.toolCalls} tools`);
+  if (typeof amount.elapsedSeconds === "number") parts.push(`${Math.floor(amount.elapsedSeconds / 60)}m elapsed`);
+  if (parts.length === 0) return "n/a";
+  return parts.join(" · ");
+}
+
+function formatCheckpointAge(updatedAt: string): string {
+  const updated = Date.parse(updatedAt);
+  if (Number.isNaN(updated)) return "unknown";
+  const minutes = Math.max(0, Math.floor((Date.now() - updated) / 60000));
+  if (minutes < 1) return "<1m ago";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${minutes % 60}m ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 export function RemediationPanel({ projectKey, incidentId, generation }: RemediationPanelProps) {
   const project = useCurrentProject();
   const queryClient = useQueryClient();
@@ -118,7 +139,36 @@ export function RemediationPanel({ projectKey, incidentId, generation }: Remedia
             <div><dt>Version</dt><dd>{review.version}</dd></div>
             <div><dt>Terminal reason</dt><dd>{review.terminalReason || "None recorded"}</dd></div>
             <div><dt>Deployed commit</dt><dd>{review.deployedCommit || "n/a"}</dd></div>
+            <div><dt>Loop mode</dt><dd>{review.agentLoopMode || "legacy"}{review.agentLoopPolicyVersion ? ` · policy v${review.agentLoopPolicyVersion}` : ""}</dd></div>
           </dl>
+          {review.recovery && review.recovery.active && (
+            <aside className="remediation-recovery" role="status" aria-label="Recovering / 自动恢复中">
+              <h3>Recovering · 自动恢复中</h3>
+              <p className="remediation-recovery-phase">
+                Phase <strong>{review.checkpoint?.phase || review.status}</strong>
+                {review.checkpoint && <> · checkpoint <strong>{review.checkpoint.sequence}</strong> ({formatCheckpointAge(review.checkpoint.updatedAt)})</>}
+              </p>
+              {(review.recovery.kind || review.recovery.reason) && (
+                <p className="remediation-recovery-reason">
+                  Recovery class <strong>{review.recovery.kind || "recoverable"}</strong>
+                  {review.recovery.reason ? <> · reason code <strong>{review.recovery.reason}</strong></> : null}
+                  {typeof review.recovery.attempt === "number" && review.recovery.attempt > 0 && <> · attempt <strong>{review.recovery.attempt}</strong></>}
+                </p>
+              )}
+              {review.recovery.attemptedPathClasses.length > 0 && (
+                <p className="remediation-recovery-paths">Tried path classes: {review.recovery.attemptedPathClasses.join(", ")}</p>
+              )}
+              {review.recovery.nextAction && (
+                <p className="remediation-recovery-next">Next action: {review.recovery.nextAction}</p>
+              )}
+              {review.recovery.remainingBudget && (
+                <p className="remediation-recovery-budget">
+                  Remaining budget: {formatBudgetAmount(review.recovery.remainingBudget.remaining)} · unreserved {formatBudgetAmount(review.recovery.remainingBudget.unreserved)}
+                </p>
+              )}
+              <p className="readonly-note">The run remains active and keeps recovering; this is not a manual-review conclusion.</p>
+            </aside>
+          )}
           {review.status === "blocked_manual_review" && review.manualSuggestion.trim() !== "" && (
             <aside className="remediation-manual-suggestion" aria-label="人工修复建议 / Manual fix suggestion">
               <h3>人工修复建议 / Manual fix suggestion</h3>

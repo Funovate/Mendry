@@ -294,8 +294,10 @@ func (c *RemediationCoordinator) requestExhaustionProposalAfterRecorded(
 	if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
 		return c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 	}
-	conversation.AppendExhaustionProposalRequest(
-		tracker.exhaustionProposalAttempts, tracker.recoveryCapabilities(), budget.remaining(), outcomeRef,
+	// D5 challenge 观察（kind exhaustion）追加与计数在同一共享出口完成，保证
+	// 与 handleExhaustionEnvelope 的拒绝 challenge 不重复、也不遗漏请求本身。
+	c.appendExhaustionProposalRequest(
+		ctx, conversation, tracker.exhaustionProposalAttempts, tracker.recoveryCapabilities(), budget.remaining(), outcomeRef,
 	)
 	return nil
 }
@@ -332,16 +334,26 @@ func (c *RemediationCoordinator) handleExhaustionEnvelope(
 			attempt = 1
 		}
 		challenge.Attempt = attempt
+		// Phase 4 指标：不完整的 exhaustion proof 被拒绝并回到同一条 conversation。
+		c.emitResilienceMetric(ctx, ResilienceMetric{
+			Run: observationRun(ctx), Mode: metricMode(tracker.run.AgentLoopMode),
+			Kind: ResilienceMetricExhaustion, Phase: domain.RunStateDiagnosing,
+			Reason: "rejected", NoProgress: true,
+		})
 		tracker.appendRecovery(domain.CheckpointRecovery{
 			Kind: string(challenge.Kind), Action: "reject_exhaustion_proposal", OutcomeRef: "challenge:" + challenge.ReasonCode,
 		})
 		if err := c.checkpointRun(ctx, tracker, domain.RunStateDiagnosing, domain.CheckpointReasonRecovery); err != nil {
 			return false, c.fail(ctx, runID, domain.RunStateDiagnosing, markPersistenceFailure(err))
 		}
-		conversation.AppendRecoveryChallenge(challenge)
+		c.appendRecoveryChallenge(ctx, domain.RunStateDiagnosing, conversation, challenge)
 		return false, nil
 	}
 	// 接受：持久化有界 proposal 元数据（不含原始模型轮次），再进入人工交接。
+	c.emitResilienceMetric(ctx, ResilienceMetric{
+		Run: observationRun(ctx), Mode: metricMode(tracker.run.AgentLoopMode),
+		Kind: ResilienceMetricExhaustion, Phase: domain.RunStateDiagnosing, Reason: "accepted",
+	})
 	decision := &DiagnosisOutput{
 		Fixability:            proposal.BestConclusion,
 		Confidence:            0,

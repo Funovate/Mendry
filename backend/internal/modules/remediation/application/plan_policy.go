@@ -260,11 +260,11 @@ func (c *RemediationCoordinator) handlePlanPolicyDecision(
 	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind: string(challenge.Kind), Action: "revise_plan", OutcomeRef: recoveryProgressRef(challenge.ReasonCode, fingerprint),
 	})
+	target := conversation
 	if tracker.conversation != nil {
-		tracker.conversation.AppendRecoveryChallenge(challenge)
-	} else if conversation != nil {
-		conversation.AppendRecoveryChallenge(challenge)
+		target = tracker.conversation
 	}
+	c.appendRecoveryChallenge(ctx, domain.RunStatePlanning, target, challenge)
 	if err := c.checkpointRun(ctx, tracker, domain.RunStatePlanning, domain.CheckpointReasonRecovery); err != nil {
 		return true, c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(err))
 	}

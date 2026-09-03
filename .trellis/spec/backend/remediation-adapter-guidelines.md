@@ -956,6 +956,103 @@ with the missing-evidence list only when `status == "blocked_manual_review"`
 and `manualSuggestion` is non-empty; it must not render for other terminal
 states or expose operational evidence payloads.
 
+## Resilient Review And Metrics Contract
+
+### 1. Scope / Trigger
+
+For a run whose immutable snapshot has `agentLoopMode=resilient_v1`, the review
+read path may attach the latest durable checkpoint and active recovery summary.
+Legacy runs preserve the old payload and must not read the checkpoint store.
+Coordinator recovery metrics are optional observers and must never affect run,
+budget, transition, or checkpoint behavior.
+
+### 2. Signatures
+
+```go
+type CheckpointReviewReader interface {
+    LoadLatestCheckpoint(context.Context, string) (domain.CheckpointSnapshot, error)
+}
+
+type Review struct {
+    AgentLoopMode          domain.AgentLoopMode
+    AgentLoopPolicyVersion int64
+    Checkpoint             *ReviewCheckpoint
+    Recovery               *ReviewRecovery
+}
+
+type ResilienceMetricObserver interface {
+    RecordResilienceMetric(context.Context, ResilienceMetric)
+}
+```
+
+### 3. Contracts
+
+- HTTP adds optional `checkpoint` and `recovery` objects plus the snapshotted
+  `agentLoopMode` and policy version. A missing object remains valid for legacy,
+  old, unavailable, or already-converged runs.
+- `checkpoint` contains only sequence, phase, known trigger reason, observed run
+  version, and update time. It never contains facts, evidence indexes, recovery
+  journals, model turns, tool output, or outcome references.
+- `recovery` appears only when the run state is active and the latest matching
+  checkpoint reason is `recovery`. Attempt is the durable current recovery
+  episode count, reset by the first non-recovery checkpoint; old v1 checkpoints
+  without that counter may use the bounded journal length as a compatibility
+  approximation.
+- A snapshot whose `runId` differs from the review run is ignored. Checkpoint
+  load or projection failure omits the optional objects and does not fail GET.
+- Recovery challenge metrics emit exactly once at the shared model-visible
+  challenge append boundary. Recovery success emits once at the first durable
+  non-recovery checkpoint after an open recovery episode. Failed,
+  budget-exhausted, or blocked-manual-review terminals close the episode without
+  success.
+- Metric attributes use strict enum allowlists with one `unknown` fallback.
+  Never put run, series, incident, evidence, model text, connector messages, or
+  merely truncated free-form reason text into metric attributes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Review / metric result |
+|---|---|
+| Legacy run | No checkpoint read; optional recovery fields omitted |
+| Resilient run without checkpoint | Review succeeds; optional fields omitted |
+| Store error, corrupt projection, or wrong-run snapshot | Review succeeds; projection omitted |
+| Active run, latest reason `recovery` | Safe recovery projection rendered |
+| Terminal or converged run | Recovery projection omitted |
+| Recovery reaches a durable forward checkpoint | One recovery-success event |
+| Recovery reaches abandonment terminal | No recovery-success event |
+| Unknown metric reason or challenge kind | Attribute value `unknown` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a publication retry survives restart, review shows the current episode
+  attempt, and the next durable phase-boundary checkpoint records one success.
+- Base: a legacy review parses and renders exactly as before with all additive
+  fields absent.
+- Bad: rendering the recovery journal or outcome refs, deriving attempt from
+  lifetime journal length for new checkpoints, or using arbitrary error text as
+  a metric label.
+
+### 6. Tests Required
+
+- Application tests cover legacy skip, missing/corrupt/wrong-run checkpoint,
+  active recovery, terminal omission, multi-episode attempt reset, restart
+  restore, no-progress thresholds, and abandonment versus successful closure.
+- HTTP/frontend tests prove additive parsing and absence of raw checkpoint,
+  evidence, outcome-ref, and model/tool fields.
+- Metrics adapter tests inspect attributes, not only counter totals: every
+  unknown/free-form input collapses to `unknown`, and identity fields never
+  become labels.
+
+### 7. Wrong vs Correct
+
+```go
+// Wrong: cardinality is still unbounded after truncation.
+attribute.String("reason", truncate(rawConnectorError, 64))
+
+// Correct: project only a reviewed enum vocabulary.
+attribute.String("reason", allowlistedRecoveryReason(reason))
+```
+
 ### 4. Validation & Error Matrix
 
 | Condition | Result |

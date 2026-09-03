@@ -31,6 +31,8 @@ func (o *Observer) RunStarted(ctx context.Context, rec application.RunStartedObs
 		slog.String(observability.FieldPhase, string(rec.Phase)),
 		slog.String("trigger_reason", rec.TriggerReason),
 		slog.String("priority", rec.Priority),
+		slog.String("agent_loop_mode", string(rec.AgentLoopMode)),
+		slog.Int64("agent_loop_policy_version", rec.AgentLoopPolicyVersion),
 		slog.String(observability.FieldOutcome, "started"),
 	)
 	observability.Log(ctx, o.logger, slog.LevelInfo, observability.EventRemediationRunStarted, "remediation run started", attrs...)

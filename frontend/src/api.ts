@@ -246,6 +246,41 @@ const remediationContinuationInputSchema = z.object({
   version: z.number().int().positive(),
 }).strict();
 
+const remediationBudgetAmountSchema = z.object({
+  elapsedSeconds: z.number().int().nonnegative(),
+  modelCalls: z.number().int().nonnegative(),
+  modelCostCents: z.number().int().nonnegative(),
+  toolCalls: z.number().int().nonnegative(),
+  evidenceBytes: z.number().int().nonnegative(),
+  repositoryBytes: z.number().int().nonnegative(),
+}).strict();
+
+const remediationBudgetProjectionSchema = z.object({
+  phase: z.string(),
+  consumed: remediationBudgetAmountSchema,
+  remaining: remediationBudgetAmountSchema,
+  unreserved: remediationBudgetAmountSchema,
+  recovery: z.object({ min: remediationBudgetAmountSchema }),
+}).passthrough();
+
+const remediationCheckpointSchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  phase: z.string(),
+  reason: z.string(),
+  observedRunVersion: z.number().int().nonnegative(),
+  updatedAt: z.string(),
+});
+
+const remediationRecoverySchema = z.object({
+  active: z.boolean(),
+  kind: z.string().optional(),
+  reason: z.string().optional(),
+  attempt: z.number().int().nonnegative().optional(),
+  attemptedPathClasses: z.array(z.string()),
+  nextAction: z.string().optional(),
+  remainingBudget: remediationBudgetProjectionSchema.optional(),
+});
+
 const remediationReviewSchema = z.object({
   runId: z.string(),
   seriesId: z.string(),
@@ -264,6 +299,10 @@ const remediationReviewSchema = z.object({
   plans: z.array(remediationPlanSchema),
   suggestedDiff: z.string(),
   risk: z.string(),
+  agentLoopMode: z.string().optional(),
+  agentLoopPolicyVersion: z.number().int().nonnegative().optional(),
+  checkpoint: remediationCheckpointSchema.optional(),
+  recovery: remediationRecoverySchema.optional(),
 });
 
 const errorEnvelopeSchema = z.object({
@@ -316,6 +355,9 @@ export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 export type RemediationReview = z.infer<typeof remediationReviewSchema>;
+export type RemediationCheckpoint = z.infer<typeof remediationCheckpointSchema>;
+export type RemediationRecovery = z.infer<typeof remediationRecoverySchema>;
+export type RemediationBudgetProjection = z.infer<typeof remediationBudgetProjectionSchema>;
 export type RemediationAttempt = z.infer<typeof remediationAttemptSchema>;
 export type RemediationAction = z.infer<typeof remediationActionSchema>;
 export type RemediationContinuationInput = z.infer<typeof remediationContinuationInputSchema>;

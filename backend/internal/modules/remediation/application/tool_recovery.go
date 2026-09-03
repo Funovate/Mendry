@@ -46,9 +46,8 @@ func (c *RemediationCoordinator) appendToolRecoveryChallenge(
 	tracker.appendRecovery(domain.CheckpointRecovery{
 		Kind: string(challenge.Kind), Action: req.ToolName, OutcomeRef: "challenge:" + challenge.ReasonCode,
 	})
-	if conversation != nil {
-		conversation.AppendRecoveryChallenge(challenge)
-	}
+	// D5 challenge 追加与 per-kind 指标在同一共享出口完成。
+	c.appendRecoveryChallenge(ctx, phase, conversation, challenge)
 	if err := c.checkpointRun(ctx, tracker, phase, domain.CheckpointReasonRecovery); err != nil {
 		return c.fail(ctx, runID, phase, markPersistenceFailure(err))
 	}
