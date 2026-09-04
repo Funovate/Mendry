@@ -136,8 +136,8 @@ path; no destructive or in-place column rewrites.
 
 > Pilot decisions locked (PRD Resolved Decisions): log source = **SSH log
 > path**, provider/model = **OpenAI `gpt-5.6`** via the encrypted credential
-> store. Only the Step 9 sample size / quality bar remains a proposed default to
-> confirm.
+> store. Step 9 uses the complete reviewable pilot set and records its limits in
+> `research/quality-readout.md`.
 
 - Extend the Git read adapter (reusing the `projects/adapter/git` credential-
   injection pattern) with bounded `list_tree` / `read_file` / `search` /
@@ -168,6 +168,13 @@ path; no destructive or in-place column rewrites.
   sandbox, and SCM-publisher slices can be added without changing frozen port
   signatures or run-state names.
 - **Gate:** all PRD acceptance criteria checkboxes satisfied; read-out reviewed.
+
+**Completed 2026-09-04.** The quality read-out covers INC-2267, INC-2268,
+INC-2270, and live INC-2390. It records a conditional go for the
+diagnosis/advisory architecture and a no-go for unattended production repair or
+broad rollout. The retained live run has 3/3 resolvable citations, two plans,
+and one human-readable suggested diff. See
+[`research/quality-readout.md`](research/quality-readout.md).
 
 ---
 

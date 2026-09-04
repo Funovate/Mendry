@@ -21,6 +21,6 @@
   "children": [],
   "parent": "08-14-agentic-remediation-harness",
   "relatedFiles": [],
-  "notes": "当前该做的切片。Steps 1–8 代码已在（冻结端口、migration、coordinator、trigger、预算、控制台 REST、Git/SSH/OpenAI 适配器）。还缺 Step 9 真实事故质量读出/go/no-go。不要扩成 sandbox/push，也不要被 stdio MCP 抢走优先级。",
+  "notes": "Steps 1–9 complete. The 2026-09-04 real-incident read-out records a conditional go for diagnosis/advisory integration and a no-go for unattended production repair or broad rollout until ApplyPlan production wiring and a larger multi-class pilot sample exist.",
   "meta": {}
 }

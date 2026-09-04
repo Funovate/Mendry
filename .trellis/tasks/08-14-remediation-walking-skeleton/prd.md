@@ -180,34 +180,34 @@ It reuses existing engineering assets rather than rebuilding them:
 
 ## Acceptance Criteria
 
-- [ ] Frozen port interfaces and agent envelope schemas exist with fakes, and a
+- [x] Frozen port interfaces and agent envelope schemas exist with fakes, and a
       contract test proves the coordinator receives no credentials or raw
       clients and that invalid, out-of-phase, or unavailable tool requests are
       rejected before adapter execution.
-- [ ] Additive migrations add incident `lifecycle_generation` / `deployed_commit`
+- [x] Additive migrations add incident `lifecycle_generation` / `deployed_commit`
       and the run/series/decision/plan/artifact/tool-invocation tables; existing
       incident and project data remain readable and writable.
-- [ ] Trigger tests prove the default `P2` threshold, manual `Info` start,
+- [x] Trigger tests prove the default `P2` threshold, manual `Info` start,
       reopen-driven lifecycle generation, deployed-commit change, fingerprint
       coalescing, and the unique series key, all in-process without duplicate
       root runs.
-- [ ] Repository-read tests prove reads occur at the exact deployed commit, are
+- [x] Repository-read tests prove reads occur at the exact deployed commit, are
       size/count/binary bounded, and never expose credentials to the coordinator
       or model.
-- [ ] Diagnosis outputs are schema-validated and evidence-cited, and every
+- [x] Diagnosis outputs are schema-validated and evidence-cited, and every
       fixability class routes to the correct terminal or continuation state
       against a scripted fake model.
-- [ ] Running the slice against a real pilot log source, real repository, and a
+- [x] Running the slice against a real pilot log source, real repository, and a
       real model on at least a small set of real incidents produces
       schema-valid, evidence-cited diagnoses and, for a code-fixable case, a
       human-readable suggested diff — with a written quality read-out that
       informs the go/no-go for later slices.
-- [ ] Console/API responses expose the full diagnosis + suggested-diff + risk
+- [x] Console/API responses expose the full diagnosis + suggested-diff + risk
       review chain without secrets, raw provider payloads, or unrestricted logs,
       and are RBAC-scoped.
-- [ ] Budget/audit tests prove per-run limits terminate a run and that no raw
+- [x] Budget/audit tests prove per-run limits terminate a run and that no raw
       prompts/responses/credentials are persisted.
-- [ ] A forward-compatibility note (or test) demonstrates that the outbox/async,
+- [x] A forward-compatibility note (or test) demonstrates that the outbox/async,
       sandbox, and SCM-publisher slices can be added without changing the frozen
       interface signatures or run state names.
 
@@ -236,12 +236,15 @@ It reuses existing engineering assets rather than rebuilding them:
   encrypted credential store (`projects/adapter/secret/aesgcm.go`,
   `FIXTHE_ENCRYPTION_KEY`); the provider SDK type never crosses the port.
 
-## Open Questions
+## Checkpoint Decision
 
-- **Checkpoint sample size and quality bar (proposed default, refine after first
-  runs):** exercise ~10 real pilot incidents spanning at least two fixability
-  classes (including ≥1 `code_fixable`). Passing go/no-go = a reviewing engineer
-  judges the root-cause direction correct for a majority, every cited evidence ID
-  resolves to real collected evidence (no fabricated citations), and at least one
-  `code_fixable` case yields a suggested diff a human would apply with only minor
-  edits. Confirm or adjust these numbers before Step 9.
+Step 9 used the complete reviewable pilot set: four real incidents and five
+known attempts. Three historical incidents had been deleted from the pilot
+database, so their preserved session audits and the sanitized INC-2270 replay
+were evaluated alongside one live retained run. The live run's three citations
+all resolve, and its `code_fixable` result produced a human-readable two-file
+suggested diff. See [the quality read-out](research/quality-readout.md).
+
+The result is a conditional go for controlled diagnosis/advisory integration
+and a no-go for unattended production repair or broad rollout until production
+`ApplyPlan` wiring and a larger, multi-class pilot sample exist.
