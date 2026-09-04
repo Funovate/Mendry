@@ -5,12 +5,15 @@ import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
 import { ErrorNotice } from "../../shared/ui";
+import { parseUnifiedDiff, type DiffFile, type DiffLine } from "./remediationDiff";
 
 type RemediationPanelProps = {
   projectKey: string;
   incidentId: string;
   generation: number;
 };
+
+type DiffSide = "original" | "changed";
 
 const activeStates = new Set([
   "queued",
@@ -45,6 +48,43 @@ function formatCheckpointAge(updatedAt: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours}h ${minutes % 60}m ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function DiffLineView({ line }: { line: DiffLine | null }) {
+  if (!line) {
+    return <div className="remediation-diff-line empty" aria-hidden="true"><span className="remediation-diff-number" /><code> </code></div>;
+  }
+  return <div className={`remediation-diff-line ${line.kind}`}><span className="remediation-diff-number">{line.lineNumber ?? ""}</span><code>{line.text || " "}</code></div>;
+}
+
+function DiffPane({ file, side }: { file: DiffFile; side: DiffSide }) {
+  const label = side === "original" ? "Original" : "Changed";
+  return (
+    <section className={`remediation-diff-pane ${side}`} aria-label={`${label} code for ${file.path}`}>
+      <div className="remediation-diff-pane-header"><strong>{label}</strong><span>{side === "original" ? "Before" : "After"}</span></div>
+      <div className="remediation-diff-lines">
+        {file.rows.map((row, index) => <DiffLineView key={`${file.path}-${side}-${index}`} line={side === "original" ? row.original : row.changed} />)}
+      </div>
+    </section>
+  );
+}
+
+function DiffViewer({ value }: { value: string }) {
+  const parsed = parseUnifiedDiff(value);
+  if (!parsed.parseable) return <pre className="remediation-diff remediation-diff-fallback">{value}</pre>;
+
+  return <div className="remediation-diff-viewer">{parsed.files.map((file, index) => (
+    <article className="remediation-diff-file" key={`${file.path}-${index}`}>
+      <header className="remediation-diff-file-header">
+        <div><span className="eyebrow">File</span><strong>{file.path}</strong></div>
+        {file.header && <code>{file.header}</code>}
+      </header>
+      <div className="remediation-diff-panes">
+        <DiffPane file={file} side="original" />
+        <DiffPane file={file} side="changed" />
+      </div>
+    </article>
+  ))}</div>;
 }
 
 export function RemediationPanel({ projectKey, incidentId, generation }: RemediationPanelProps) {
@@ -85,7 +125,7 @@ export function RemediationPanel({ projectKey, incidentId, generation }: Remedia
 
   return (
     <section className="content-section remediation-section">
-      <div className="panel-heading">
+      <div className="panel-heading remediation-panel-heading">
         <div>
           <h2>Remediation review</h2>
           <p>Diagnosis, evidence, risk, and the suggested unified diff for this incident generation.</p>
@@ -117,30 +157,40 @@ export function RemediationPanel({ projectKey, incidentId, generation }: Remedia
       )}
       {review && (
         <div className="remediation-review">
-          <div className="remediation-actions">
-            {review.continuationAvailable && canWrite && (
-              <button className="primary-button" type="button" disabled={continueRemediation.isPending || continuationBlocked} onClick={continueFromReview}>
-                {continueRemediation.isPending ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
-                {continueRemediation.isPending ? "Continuing analysis..." : "Continue analysis"}
-              </button>
-            )}
-            {!canWrite && <p className="readonly-note">Viewer access is read-only.</p>}
-            {activeStates.has(review.status) && <p className="readonly-note">An analysis attempt is currently active.</p>}
-            {!review.continuationAvailable && !activeStates.has(review.status) && (
-              <p className="readonly-note">This remediation result cannot be continued.</p>
-            )}
-          </div>
-          <dl className="incident-facts">
-            <div><dt>Status</dt><dd>{review.status}</dd></div>
-            <div><dt>Risk</dt><dd>{review.risk || "n/a"}</dd></div>
-            <div><dt>Generation</dt><dd>{review.generation}</dd></div>
-            <div><dt>Attempt</dt><dd>{review.attemptNumber}</dd></div>
-            <div><dt>Origin</dt><dd>{review.origin || "legacy"}</dd></div>
-            <div><dt>Version</dt><dd>{review.version}</dd></div>
-            <div><dt>Terminal reason</dt><dd>{review.terminalReason || "None recorded"}</dd></div>
-            <div><dt>Deployed commit</dt><dd>{review.deployedCommit || "n/a"}</dd></div>
-            <div><dt>Loop mode</dt><dd>{review.agentLoopMode || "legacy"}{review.agentLoopPolicyVersion ? ` · policy v${review.agentLoopPolicyVersion}` : ""}</dd></div>
-          </dl>
+          <section className="remediation-overview" aria-labelledby="remediation-overview-heading">
+            <header className="remediation-overview-header">
+              <div>
+                <h3 id="remediation-overview-heading">Run overview</h3>
+                <p>Generation {review.generation} · Version {review.version}</p>
+              </div>
+              <div className="remediation-actions">
+                {review.continuationAvailable && canWrite && (
+                  <button className="primary-button" type="button" disabled={continueRemediation.isPending || continuationBlocked} onClick={continueFromReview}>
+                    {continueRemediation.isPending ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
+                    {continueRemediation.isPending ? "Continuing analysis..." : "Continue analysis"}
+                  </button>
+                )}
+                {!canWrite && <p className="readonly-note">Viewer access is read-only.</p>}
+                {activeStates.has(review.status) && <p className="readonly-note">An analysis attempt is currently active.</p>}
+                {!review.continuationAvailable && !activeStates.has(review.status) && (
+                  <p className="readonly-note">This remediation result cannot be continued.</p>
+                )}
+              </div>
+            </header>
+
+            <dl className="remediation-primary-facts" aria-label="Primary remediation run facts">
+              <div className="remediation-status-fact"><dt>Status</dt><dd><span className="remediation-run-state">{review.status}</span></dd></div>
+              <div><dt>Risk</dt><dd>{review.risk || "n/a"}</dd></div>
+              <div><dt>Attempt</dt><dd>{review.attemptNumber}</dd></div>
+              <div><dt>Origin</dt><dd>{review.origin || "legacy"}</dd></div>
+              <div className="remediation-loop-fact"><dt>Loop mode</dt><dd>{review.agentLoopMode || "legacy"}{review.agentLoopPolicyVersion ? ` · policy v${review.agentLoopPolicyVersion}` : ""}</dd></div>
+            </dl>
+            <dl className="remediation-technical-facts" aria-label="Technical remediation run facts">
+              <div><dt>Terminal reason</dt><dd>{review.terminalReason || "None recorded"}</dd></div>
+              <div><dt>Deployed commit</dt><dd><code>{review.deployedCommit || "n/a"}</code></dd></div>
+            </dl>
+          </section>
+
           {review.recovery && review.recovery.active && (
             <aside className="remediation-recovery" role="status" aria-label="Recovering / 自动恢复中">
               <h3>Recovering · 自动恢复中</h3>
@@ -169,6 +219,7 @@ export function RemediationPanel({ projectKey, incidentId, generation }: Remedia
               <p className="readonly-note">The run remains active and keeps recovering; this is not a manual-review conclusion.</p>
             </aside>
           )}
+
           {review.status === "blocked_manual_review" && review.manualSuggestion.trim() !== "" && (
             <aside className="remediation-manual-suggestion" aria-label="人工修复建议 / Manual fix suggestion">
               <h3>人工修复建议 / Manual fix suggestion</h3>
@@ -183,56 +234,87 @@ export function RemediationPanel({ projectKey, incidentId, generation }: Remedia
               )}
             </aside>
           )}
-          {review.attempts.length > 0 && (
-            <div className="remediation-attempts">
-              <h3>Attempts</h3>
+
+          <div className="remediation-body">
+            <section className="remediation-block remediation-diagnosis" aria-labelledby="remediation-diagnosis-heading">
+              <div className="remediation-block-heading">
+                <div><h3 id="remediation-diagnosis-heading">Diagnosis</h3><span>Evidence-backed assessment</span></div>
+              </div>
+              {review.diagnosis ? (
+                <>
+                  <div className="diagnosis-summary"><strong>{review.diagnosis.fixability}</strong><span>confidence {review.diagnosis.confidence}</span></div>
+                  <p className="remediation-prose">{review.diagnosis.causalReasoning}</p>
+                  {review.diagnosis.evidenceRefs.length > 0 && (
+                    <p className="remediation-reference">Evidence <code>{review.diagnosis.evidenceRefs.join(", ")}</code></p>
+                  )}
+                  {review.diagnosis.recommendedNextAction && review.status !== "blocked_manual_review" && (
+                    <p className="remediation-next-step">{review.diagnosis.recommendedNextAction}</p>
+                  )}
+                </>
+              ) : <p className="readonly-note">Diagnosis is not available yet.</p>}
+            </section>
+
+            {review.attempts.length > 0 && (
+              <section className="remediation-block remediation-attempts" aria-labelledby="remediation-attempts-heading">
+                <div className="remediation-block-heading">
+                  <div><h3 id="remediation-attempts-heading">Attempts</h3><span>{review.attempts.length} recorded</span></div>
+                </div>
+                <ol>
+                  {review.attempts.map((attempt) => (
+                    <li key={attempt.id}>
+                      <div className="attempt-heading">
+                        <div className="attempt-label"><strong>Attempt {attempt.attemptNumber}</strong><span>Version {attempt.version}</span></div>
+                        <span className="attempt-state">{attempt.origin || "legacy"} · {attempt.status}</span>
+                      </div>
+                      <div className="attempt-details">
+                        <span>Context {attempt.contextVersion}</span>
+                        {attempt.terminalReason && <span>Terminal reason: {attempt.terminalReason}</span>}
+                      </div>
+                      <time dateTime={attempt.createdAt}>{formatDate(attempt.createdAt)}</time>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+          </div>
+
+          {review.plans.length > 0 && (
+            <section className="remediation-block remediation-plans" aria-labelledby="remediation-plans-heading">
+              <div className="remediation-block-heading">
+                <div><h3 id="remediation-plans-heading">Plans</h3><span>{review.plans.length} candidates</span></div>
+              </div>
               <ol>
-                {review.attempts.map((attempt) => (
-                  <li key={attempt.id}>
-                    <div className="attempt-heading">
-                      <strong>Attempt {attempt.attemptNumber}</strong>
-                      <span>{attempt.origin || "legacy"} · {attempt.status}</span>
+                {review.plans.map((plan, index) => (
+                  <li className={plan.recommended ? "is-recommended" : undefined} key={plan.planId}>
+                    <div className="remediation-plan-heading">
+                      <div className="remediation-plan-title">
+                        <span>Plan {index + 1}</span>
+                        <strong>{plan.intendedBehavior}</strong>
+                      </div>
+                      <div className="remediation-plan-meta"><span>{plan.risk}</span>{plan.recommended && <span className="recommended">Recommended</span>}</div>
                     </div>
-                    <p>Version {attempt.version} · context {attempt.contextVersion}</p>
-                    {attempt.terminalReason && <p>Terminal reason: {attempt.terminalReason}</p>}
-                    <time dateTime={attempt.createdAt}>{formatDate(attempt.createdAt)}</time>
+                    <div className="remediation-plan-body">
+                      {plan.rationale && <p className="remediation-prose">{plan.rationale}</p>}
+                      <div className="remediation-plan-details">
+                        {plan.affectedFiles.length > 0 && (
+                          <div className="remediation-plan-files"><span>Files</span><ul>{plan.affectedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></div>
+                        )}
+                        {plan.rollbackStrategy && <p className="remediation-plan-rollback"><span>Rollback</span>{plan.rollbackStrategy}</p>}
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ol>
-            </div>
+            </section>
           )}
-          {review.diagnosis ? (
-            <div className="remediation-diagnosis">
-              <h3>Diagnosis</h3>
-              <p><strong>{review.diagnosis.fixability}</strong> · confidence {review.diagnosis.confidence}</p>
-              <p>{review.diagnosis.causalReasoning}</p>
-              {review.diagnosis.evidenceRefs.length > 0 && (
-                <p className="readonly-note">Evidence {review.diagnosis.evidenceRefs.join(", ")}</p>
-              )}
-              {review.diagnosis.recommendedNextAction && review.status !== "blocked_manual_review" && (
-                <p className="readonly-note">{review.diagnosis.recommendedNextAction}</p>
-              )}
-            </div>
-          ) : <p className="readonly-note">Diagnosis is not available yet.</p>}
-          {review.plans.length > 0 && (
-            <div className="remediation-plans">
-              <h3>Plans</h3>
-              <ul>
-                {review.plans.map((plan) => (
-                  <li key={plan.planId}>
-                    <strong>{plan.intendedBehavior}</strong>
-                    <span> · {plan.risk}{plan.recommended ? " · recommended" : ""}</span>
-                    {plan.rationale && <p className="readonly-note">{plan.rationale}</p>}
-                    {plan.affectedFiles.length > 0 && (
-                      <p className="readonly-note">Files {plan.affectedFiles.join(", ")}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+
           {review.suggestedDiff ? (
-            <pre className="remediation-diff">{review.suggestedDiff}</pre>
+            <section className="remediation-block remediation-diff-block" aria-labelledby="remediation-diff-heading">
+              <div className="remediation-block-heading">
+                <div><h3 id="remediation-diff-heading">Suggested diff</h3><span>Original / Changed</span></div>
+              </div>
+              <DiffViewer value={review.suggestedDiff} />
+            </section>
           ) : <p className="readonly-note">No suggested diff yet.</p>}
         </div>
       )}

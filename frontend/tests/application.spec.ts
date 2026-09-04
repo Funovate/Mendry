@@ -498,6 +498,18 @@ test("loads project-owned configuration, events, incidents, members, and audit r
   await expect(page.getByText("Project configuration updated.", { exact: true })).toBeVisible();
 });
 
+test("keeps incident detail heading levels visually consistent", async ({ page }) => {
+  await mockApi(page, { role: "admin" });
+  await page.goto("/projects/real-estate/incidents/INC-2048");
+
+  const sectionHeadings = ["Occurrence summary", "Lifecycle", "Remediation review"];
+  const subsectionHeadings = ["Run overview", "Diagnosis", "Attempts", "Plans", "Suggested diff"];
+  const fontSizes = async (names: string[]) => Promise.all(names.map((name) => page.getByRole("heading", { name }).evaluate((element) => getComputedStyle(element).fontSize)));
+
+  expect(new Set(await fontSizes(sectionHeadings))).toEqual(new Set(["16px"]));
+  expect(new Set(await fontSizes(subsectionHeadings))).toEqual(new Set(["15px"]));
+});
+
 test("renders remediation diagnostics in the selected incident detail", async ({ page }) => {
   await mockApi(page, { role: "admin" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
@@ -984,6 +996,24 @@ test("returns to login when a project request loses authentication", async ({ pa
 
 test.describe("mobile", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true });
+
+  test("remediation review stays ordered within the viewport", async ({ page }) => {
+    await mockApi(page, { role: "admin" });
+    await page.goto("/projects/real-estate/incidents/INC-2048");
+
+    const diagnosis = page.getByRole("heading", { name: "Diagnosis" });
+    const attempts = page.getByRole("heading", { name: "Attempts" });
+    const plans = page.getByRole("heading", { name: "Plans" });
+    await expect(diagnosis).toBeVisible();
+    await expect(attempts).toBeVisible();
+    await expect(plans).toBeVisible();
+
+    const positions = await Promise.all([diagnosis, attempts, plans].map(async (heading) => (await heading.boundingBox())?.y ?? 0));
+    expect(positions[0]).toBeLessThan(positions[1]);
+    expect(positions[1]).toBeLessThan(positions[2]);
+    await plans.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  });
 
   test("project navigation and event stream stay within the viewport", async ({ page }) => {
     await mockApi(page, { role: "operator", systemRole: "viewer" });

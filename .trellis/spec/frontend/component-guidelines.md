@@ -61,6 +61,9 @@ Do not add a generic component abstraction for a one-off layout.
 - Tokens and element resets live in `styles/tokens.css` and `styles/base.css`.
 - Keep cards at 6px or less to match the operational console.
 - Fixed navigation and control dimensions must not shift when labels or counts change.
+- Incident detail peers use one heading scale: `Occurrence summary`, `Lifecycle`, and `Remediation review` are `16px` `h2` headings; remediation review subsections are `15px` `h3` headings. Do not let `.content-section` and `.panel-heading` assign different sizes to equivalent heading levels.
+- Incident remediation layouts must account for both the `238px` application sidebar and the incident list, which can consume another `380px`. At common 1280px and 1366px desktop viewports, collapse long-form review columns instead of sizing them from the full browser width; reserve side-by-side diagnosis/history treatment for a detail region that still leaves diagnosis at a readable width.
+- Keep long diagnosis and plan rationale in the wider region. Attempts are secondary history, while plans and paired diffs use the full detail width. Within framed review sections, use dividers for repeated plan or attempt entries instead of nesting another layer of cards.
 
 ## Accessibility
 
