@@ -937,3 +937,282 @@ frontend/screenshots (PNG test artifacts) excluded.
 
 .agents/.claude/.codex/.pi/AGENTS.md/CLAUDE.md (agent tooling), frontend/
 screenshots/ (artifacts). Backend fully committed + buildable.
+
+## Session 24: 08-31 phase 2 item 4 — exhaustion proposal + service validation
+
+### Summary
+
+Phase 2 item 4 of `08-31-remediation-lifecycle-resilience`: replaced the direct
+terminal paths (model stop, empty insufficient_evidence, Docker-refinement
+exhaustion, collect-loop limits) with `ExhaustionProposalV1` + service
+validation (PRD R18-R20, design D6), feature-gated to `agentLoopMode=resilient_v1`.
+Legacy byte-for-byte unchanged.
+
+### Main Changes
+
+- `domain/exhaustion.go`: `ExhaustionProposalV1` (D6 JSON mirror), attemptedPaths/
+  untriedCapabilities, `ExhaustionReasonCode`, `KnownCapabilityClasses`, bounded
+  Validate.
+- `application/exhaustion.go`: pure deterministic `ValidateExhaustionProposal`
+  (advertised-capability coverage, run-owned refs, open-recovery acknowledgement,
+  budget-can't-support-viable-action); recoverable exhaustion challenge listing
+  uncovered capability on incomplete proof (AC8/AC9); `requestExhaustionProposal`
+  + `handleExhaustionEnvelope`.
+- `domain/recovery.go` + `application/envelope.go` + `agent_engine.go`:
+  `RecoveryChallengeKindExhaustion` + exhaustion envelope kind (strict decode).
+- `coordinator.go`: resilient-only intercepts at stop/insufficient/Docker-
+  refinement/collect-loop; accepted proof -> blocked_manual_review
+  (terminal_reason exhaustion_proof); incomplete -> recoverable challenge + loop;
+  malformed -> protocol correction; forced checkpoint; budget charged normally.
+- `resilience.go`: tracker exhaustionProposalAttempts/actionRefs/ownedRefs/
+  openRecoveryRefs; `conversation.go` AppendExhaustionProposalRequest.
+
+### Check findings fixed (2)
+
+1. Run-owned refs omitted trusted bootstrap/prior evidence -> false rejection of
+   INC-2270-style proofs citing first-turn provider detail; fixed by recording
+   priorInvocations evidence IDs (runQueued) + bootstrap record IDs (drive,
+   resilient-only).
+2. Exhaustion envelope bypassed the mandatory Tencent detail gate; fixed:
+   while tencentDetailGateClosed(), exhaustion rejected with
+   required_direct_evidence like diagnosis/stop.
+
+### Legacy preservation
+
+13 legacy sentinel tests (stop, insufficient-evidence, Docker refinement,
+protocol-correction) pass fresh, byte-identical, not edited. 7 resilient tests
+switched terminal insufficient_evidence -> unsafe_to_automate (policy blocker
+retaining direct terminal) with comments; assertions intact.
+
+### Validation
+
+`go test ./...` repo-wide green; remediation 11 packages + `-race` green; go vet;
+go build ./cmd/...; git diff --check; gofmt clean. GitNexus detect_changes: only
+expected remediation flows; drive risk high (expected, mitigated by legacy gate).
+
+### Status
+
+Phase 2 items 1-4 `[x]`; item 5 (persist submitted diagnosis) and item 6
+(INC-2270 regression matrix) remain.
+
+### Next Steps
+
+- Phase 2 item 5: persist submitted diagnosis (D4 "persist both" - model's
+  original diagnosis incl. hard-rejected code_fixable) + gate decision +
+  bounded correction metadata, without raw model turns.
+- Phase 2 item 6: INC-2270 regression matrix (AC1-AC8) incl. provider-detail-loss.
+
+## Session 25: 08-31 phase 2 item 5 — submitted-diagnosis audit persistence (D4 "persist both")
+
+### Summary
+
+Phase 2 item 5 of `08-31-remediation-lifecycle-resilience`: persist the
+submitted (pre-gate) diagnosis + gate decision link + bounded correction
+metadata, WITHOUT raw model turns (D4/R5/R7/R8, auditability).
+
+### Main Changes
+
+- Migration `000017_submitted_diagnosis.up.sql`: additive
+  `remediation_submitted_diagnosis` (per-run sequence, original fixability/
+  confidence/reasoning/citations/missing/contradictions/next-action,
+  correction_kind/correction_evidence/correction_count/corrected,
+  gate_outcome, nullable decision_id FK). Comments on all 17 columns, named
+  CHECKs, additive-only, rollback = drop table.
+- `domain/submitted_diagnosis.go`: `SubmittedDiagnosis` + correction types +
+  `SubmittedDiagnosisStore` companion port (Append/List/LatestDecisionID).
+- `adapter/postgres/submitted_diagnosis.go`: transactional append + list + FK
+  validation (sequence = len+1); `application/submitted_diagnosis.go`:
+  pre-gate projection, mismatch->correction metadata, gate-outcome projection,
+  best-effort append.
+- Coordinator: capture pre-gate envelope, persist submitted row with mismatch
+  correction metadata / gate outcome, link accepted decision; exhaustion
+  accepted-proof row (kind exhaustion). Frozen `domain.RunStore` untouched
+  (companion port pattern). Audit gated by store capability, not mode.
+- sqlc regen (v1.31.1 byte-idempotent).
+
+### INC-2270 audit core
+
+Hard-rejected code_fixable keeps model ORIGINAL fixability/confidence in the
+submitted row (gate_outcome=rejected); accepted remediation_decision stays
+routed insufficient_evidence. Correction metadata carries only
+service-authoritative storedClassification; no raw model text.
+
+### Check
+
+trellis-check verified all contract points; applied one fix (explicit
+json tags on SubmittedEvidenceClassification for the jsonb round-trip).
+Legacy regression tests unchanged/pass; 17 migrations pass.
+
+### Validation
+
+go test ./... repo-wide green; remediation 11 packages + -race green; go vet;
+go build; git diff --check; gofmt clean; sqlc byte-idempotent.
+
+### Status
+
+Phase 2 items 1-5 `[x]`. Item 6 (INC-2270 regression matrix AC1-AC8) remains.
+
+### Next Steps
+
+- Phase 2 item 6: INC-2270 regression matrix (AC1-AC8) incl. provider-detail-loss
+  and continuation rehydration; then Phase 3 (planning/patch/validation/
+  publication recovery) and Phase 4 (API/UI/rollout).
+
+## Session 26: 09-04 phase 2 item 6 — INC-2270 regression matrix (AC1-AC8)
+
+### Summary
+
+Phase 2 item 6 of `08-31-remediation-lifecycle-resilience`: additive
+consolidated regression matrix mapping AC1-AC8 1:1 to named
+`TestINC2270Regression_ACn_*` tests plus fixture wiring for the two canonical
+INC-2270 replay contracts. Test-only: no production code, migration, sqlc, or
+port changed; no existing test file modified.
+
+### Main Changes
+
+- `application/inc2270_regression_test.go` (new, ~950 lines, test-only):
+  - `TestINC2270Regression_FixtureLoaded` loads
+    `.trellis/tasks/08-31-.../research/inc-2270-replay.json` (skips when
+    absent) and asserts both canonical contracts: attempt 1 silent gate
+    rewrite → structured challenge + preserved causal/fixability proposal
+    (AC1/AC5); attempt 2 provider-detail loss → same-series `evidence.read`
+    rehydration without crossing generation/commit (AC2).
+  - AC1: first turn carries trusted stack/path/line/rawTime + evidence ID;
+    code-first inspection with no forced Docker-first order;
+    classification challenge corrected; `code_fixable` preserved; planning
+    entered without manual review.
+  - AC2: continuation renders the same-series evidence index (not degraded to
+    runtime-only) and re-reads earlier provider detail by ID via
+    `evidence.read`; tampered cursor rejected as invalid_arguments
+    (server-authoritative cursor).
+  - AC3: ambiguous code-first → SSH inspect failure (retryable observation) →
+    refined query → runtime evidence persisted → back to repository; run
+    stays active.
+  - AC4: log-API connector failure returns a safe retryable observation;
+    repository/evidence.read alternatives remain advertised; run never
+    terminalizes.
+  - AC5: citation classification mismatch corrected through the loop with 0.9
+    confidence and zero contradiction preserved.
+  - AC6: malformed envelope, oversized tool observation (bounded at 64 KiB),
+    and provider-native continuation loss all recover with `code_fixable`
+    intact (never degraded to `insufficient_evidence`).
+  - AC7: restart reconstructs from the predecessor's latest durable
+    checkpoint with no opaque provider session; child checkpoints at phase
+    boundary and before terminal.
+  - AC8: incomplete/early exhaustion proposal rejected with a recoverable
+    challenge listing every uncovered capability/recovery class; complete
+    proof accepted with terminal reason `exhaustion_proof`.
+  - Local fakes only: `sequenceInspectPort` (canned SSH results) and
+    `countingCheckpointStore` (load-target recording); everything else reuses
+    existing fakes (`newCoordinator`/`sourceWiredCoordinator`, scripted
+    models, fake stores, `eligibleAutomaticAggregate`, evidence.read fakes).
+- `implement.md`: Phase 2 item 6 marked `[x]` with the AC→test mapping table
+  and existing-coverage reuse notes.
+
+### Check
+
+Check agent verified each AC test asserts the AC's core observable behavior
+against the existing fakes; fixture identity/sanitized contracts;
+no flaky/racy patterns (no sleeps/network/parallel; AC7 ran 10x and the
+suite 5x deterministically); no production symbols invented; mtime ordering
+confirms the regression file was the only new file of the delivery.
+
+### Validation
+
+- Focused: 9/9 `TestINC2270Regression_*` pass (including sub-tests) under
+  `-count=1` and `-count=5`, plus `-race` on the focused set.
+- `go test ./internal/modules/remediation/...` green (all 13 packages);
+  `go test -race ./internal/modules/remediation/application ./internal/modules/remediation/domain` green.
+- Repo-wide `go test ./...`: 0 failures.
+- `go vet ./...`, `go build ./cmd/...`, `gofmt -l <file>` (empty),
+  `git diff --check` all clean.
+
+### Status
+
+Phase 2 complete: items 1-6 `[x]`. Next: Phase 3 (planning/patch/validation/
+publication recovery) and Phase 4 (API/UI/rollout).
+
+## Session 26: 08-31 phase 2 item 6 — INC-2270 regression matrix (AC1-AC8)
+
+### Summary
+
+Phase 2 item 6 of `08-31-remediation-lifecycle-resilience`: consolidated
+INC-2270 regression matrix. Additive test-only work wiring the two INC-2270
+replay scenarios and proving AC1-AC8 with named regression tests.
+
+### Main Changes
+
+- `application/inc2270_regression_test.go` (NEW, 952 lines, test-only):
+  `TestINC2270Regression_AC1..AC8_*` + `TestINC2270Regression_FixtureLoaded`.
+- `.trellis/.../implement.md`: Phase 2 item 6 `[x]` + AC->test mapping table.
+- No production code, no migrations/sqlc/ports, no existing tests modified.
+
+### AC coverage
+
+AC1 trusted-locators code-first + correction enters planning; AC2 continuation
+rehydrates earlier provider detail via evidence.read (tampered cursor rejected);
+AC3 ambiguous code-first switches to SSH, refines query, returns to repo; AC4
+connector failure keeps alternative tool + run active; AC5 mismatch corrected
+not contradicted (0.9 confidence preserved); AC6 malformed/oversized/
+continuation-loss recover preserving code_fixable; AC7 restart reconstructs from
+latest durable checkpoint (no opaque session); AC8 incomplete exhaustion
+proposal rejected with challenge listing uncovered capability.
+
+### Check
+
+trellis-check reviewed line-by-line (952 lines): test-only confirmed, AC tests
+assert genuine observable behavior (not vacuous), fixture wiring pins both
+INC-2270 failure modes; only fix was journal doc update. 9/9 regression tests
+pass, no flakes (AC7 10x), -race clean.
+
+### Validation
+
+go test ./... repo-wide green; remediation 11 packages; -race green; go vet;
+go build ./cmd/...; git diff --check; gofmt clean.
+
+### Status
+
+Phase 2 COMPLETE (items 1-6 all `[x]`).
+
+### Next Steps
+
+- Phase 3: remaining lifecycle recovery — planning output correction/policy
+  feedback; workspace/artifact checkpointing around patching; validation
+  failure -> structured evidence + patch revision turns; idempotent publication
+  recovery; forced checkpoint + restart tests at every phase boundary.
+- Phase 4: API/UI projections, agentLoopMode rollout, metrics, full verification
+  (focused/race/backend-wide/frontend/vet/build/diff/Trellis check/GitNexus
+  detect_changes).
+
+
+## Session 16: Archive remediation detail UI
+
+**Date**: 2026-09-04
+**Task**: Archive remediation detail UI
+**Branch**: `main`
+
+### Summary
+
+Verified the remediation detail UI with frontend lint, typecheck, unit tests, build, and 24 Playwright E2E tests; committed the layout and unified diff viewer, then archived 09-03-remediation-detail-ui.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `891d53f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
