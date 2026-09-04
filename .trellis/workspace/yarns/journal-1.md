@@ -1216,3 +1216,36 @@ Verified the remediation detail UI with frontend lint, typecheck, unit tests, bu
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 08-14 walking skeleton quality checkpoint
+
+**Date**: 2026-09-04
+**Task**: 08-14 walking skeleton quality checkpoint
+**Branch**: `main`
+
+### Summary
+
+Completed Step 9 using four real pilot incidents and five known attempts. Recorded a conditional go for diagnosis/advisory integration and a no-go for unattended production repair or broad rollout; live INC-2390 had 3/3 resolvable citations, two plans, and a suggested diff. Backend full tests, remediation race, vet/build, frontend lint/typecheck/40 unit tests/build, and 24 Playwright E2E tests passed. Archived 08-14-remediation-walking-skeleton; unrelated agent config and screenshots were left untouched.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8af0709` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
