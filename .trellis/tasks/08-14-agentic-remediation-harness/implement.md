@@ -1,112 +1,166 @@
 # Implementation Plan: Agentic Remediation Harness
 
-## Dependency Gate
+## Parent Rule
 
-- [ ] Confirm the service-foundation worker, PostgreSQL outbox, RabbitMQ job
-      envelope, retry/dead-letter policy, authorization, and encrypted-secret
-      contracts are implemented or assigned to prerequisite child tasks.
-- [ ] Confirm evidence/redaction, LLM-provider, remediation-package, SCM-change,
-      and notification contracts have stable owning tasks and no duplicated
-      responsibility remains in this task.
-- [ ] Confirm the converged PRD has no open product questions and parent/sibling
-      task contracts remain consistent before starting implementation.
+This task is an umbrella. Do not run a broad implementation directly against
+it. Create and finish the child tasks below, then use this parent only for the
+cross-child integration review and controlled pilot decision.
 
-## Ordered Checklist
+## Delivered Baseline
 
-- [ ] Define the typed remediation-series/run aggregates, linked attempt model,
-      state transitions, fixability classes, lifecycle generation,
-      evidence-context version,
-      candidate/selected plan schemas, tool envelopes, budgets, artifacts, and
-      idempotency keys with exhaustive domain tests.
-- [ ] Add additive PostgreSQL migrations, sqlc queries, repository adapters, and
-      transition/outbox transactions for runs, decisions, plans, invocations,
-      artifacts, and external effects.
-- [ ] Add project remediation policy and metadata-only API configuration for
-      enablement, the default-`P2` minimum automatic priority, allowed
-      paths/change classes, validation command IDs, branch/commit fallbacks,
-      sandbox/network limits, budgets, and notification selection. The run
-      baseline remains the exact configured deployed commit rather than a
-      selectable latest-HEAD policy.
-- [ ] Implement setup-time validation-command discovery with source evidence,
-      administrator review, immutable command versions, and run-time snapshot
-      references. Discovery must never execute a candidate command.
-- [ ] Implement the coordinator and versioned RabbitMQ handlers using local
-      fakes first; prove trigger/coalescing, context-version advancement,
-      restart, redelivery, cancellation, retry/dead-letter, and
-      configuration-snapshot behavior before real external adapters.
-- [ ] Implement the context assembler over evidence and repository read ports,
-      including incremental retrieval, redaction, size limits, repository
-      guidance discovery, and prompt-injection isolation.
-- [ ] Implement the provider-neutral agent protocol, strict structured-output
-      validation, phase-specific tool registry, compact turn context, usage
-      accounting, and bounded stop conditions against a scripted fake model.
-- [ ] Implement the policy gateway for phase, capability, path, ref, command,
-      network, size, time, budget, and idempotency validation with deny-first
-      tests for every mutation path. Include ordinary, explicitly opted-in
-      high-risk, and always-denied publication classifications.
-- [ ] Implement ephemeral repository workspace creation and read-only Git/code
-      tools from the exact deployed commit without exposing credentials to the
-      model or sandbox.
-- [ ] Implement the dedicated rootless-OCI `SandboxRunner` boundary with stable
-      per-attempt IDs, explicit command IDs, read-only base images, resource
-      limits, output redaction/truncation, blocked engine socket/host/production
-      access, argv execution without a shell, terminal destroy, and TTL cleanup.
-- [ ] Implement the content-addressed artifact boundary for bounded patches,
-      expected Git tree hashes, validation artifacts, authorization, retention,
-      and publisher-side replay verification without persisting a workspace or
-      repository archive.
-- [ ] Implement branch/commit convention inference, confidence thresholds,
-      the `hotfix/INC-<incident-number>-<short-problem-slug>` branch fallback,
-      sanitization, stable run-ID collision handling, and evidence reporting
-      using remote-ref and SCM fake fixtures.
-- [ ] Integrate candidate-plan filtering/selection and the bounded patch,
-      validation, feedback, and reclassification loop.
-- [ ] Integrate the remediation-package and SCM publisher ports for idempotent
-      provider-neutral branch creation, commit, and push plus Yunxiao draft-PR
-      creation and other-provider branch/compare results; keep merge and
-      deployment absent from all interfaces.
-- [ ] Integrate durable review/non-code/blocked/failure notifications and expose
-      metadata-only run, diagnosis, plan, artifact, validation, and publication
-      state through protected REST APIs and the console. Publish the stable
-      remediation events through the signed-webhook outbox contract without
-      adding native email or vendor-specific chat adapters.
-- [ ] Add end-to-end fake-adapter scenarios for successful repair, non-code
-      cause, additional evidence, ambiguous plan, unsafe change, failed tests,
-      opted-in high-risk change, denied control-plane change, retry,
-      cancellation, provider outage, SCM race, and worker restart.
-- [ ] Run a full security review for credential leakage, prompt injection,
-      sandbox escape, arbitrary command/network execution, ref injection,
-      symlink/submodule/hook behavior, artifact retention, and audit contents.
+- [x] Walking skeleton: durable trigger, diagnosis, plans, suggested diff, real
+      Git/evidence/model adapters, review API/UI, and real-incident checkpoint.
+- [x] Tool-driven diagnosis foundation: ordered conversation, model-visible
+      tools and observations, SSH inspect, dynamic MCP, corrective retry, and
+      bounded context.
+- [x] Evidence and resilience: evidence re-read, fact/challenge gate,
+      checkpoints, recovery protocol, exhaustion proof, phase budgets, and
+      restart reconstruction.
+- [x] Full lifecycle kernel: `ApplyPlan`, `ResumeLifecycle`, plan policy,
+      workspace/validation/publication ports, durable lifecycle-effect store,
+      validation revision, publication retry, and `awaiting_human_review` tests.
 
-## Validation
+## Step 1: Clean Up Existing Child Boundaries
 
-- `cd backend && go test ./...`
-- `cd backend && go vet ./...`
-- `cd frontend && npm test -- --run`
-- `cd frontend && npm run lint`
-- `cd frontend && npm run build`
-- Run focused PostgreSQL/RabbitMQ integration suites with isolated test
-  resources once those prerequisites exist.
-- Run sandbox escape and network-denial tests in the approved deployment
-  runtime, including engine-socket denial and terminal/TTL cleanup, rather than
-  relying only on in-process fakes.
-- Run SCM contract tests against local HTTP/Git fakes; no test may push to a
-  user or production repository.
+- [ ] Audit `08-21-remediation-tool-driven-context` against delivered code.
+      Archive the stale original as superseded after carving any genuine generic
+      HTTP JSON log gap into an independent low-priority task.
+- [ ] Rewrite and reprioritize `08-14-stdio-mcp-harness-config` against the
+      current dynamic MCP runtime. Keep it independent from production repair.
+- [ ] Confirm neither task blocks the remaining ApplyPlan path.
+
+## Step 2: Create Focused Remaining Children
+
+- [ ] Create **execution policy configuration** child with project-owned,
+      versioned approved validation commands, risk policy, artifact retention,
+      publication target/namespace, and scoped write credential metadata.
+- [ ] Create **lifecycle runtime adapters** child with production workspace,
+      isolated validator, content-addressed artifact store, Git/SCM publisher,
+      PostgreSQL lifecycle-store injection, and restart resumer.
+- [ ] Create **apply-plan API and UI** child with authorized durable admission,
+      HTTP mapping, lifecycle review projection, plan selection, confirmation,
+      progress/recovery, and publication handoff.
+- [ ] Create **controlled production pilot** child that depends on the first
+      three and owns the final execution go/no-go.
+- [ ] Add the children to this parent and verify their requirements do not
+      overlap.
+
+## Step 3: Execution Policy Configuration Child
+
+- [ ] Persist immutable validation command versions using argv, cwd policy,
+      timeout, output/resource/network bounds, and no shell text.
+- [ ] Persist ordinary/high-risk/denied change policy, required command IDs,
+      diff/file/iteration bounds, artifact policy, publication target/prefix,
+      and scoped publication credential reference.
+- [ ] Add admin-only API/UI with optimistic updates, same-project credential
+      checks, secret-free responses, and configuration readiness projection.
+- [ ] Implement production `PlanPolicyEvaluator` and a loader that snapshots all
+      required command/policy versions at plan admission.
+- [ ] Test stale versions, incomplete policy, cross-project/wrong-kind secrets,
+      denied control-plane changes, high-risk opt-in, and immutable run
+      snapshots.
+
+## Step 4: Lifecycle Runtime Adapters Child
+
+- [ ] Implement idempotent disposable `WorkspacePort` at the exact deployed
+      commit with tree-hash CAS, bounded patching, path policy, and cleanup/TTL.
+- [ ] Implement the isolated `ValidationPort` with approved argv only, no shell,
+      deny-by-default network, no sensitive credentials, resource/output bounds,
+      and no host/container-engine authority.
+- [ ] Implement project/run-scoped content-addressed patch and validation
+      artifacts with hashes, retention, and bounded authorized reads.
+- [ ] Implement `PublicationPort` with a fresh exact-baseline checkout,
+      artifact/hash/tree verification, restricted branch namespace, idempotent
+      commit/push, and draft/compare metadata when supported.
+- [ ] Inject `RunStore` as `LifecycleStore` plus all runtime ports/policies into
+      bootstrap. Add bounded startup resume for active lifecycle phases.
+- [ ] Run adapter contract, isolation, idempotency, restart, cleanup, artifact
+      mismatch, remote identity, and protected-branch tests.
+
+## Step 5: Apply-Plan API And UI Child
+
+- [ ] Add an application use case requiring project write permission,
+      generation, run ID, expected version, and plan ID.
+- [ ] Validate latest series/run/baseline/mode/state/plan/policy before durable
+      admission and before any external effect.
+- [ ] Make duplicate admission idempotent and conflicting/stale admission fail
+      before adapter execution.
+- [ ] Add the protected `/remediation/apply` endpoint with stable response/error
+      contracts and request-size/unknown-field handling.
+- [ ] Ensure admission survives HTTP cancellation and active lifecycle work can
+      resume after process restart or an authorized repeated request.
+- [ ] Extend review API types with selected plan, lifecycle effects, validation,
+      publication metadata, and final next action without exposing raw output or
+      secrets.
+- [ ] Add frontend API schemas and plan selection, apply confirmation,
+      authorization, pending/recovery/failure, validation, publication, and
+      human-review states.
+- [ ] Add backend, frontend unit, and Playwright coverage for operator/admin,
+      viewer denial, stale state, duplicate action, active recovery, terminal
+      handoff, responsive layout, and no horizontal overflow.
+
+## Step 6: Controlled Pilot Child
+
+- [ ] Configure a designated non-production project with approved commands,
+      isolated runtime, artifact store, and scoped publication credential.
+- [ ] Run a real code-fixable incident from `diagnosis_ready_for_review` through
+      one validated branch/commit and `awaiting_human_review`.
+- [ ] Verify no merge, deployment, production mutation, or recovery claim
+      occurs.
+- [ ] Exercise at least validation failure/revision, publication retry/restart,
+      stale duplicate admission, and policy-denied change scenarios.
+- [ ] Produce a written security and quality read-out with a go/no-go for
+      per-project execution enablement.
+
+## Step 7: Parent Integration Gate
+
+- [ ] Verify every parent PRD acceptance criterion against child artifacts,
+      commits, tests, and the controlled-pilot read-out.
+- [ ] Run complete backend unit/race/vet/build and PostgreSQL integration checks.
+- [ ] Run frontend lint/typecheck/unit/build/Playwright checks.
+- [ ] Run isolation and network-denial tests in the actual deployment runtime,
+      not only with in-process fakes.
+- [ ] Run GitNexus change detection and inspect every affected execution flow.
+- [ ] Confirm specs describe the final API, policy snapshots, adapter security,
+      artifact boundary, rollout, and rollback.
+- [ ] Archive this parent only after all remaining children and the final pilot
+      are complete.
+
+## Validation Commands
+
+Each child owns focused commands. The final parent gate includes:
+
+```bash
+cd backend && go test ./...
+cd backend && go test -race ./internal/modules/remediation/...
+cd backend && go vet ./...
+cd backend && go build ./cmd/...
+cd frontend && npm run lint
+cd frontend && npm run typecheck
+cd frontend && npm test -- --run
+cd frontend && npm run build
+cd frontend && npm run test:e2e
+git diff --check
+```
+
+PostgreSQL tests must use an explicitly isolated test database. Publication tests
+must use local fakes or a designated non-production repository and must never
+push to an arbitrary user or production branch.
 
 ## Review Gates
 
-- Domain/state-machine review before persistence or transports.
-- Threat-model and tool-policy review before enabling a real model.
-- Sandbox isolation review before running repository commands.
-- Idempotency/redelivery review before enabling push or notifications.
-- Final cross-task contract review with evidence, provider, remediation, SCM,
-  and notification owners before project opt-in is exposed.
+1. Parent and child ownership review before creating implementation tasks.
+2. Execution policy and threat-model review before enabling runtime adapters.
+3. Isolation/artifact/publisher contract review before exposing ApplyPlan.
+4. API/UI authorization and idempotency review before the controlled pilot.
+5. Pilot read-out and explicit per-project enablement decision before parent
+   archive.
 
 ## Rollback
 
-- Disable global or project remediation enablement and stop the harness
-  consumer; incident ingestion and deterministic evidence/reporting continue.
-- Preserve durable runs, plans, artifacts, audit records, and already-pushed
-  branches. Do not attempt automated remote branch deletion during rollback.
-- Keep additive schema data readable by the prior application version where
-  possible; review database rollback separately from binary rollback.
+- Disable plan admission globally or for the affected project.
+- Stop new lifecycle execution while preserving runs, effects, artifacts, and
+  already-pushed branches for audit.
+- Resume or hand off active states explicitly; do not rewrite them as successful
+  or recovered.
+- Never delete a remote branch, merge, deploy, or execute rollback automatically.

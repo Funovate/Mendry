@@ -1,1 +1,10 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-14-agentic-remediation-harness/prd.md", "reason": "Parent acceptance is limited to the remaining production ApplyPlan integration, child ownership, safety boundary, and controlled pilot."}
+{"file": ".trellis/tasks/08-14-agentic-remediation-harness/design.md", "reason": "Verify implementation reuses the existing lifecycle kernel and ports, persists admission before effects, and keeps merge/deploy absent."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Final backend test, race, vet, build, integration, and review expectations."}
+{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Check exact-baseline, lifecycle idempotency, recovery, policy, credential isolation, artifact, and human-review invariants."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Check optimistic admission, policy snapshots, additive persistence, and lifecycle effect transaction boundaries."}
+{"file": ".trellis/spec/backend/authentication-guidelines.md", "reason": "Check project-scoped admin/operator writes, viewer denial, and same-project secret ownership."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check strict ApplyPlan request decoding, stable conflict/configuration errors, and safe adapter failure mapping."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Check that credentials, authenticated remotes, raw validation output, workspace paths, and unrestricted artifacts never enter logs or public API."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Check frontend schemas, states, tests, accessibility, responsive behavior, and production build."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Check plan selection, explicit confirmation, progress/recovery, and final human-review interaction consistency."}

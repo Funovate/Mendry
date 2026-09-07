@@ -1,380 +1,288 @@
 # Technical Design: Agentic Remediation Harness
 
-## Design Principle
+## Purpose
 
-The harness, not the model, owns authority. The model reasons over bounded,
-redacted observations and requests typed actions. Deterministic application
-code validates policy, executes tools, records effects, and decides whether the
-state machine may continue. Credentials are injected only inside trusted
-adapters and never become model context.
+This document describes only the remaining production integration. The
+existing remediation coordinator already owns diagnosis, planning, lifecycle
+states, recovery, budgets, checkpoints, and durable effect contracts. The
+implementation should connect those contracts to authorized product entry
+points and production adapters, not replace the coordinator.
 
-## Component Boundaries
-
-```text
-Incident transition
-      |
-      v
-Transactional outbox -> RabbitMQ -> RemediationRunCoordinator
-                                        |
-                    +-------------------+--------------------+
-                    |                   |                    |
-                    v                   v                    v
-             ContextAssembler      AgentEngine          PolicyGateway
-              /      |      \           |                    |
-             v       v       v          v          +---------+---------+
-        Evidence  Repository  Rules  LLMProvider   |         |         |
-        Broker      Reader             Port        v         v         v
-                                                Logs     Workspace    SCM
-                                                 |       Sandbox    Publisher
-                                                 +---------+---------+
-                                                           |
-                                                           v
-                                                  RemediationPackage
-                                                           |
-                                                           v
-                                                       Notifier
-```
-
-`RemediationRunCoordinator` is the only component allowed to advance run
-state. Tool adapters do not call the model or each other. `AgentEngine` does
-not receive adapter clients; it receives tool schemas and returns structured
-tool requests or phase results. `PolicyGateway` is the sole execution entry
-point for those requests.
-
-## Trigger And Coalescing
-
-Automatic remediation is a per-project policy with a minimum priority whose
-MVP default is `P2`. A new or reopened `P1/P2` incident creates a remediation
-series; a project `admin` or `operator` may manually create one for `Info`. The
-durable series key is `(incident_id, lifecycle_generation, deployed_commit)`.
-Repeated observations for the same fingerprint update the owning incident and
-evidence chain but cannot create another automatic series for that key.
-
-An explicit lifecycle generation increments when a recovered incident reopens.
-A changed deployed commit creates a new series because its source baseline is
-different. A series contains monotonically numbered run attempts. Manual retry
-creates a linked next attempt rather than mutating a terminal run or creating a
-second automatic root. Evidence collected after run creation advances an
-append-only context version, and each diagnosis/plan/model result records
-exactly which context version and evidence IDs it used.
-
-## Durable State Machine
+## Existing And Missing Boundaries
 
 ```text
-queued
-  -> preparing_context
-  -> diagnosing
-       -> collecting_more_context -> diagnosing
-       -> completed_non_code
-       -> blocked_manual_review
-       -> planning
-  -> planning
-       -> blocked_manual_review
-       -> patching
-  -> patching
-       -> validating
-  -> validating
-       -> patching              (bounded revision)
-       -> blocked_manual_review
-       -> publishing
-  -> publishing
-       -> awaiting_human_review
+Already live
 
-Any active phase -> cancelled | failed | budget_exhausted
+incident/webhook/manual start
+  -> RemediationService
+  -> RemediationCoordinator
+  -> diagnosis -> planning -> diagnosis_ready_for_review
+  -> PostgreSQL run/decision/plan/artifact/checkpoint records
+  -> review API -> incident UI
+
+Already implemented behind test ports
+
+ApplyPlan / ResumeLifecycle
+  -> patching -> validating -> publishing -> awaiting_human_review
+  -> WorkspacePort
+  -> ValidationPort
+  -> PublicationPort
+  -> LifecycleStore (PostgreSQL implementation exists)
+
+Remaining production integration
+
+plan approval API/UI
+  -> durable application admission
+  -> existing lifecycle coordinator
+  -> production workspace + validator + artifact store + publisher
+  -> lifecycle result projection
+  -> human merge/release handoff
 ```
 
-Each transition uses optimistic versioning and writes any next job intent to
-the same PostgreSQL transaction. A phase stores its validated result before
-acknowledging the message. External effects use stable idempotency keys derived
-from the run and effect kind.
+`RemediationCoordinator` remains the only run-state owner. HTTP handlers,
+frontend code, workspace adapters, validators, and publishers cannot transition
+runs directly.
 
-## Core Records
+## Plan-Application Admission
 
-`RemediationSeries` stores the incident, project, lifecycle generation, exact
-deployed commit, automatic-trigger uniqueness key, and current attempt number.
+Add an application service contract separate from HTTP:
 
-`RemediationRun` stores identity, series and replaced-run references, attempt
-number, state, source-baseline snapshot, current evidence-context version,
-configuration/policy/template/provider versions, budget counters, terminal
-reason, and timestamps.
+```go
+type PlanApplicationInput struct {
+    ProjectKey        string
+    IncidentNumber    int64
+    Generation        int64
+    RunID             string
+    ExpectedRunVersion int64
+    PlanID            string
+}
+```
 
-`DiagnosisDecision` stores the fixability class, confidence, evidence links,
-reasoning summary, contradictions, missing evidence, and verification steps.
+The actual type may follow local naming conventions, but it must carry all six
+identity/version boundaries. The service performs, in order:
 
-`RepairPlanCandidate` stores intended behavior, evidence links, affected paths,
-change steps, compatibility impact, validation plan, risk, and rollback.
-`SelectedRepairPlan` adds the selection rationale and policy-validation result.
+1. `RequireIncidentWrite` for the authenticated principal.
+2. Resolve the incident inside that project.
+3. Match lifecycle generation and deployed commit.
+4. Load the latest series/run and compare run ID/version.
+5. Require `resilient_v1` and `diagnosis_ready_for_review`.
+6. Resolve the selected plan from that run.
+7. Load and validate execution policy and credentials.
+8. Persist a checkpoint/admission that includes selected plan and policy
+   snapshots before returning acceptance or starting external effects.
 
-`ToolInvocation` stores the requested tool and normalized arguments, phase,
-policy decision, timing, bounded/redacted result reference, and usage counters.
-Secret-bearing adapter parameters are never part of this record.
+A duplicate request with the same identity returns the current admitted run. A
+request for another plan, version, run, project, or lifecycle after admission
+returns conflict. No external adapter is called before all checks and durable
+admission succeed.
 
-`RemediationArtifact` references a diff, validation result, branch, commit, or
-draft-PR artifact by content hash and retention policy. Large or sensitive
-content remains in the approved artifact store rather than RabbitMQ or audit
-JSON.
+## HTTP Contract
 
-## Agent Protocol
-
-Each model turn receives a fixed system contract, current phase, remaining
-budget, a compact run summary, selected evidence/repository excerpts, and the
-typed tools allowed in that phase. It returns exactly one schema-validated
-envelope:
+Add one protected endpoint:
 
 ```text
-request_tool | diagnosis | plan_candidates | patch_complete |
-validation_assessment | stop
+POST /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/apply
 ```
 
-The harness rejects unknown fields, unknown evidence IDs, invalid paths,
-unavailable tools, and requests not allowed in the current phase. Model output
-never directly mutates state. The coordinator translates only validated output
-into a state transition or policy-gateway request.
+Request:
 
-Tool results are summarized and redacted before the next turn. Raw model
-requests and responses are not persisted; the approved structured conclusion,
-template version/hash, evidence IDs, provider/model metadata, usage, and result
-hash are persisted through the LLM-provider audit contract.
+```json
+{
+  "generation": 1,
+  "runId": "run-uuid",
+  "version": 28,
+  "planId": "plan-key"
+}
+```
 
-## Tool Model
+The response uses the existing standard envelope and returns a bounded action
+projection with run ID, status, generation, attempt number, version, and whether
+execution was newly admitted or already active. Stable errors distinguish
+invalid input, forbidden, not found, stale conflict, unsupported mode/state,
+policy rejection, and missing execution configuration.
 
-Initial read tools:
+Long-running patch/validation/publication work must not rely on the client
+connection staying open. Admission is persisted first; execution can be driven
+in-process after admission. An authorized repeated request and the process
+startup resumer both use `ResumeLifecycle` for active `patching`, `validating`,
+or `publishing` states.
 
-- `repository.list_tree`, `repository.search`, `repository.read_file`,
-  `repository.history`, and `repository.diff`
-- `evidence.get`, `logs.search`, and `logs.context`
-- `workspace.status` and `workspace.read_file`
+## Policy Snapshot
 
-Initial mutation/execution tools:
+Project-owned execution configuration is versioned and loaded through an
+application port. A run checkpoint stores immutable references or bounded
+projections for:
 
-- `workspace.apply_patch`
-- `workspace.run_validation`, limited to configured or policy-approved command
-  IDs rather than arbitrary shell strings
+- approved validation command IDs and versions;
+- argv, working-directory policy, timeout, output bound, resource limits, and
+  bounded network policy resolved only inside the validator;
+- ordinary, opted-in high-risk, and denied path/change classes;
+- changed-file, patch-byte, and repair-iteration limits;
+- artifact store/retention policy version;
+- publication target branch and restricted branch prefix;
+- publication credential reference and configuration version.
 
-The model may request a logical action such as `run_validation("unit")`; the
-trusted runner resolves that ID to an immutable, administrator-approved command
-definition snapshotted by the run. The model cannot provide a command string.
-Git fetch, credential injection, branch creation, commit, push, and draft-PR
-operations are coordinator/adaptor effects after the validation gate, not model
-tools or arbitrary shell commands.
+The model sees command IDs and safe policy outcomes, never argv secrets,
+credentials, authenticated remotes, or unrestricted execution controls.
 
-## Repository Workspace And Sandbox Runner
+A production `PlanPolicyEvaluator` maps the project policy to the existing
+`PlanPolicyDecision`. Denied control-plane/binary paths remain manual-only.
+High-risk paths continue only when the project explicitly opts in and the
+required specialized validation command IDs are present.
 
-The workspace manager creates an ephemeral per-run checkout from the selected
-immutable deployed commit recorded by project configuration. The configured
-production branch identifies the intended PR target but its latest remote HEAD
-does not replace the run baseline. Repository access credentials exist only
-during trusted fetch/push adapter calls. The code-edit/test sandbox receives
-the checked-out tree but no Git push identity, connector secrets, model keys,
-notification keys, host mounts, or production network route.
+## Workspace And Artifact Adapter
 
-The Go worker talks to a narrow `SandboxRunner` port backed in the self-hosted
-deployment by a dedicated rootless OCI runner. The general worker does not mount
-`/var/run/docker.sock` or receive general container-engine authority. Each run
-attempt maps to a stable sandbox ID, starts from a project-configured read-only
-toolchain image (see Target Language And Toolchain Neutrality), runs as a
-non-root user with dropped capabilities and no-new-privileges, and receives
-explicit CPU, memory, process, filesystem, output, and time quotas. Network is
-denied unless an administrator-approved command version carries a bounded
-destination policy.
+The production `WorkspacePort` owns a disposable checkout bound to:
 
-Repository guidance such as `AGENTS.md`, `CONTRIBUTING`, formatter configs, and
-test manifests informs style and commands but is treated as untrusted project
-data. It cannot widen capabilities or override system policy.
+```text
+run ID + project ID + exact deployed commit + workspace version
+```
 
-Symlinks, submodules, Git hooks, package lifecycle scripts, binary files, large
-files, and networked validation commands require explicit policy. The runner
-enforces CPU, memory, process, filesystem, output, and time limits and destroys
-the workspace after artifacts are captured.
+`Ensure` is idempotent. It checks out the exact baseline and records base/current
+tree hashes. `ApplyPatch` requires the expected current tree hash, validates the
+bounded unified diff and path policy, applies without Git hooks, and records the
+result tree hash and changed files. `Destroy` is idempotent and is attempted on
+terminal states plus TTL cleanup.
 
-Terminal transitions explicitly destroy the sandbox. A TTL sweeper destroys
-orphaned sandboxes after worker loss. Reuse is allowed only for the same run
-attempt; no sandbox state crosses projects or attempts.
+The workspace does not receive the publication credential. Symlinks,
+submodules, hooks, binaries, control-plane paths, and paths outside policy fail
+closed.
 
-## Target Language And Toolchain Neutrality
+A content-addressed artifact store persists the complete bounded patch and
+redacted validation outputs. Artifact identity includes project/run ownership,
+content hash, media kind, size, creation time, and retention policy. PostgreSQL
+lifecycle effects keep only references, hashes, and safe summaries.
 
-The monitored repository may be Go, Java, C#, Python, Node, or another stack;
-the harness backend's own language is irrelevant to it. Neutrality holds by
-construction: repository read/search, patch, and diff operate on files and text,
-diagnosis and patching are model-driven, and validation is an
-administrator-approved command ID rather than a hardcoded toolchain, so
-`go test`, `mvn test`, `dotnet test`, and `pytest` are interchangeable at the
-runner boundary. The model requests `run_validation("unit")` and the runner
-resolves the ecosystem-appropriate argv from the approved command version.
+## Validation Adapter
 
-Language specificity is confined to three configured surfaces, all owned by
-project setup rather than harness code:
+`ValidationPort.Run` resolves `(CommandID, CommandVersion)` from the snapshotted
+project policy. It executes argv directly without a shell. Model-provided shell
+text is not part of the contract.
 
-- **Sandbox toolchain image.** There is no single base image. Each project
-  selects the read-only sandbox image carrying its ecosystem toolchain (for
-  example JDK plus Maven/Gradle, the .NET SDK plus NuGet, or a pinned Python
-  interpreter plus its build backend and, where native extensions compile, the
-  required compiler and headers). The image stays read-only, rootless,
-  capability-dropped, and network-denied by default; only its contents differ
-  per project.
-- **Dependency acquisition.** Because network is denied by default, dependencies
-  enter through an explicit per-ecosystem policy: a warmed read-only dependency
-  cache mounted into the sandbox (`~/.m2`, `~/.nuget`, a pip/wheel cache) and/or
-  an administrator-approved bounded egress to a single declared package registry
-  or mirror attached to the validation command version. Python native-extension
-  builds require the compiler and headers to be present in the image rather than
-  fetched at run time. If required dependencies cannot be provided under policy,
-  validation stops and the run reports a configuration limitation instead of
-  opening general network access.
-- **Ecosystem file classification.** The risk-policy path matcher carries a
-  per-ecosystem table of manifest/lockfile, dependency, and control-plane paths
-  (see Change Risk Policy).
+The runner is a separate isolation boundary with:
 
-## Artifact Boundary
+- no model, connector, evidence, Git-push, or production credentials;
+- no host filesystem outside the workspace;
+- no container-engine socket or elevated container authority;
+- non-root execution, dropped capabilities, and no-new-privileges;
+- deny-by-default network with only command-version-approved destinations;
+- CPU, memory, process, elapsed-time, and output bounds.
 
-After required validation succeeds, the harness writes a bounded unified patch,
-expected resulting Git tree hash, redacted validation artifacts, and metadata
-to a content-addressed `ArtifactStore`. PostgreSQL stores references, hashes,
-ownership, and retention; the initial self-hosted store uses a dedicated
-application-owned persistent volume. It never stores a full repository archive
-or mutable workspace. Authorized APIs stream only approved artifacts.
+The adapter returns only exit status, timing, bounded/redacted output artifact,
+output hash, and safe summary. A passing result is valid only for its expected
+workspace tree hash.
 
-The sandbox is destroyed after artifact capture. The trusted change publisher
-checks out the exact deployed commit separately, loads the patch by reference,
-applies it without model involvement, and verifies the expected tree hash. This
-keeps Git write credentials outside both the model and the code-execution
-sandbox.
+## Publication Adapter
 
-## Validation Command Discovery And Approval
+`PublicationPort` is deterministic and trusted. It receives no mutable
+workspace. It:
 
-A setup-time discovery service reads bounded repository metadata such as
-language manifests, workspace files, Make targets, and CI definitions. It emits
-command candidates with source evidence and risk metadata but cannot execute
-them. A project administrator accepts, edits, or rejects each candidate. An
-accepted definition receives a stable command ID and immutable version.
+1. Creates a fresh checkout from the snapshotted remote and exact deployed
+   commit.
+2. Fetches the patch from the artifact store by project/run-scoped reference.
+3. Verifies patch content hash.
+4. Applies it and verifies the expected result tree hash.
+5. Revalidates remote identity, target branch, source ancestry, branch prefix,
+   and idempotency state.
+6. Creates or reuses the restricted branch and commit, then pushes.
+7. Creates a draft change request when the configured provider adapter supports
+   it; otherwise returns branch and optional compare metadata.
 
-A remediation run snapshots the approved command IDs and versions required by
-its policy. `workspace.run_validation` accepts only one of those IDs; the runner
-resolves the stored argv and execution policy without a shell. Later command
-edits apply only to new runs. If no required command has been approved, the run
-stops before patch publication and reports a configuration limitation.
+The credential is scoped for the configured repository and branch namespace and
+exists only inside the publication adapter. The port intentionally has no
+merge, deploy, rollback, or production-mutation method.
 
-## Change Risk Policy
+## Bootstrap And Recovery
 
-The policy gateway classifies the normalized diff before validation and again
-before publication. Ordinary application source and test changes may continue
-after required checks pass. Database migrations/schema,
-authentication/authorization, and dependency manifest/lockfile changes are
-high risk: they require project opt-in, specialized validation, a visible
-high-risk marker, and the normal human merge gate.
+Bootstrap wires:
 
-CI/CD workflow definitions, deployment manifests, infrastructure-as-code,
-credential or secret policy, Git hooks/submodules, and binary artifacts are
-denied mutation/publication surfaces in the MVP. Model confidence and passing
-generic tests cannot override this classification. A denied plan transitions
-to manual review with its evidence and proposed steps but without an automated
-commit or push.
+```text
+RunStore as RunStore + LifecycleStore
+CheckpointStore
+PlanPolicyEvaluator
+WorkspacePort
+ValidationPort
+PublicationPort
+execution policy loader
+artifact store
+startup lifecycle resumer
+```
 
-Path classification is ecosystem-aware. The dependency-manifest/lockfile class
-matches each configured ecosystem's files (`pom.xml`, `build.gradle`,
-`*.csproj`, `packages.lock.json`, `requirements.txt`, `poetry.lock`/`uv.lock`,
-`go.mod`/`go.sum`, `package.json` plus its lockfiles); the denied control-plane
-class matches CI/CD, deployment, and IaC paths regardless of language. The
-matcher table is a versioned project-policy input, so adding a new target
-ecosystem updates the table without changing gateway code.
+The startup resumer scans only bounded active lifecycle states and calls
+`ResumeLifecycle`. Existing successful lifecycle effects are authoritative, so
+workspace, patch, validation, or publication is not repeated. Recoverable
+adapter failures retain a safe code and phase; hard configuration or policy
+failures remain inspectable and do not trigger unsafe fallback behavior.
 
-## Branch And Commit Convention Inference
+The runtime stays in-process. This design does not require RabbitMQ or a job
+outbox. A later asynchronous engine may call the same admission/resume contracts
+without changing lifecycle state names or port signatures.
 
-The convention detector consumes remote refs plus recent merged-change
-metadata when the SCM provider supports it. It normalizes names into features:
-prefix, separators, ticket/incident token, case, slug form, and length. A
-deterministic scorer selects a template only above a configured confidence and
-sample threshold; otherwise the project fallback template applies.
+## Review Projection And UI
 
-The selected template is rendered with bounded values such as incident number,
-short run ID, and sanitized diagnosis slug. The policy gateway validates the
-complete ref, write namespace, collision behavior, and protected-branch rule.
-Commit-message convention uses the same evidence-first approach and configured
-fallback.
+Extend the existing review projection additively with a lifecycle section:
 
-The branch fallback is
-`hotfix/INC-<incident-number>-<short-problem-slug>`. The slug uses a bounded,
-Git-ref-safe representation of the selected diagnosis. If the rendered ref
-already exists for a different remediation, the detector appends the stable
-short run ID; RabbitMQ redelivery for the same run resolves to the same ref.
+```text
+selectedPlanId
+execution.active
+execution.phase
+execution.lastSafeReason
+workspace.changedFiles
+validation.commandId/version/status/summary/artifactRef
+publication.branchRef/commitHash/draftChangeRef/compareUrl
+publication.humanReviewRequired
+nextAction
+```
 
-Convention inference does not choose the source baseline. That is a separate
-invariant: branch creation, code inspection, patching, and validation use the
-exact deployed commit captured by the run.
+Do not expose raw patch artifacts automatically, raw validation output,
+credentials, local workspace paths, or authenticated remotes. Existing
+suggested-diff review remains available before admission.
 
-## Plan Selection And Repair Loop
+The UI adds plan selection and one explicit apply command for authorized users.
+The confirmation surface shows plan, risk, affected files, rollback, baseline,
+and the human-review boundary. After admission it polls the existing review
+query and renders active phases, recoverable failures, validation result, and
+publication handoff. Viewer and stale-state controls are absent or disabled.
 
-The agent can propose multiple plans but must identify one recommendation.
-Before selection, the harness filters candidates by required capabilities,
-path/change policy, supported validation, project high-risk opt-in, and maximum
-risk. The agent's recommendation is accepted only from the remaining
-policy-compliant set and is persisted with its evidence-based rationale.
+## Child Delivery Boundaries
 
-The selected plan is applied in small patch operations. Validation failures
-return sanitized diagnostics to the agent for a bounded number of revisions.
-The loop stops on success, unchanged repeated failure, policy rejection,
-budget exhaustion, cancellation, or a newly discovered non-code/unsafe cause.
+### Child 1: Execution Policy Configuration
 
-## Publication And Human Gate
+Owns project domain/storage/API/UI for approved commands, risk rules, artifact
+policy, publication policy, and scoped write credential metadata. It does not
+execute code or publish Git changes.
 
-Before publication, the coordinator verifies workspace cleanliness outside the
-approved diff, required validation freshness, source ancestry, remote identity,
-branch protection, and idempotency state. A trusted SCM adapter then creates or
-reuses the change branch, commits with the recorded message, pushes, and creates
-a draft PR targeting the configured production branch when supported. If the
-remote target branch has advanced since the deployed commit, the harness keeps
-the deployed-commit baseline and exposes conflicts for human resolution rather
-than rebasing onto code that was not part of the incident diagnosis.
+### Child 2: Lifecycle Runtime Adapters
 
-The adapter has no merge operation in its interface. The terminal successful
-state is `awaiting_human_review`, accompanied by the next action: review the
-native Yunxiao draft PR or create a change request from another provider's
-pushed branch, then merge manually. A later verification workflow may observe
-merge/deployment/recovery, but it cannot be asserted by this harness.
+Owns workspace, isolated validation, artifact storage, publisher, lifecycle
+store bootstrap injection, and restart resumer. It does not add public HTTP or
+frontend controls.
 
-Provider-neutral Git adapters perform HTTPS/SSH checkout and restricted branch
-push for configured GitHub, GitLab, Yunxiao, Gitee, and generic remotes. The
-MVP Yunxiao adapter additionally creates or reuses a native draft PR. Other
-providers return the pushed ref plus a compare URL when one can be constructed;
-the user creates the change request manually. Adding native provider adapters
-later does not change coordinator states or the publication result contract.
+### Child 3: Apply-Plan API And UI
 
-## Notification Delivery
+Owns authorization, identity/version validation, durable admission, HTTP
+mapping, review projection, plan selection, execution controls, and UI states.
+It consumes child 1 policy and child 2 ports.
 
-Every terminal or review-gate transition writes its notification record and
-signed-webhook outbox intent in the same business transaction. Stable event
-kinds are `non_code_diagnosed`, `manual_review_required`, `repair_failed`, and
-`change_ready_for_review`. The console reads the durable record; webhook delivery
-may retry or exhaust independently without hiding the outcome from users.
+### Child 4: Controlled Pilot And Parent Review
 
-Webhook payloads contain identifiers, summaries, evidence/artifact links, and
-review URLs rather than credentials, raw logs, raw model payloads, or full
-repository diffs. Native email and vendor-specific chat adapters remain outside
-the MVP and can consume the same stable event contract later.
+Owns a non-production end-to-end run, failure drills, security review, written
+read-out, and the final decision on per-project execution enablement.
 
-## Failure And Recovery
+## Rollout And Rollback
 
-Transient provider, connector, SCM, and notification failures use one bounded
-attempt budget shared with RabbitMQ delivery so nested retries cannot multiply
-unboundedly. Invalid model output and policy rejection are not retried as
-transport failures. A dead-lettered run remains inspectable and resumable only
-through an explicit authorized action.
+- Execution remains disabled by default and requires complete validated project
+  configuration.
+- Enable one designated pilot project first; diagnosis/advisory behavior for all
+  other projects remains unchanged.
+- Roll back by disabling new plan admission. Preserve active/terminal runs,
+  lifecycle effects, artifacts, and already-pushed branches for audit and human
+  handling.
+- Do not delete remote branches automatically and do not claim a published
+  change was reverted or deployed.
 
-The provider boundary cannot guarantee exactly-once billing or inference when
-a worker loses an uncommitted response. Each attempt records a stable request
-hash and started/completed effect state; an uncertain call may repeat only
-within the shared budget. Repetition cannot create a second durable decision or
-publication effect, and the uncertainty remains visible in audit metadata.
+## Explicit Non-Goals
 
-Cancellation stops future model/tool calls and publication. If a branch or
-commit was already pushed, it is retained and reported rather than deleted.
-Disabling the feature prevents new runs and stops active runs at the next phase
-boundary without altering existing audit/remediation records.
-
-## Compatibility And Delivery Order
-
-The task cannot execute end to end until the service-foundation worker/outbox,
-evidence contracts, provider port, and remediation/SCM ports exist. Contracts
-and local fakes can be implemented first. Database additions should be additive
-and gated behind per-project enablement, allowing the harness worker consumer
-to be disabled without affecting incident ingestion or deterministic reports.
+No RabbitMQ/outbox worker, automatic merge/deploy, production recovery claim,
+generic HTTP log connector, stdio MCP runtime, native PR adapter for every SCM,
+or broad notification platform belongs to this parent completion path.
