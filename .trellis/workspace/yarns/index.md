@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1284 | Active |
+| `journal-1.md` | ~1317 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-09-08 | Archive docs homepage workflow polish | `c8d40a9` | `main` |
 | 18 | 2026-09-08 | Integrate bilingual hero flow illustration | `4368588` | `main` |
 | 17 | 2026-09-04 | 08-14 walking skeleton quality checkpoint | `8af0709` | `main` |
 | 16 | 2026-09-04 | Archive remediation detail UI | `891d53f` | `main` |
