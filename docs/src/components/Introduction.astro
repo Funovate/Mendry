@@ -33,17 +33,71 @@ const { content } = Astro.props;
         {content.previewLabel}
       </p>
     </div>
-    <figure class="intro-product-frame">
-      <img
-        src="/media/remediation-review.webp"
-        width="800"
-        height="450"
-        alt={content.mediaAlt}
-        loading="eager"
-        fetchpriority="high"
-      />
-      <figcaption>{content.mediaCaption}</figcaption>
+    <figure
+      class="intro-product-frame intro-flow-visual"
+      data-hero-flow
+      data-renderer="fallback"
+      data-phase-status={JSON.stringify(content.heroFlow.phaseStatus)}
+      data-fallback-status={content.heroFlow.statusLine}
+      data-pause-label={content.heroFlow.pauseLabel}
+      data-play-label={content.heroFlow.playLabel}
+      data-static-label={content.heroFlow.staticLabel}
+      aria-describedby="hero-flow-description"
+    >
+      <div class="intro-flow-topline">
+        <span>{content.heroFlow.topLine}</span>
+        <button
+          class="motion-control"
+          type="button"
+          aria-controls="hero-flow"
+          aria-label={content.heroFlow.pauseLabel}
+          data-paused="false"
+          hidden
+        >
+          <svg viewBox="0 0 14 14" aria-hidden="true">
+            <path class="pause-icon" d="M3 2h3v10H3zM8 2h3v10H8z"></path>
+            <path class="play-icon" d="m4 2 8 5-8 5z"></path>
+          </svg>
+          <span class="motion-label">{content.heroFlow.pauseLabel}</span>
+        </button>
+      </div>
+      <p id="hero-flow-description" class="intro-flow-sr-only">
+        {content.heroFlow.description}
+      </p>
+      <div class="intro-flow-diagram" id="hero-flow">
+        <img
+          class="scene-fallback"
+          src="/media/hero-flow/scene-fallback.png"
+          width="1240"
+          height="815"
+          alt={content.mediaAlt}
+          loading="eager"
+          fetchpriority="high"
+        />
+        <canvas class="scene-canvas" aria-hidden="true"></canvas>
+        <ol class="scene-labels" aria-label={content.heroFlow.stageListLabel}>
+          {
+            content.heroFlow.stages.map((stage, index) => (
+              <li
+                class={`stage${index === 3 ? " stage-human" : ""}`}
+                data-active="false"
+              >
+                <span>{stage.step}</span>{" "}
+                <span class="stage-title">{stage.title}</span>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+      <p class="scene-status" role="status" aria-live="polite">
+        {content.heroFlow.statusLine}
+      </p>
+      <figcaption class="intro-flow-caption">
+        <span>{content.heroFlow.caption}</span>
+        <span>{content.heroFlow.captionDetail}</span>
+      </figcaption>
     </figure>
+    <script type="module" src="/media/hero-flow/scene.mjs" is:inline></script>
   </section>
 
   <section

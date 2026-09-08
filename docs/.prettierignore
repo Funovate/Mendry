@@ -2,3 +2,5 @@ dist/
 node_modules/
 playwright-report/
 test-results/
+public/media/hero-flow/vendor/three.module.min.js
+public/media/hero-flow/vendor/three.core.min.js

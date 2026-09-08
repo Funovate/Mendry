@@ -1,0 +1,5 @@
+{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Review static docs contracts and required tests"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review shared visual component and accessibility risks"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review browser/build quality gate"}
+{"file":".trellis/tasks/09-06-project-docs-starlight/research/hero-flow-design.md","reason":"Check prototype behavior and documented limitations"}
+{"file":".trellis/tasks/09-07-hero-flow-integration/implement.md","reason":"Check implementation scope and validation plan"}

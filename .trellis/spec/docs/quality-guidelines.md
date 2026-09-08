@@ -120,6 +120,13 @@ DOCS_PUBLIC_RELEASE=true PUBLIC_SITE_ORIGIN=https://docs.example.com npm run bui
   fixtures. Do not publish credentials, private endpoints, personal/customer
   identifiers, or obsolete prototype behavior.
 
+### Canvas-Backed Introduction Media
+
+- Keep the reviewed illustration as a server-rendered local `<img>` fallback with intrinsic dimensions matching the actual asset. A WebGL canvas may become visible only after successful initialization; keep the canvas `aria-hidden` and expose the workflow through localized semantic HTML labels and a screen-reader description.
+- Store the scene module, vendored runtime, license, and fallback under `docs/public/`. Preserve relative vendor imports and assert that the scene contains no external runtime URL.
+- Treat motion as progressive enhancement: reduced motion renders the terminal human-review state and disables the control; manual pause freezes the logical clock and pixels; document-hidden and offscreen states stop rendering; WebGL context loss permanently returns to the fallback.
+- Browser coverage for a canvas hero must assert both locales, fallback image load/intrinsic dimensions, WebGL canvas sizing/DPR, localized controls/status, no automatic output path, no overflow, and no accessibility violations.
+
 ## Custom Introduction Styling
 
 - Wrap custom introduction content in `class="intro-shell not-content"` to use

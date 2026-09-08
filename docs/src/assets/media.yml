@@ -11,3 +11,20 @@ remediation-review:
     customerOrPersonalData: none
     obsoletePrototypeBehavior: none
   availability: current
+
+hero-flow:
+  output: public/media/hero-flow/scene-fallback.png
+  source: .trellis/tasks/09-06-project-docs-starlight/research/hero-flow-concept.html and local Three.js scene
+  captured: 2026-09-07
+  dimensions: 1240x815
+  data: synthetic generated workflow illustration; no production or customer data
+  synthetic: true
+  generated: true
+  review:
+    currentProductionComponents: false
+    credentials: none
+    privateEndpoints: none
+    customerOrPersonalData: none
+    obsoletePrototypeBehavior: none
+    staleness: reviewed against the approved prototype on 2026-09-07
+  availability: current

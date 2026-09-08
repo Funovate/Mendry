@@ -35,7 +35,31 @@ for (const page of generatedPages) {
   }
 }
 
+for (const route of ["/", "/zh-cn/"]) {
+  const html = await readHtml(route);
+  if (!html.includes('src="/media/hero-flow/scene-fallback.png"')) {
+    throw new Error(`${route} is missing the hero flow fallback image`);
+  }
+  if (html.includes('src="/media/remediation-review.webp"')) {
+    throw new Error(`${route} still renders the retired hero screenshot`);
+  }
+}
+
 await access("dist/media/remediation-review.webp");
+await access("dist/media/hero-flow/scene.mjs");
+await access("dist/media/hero-flow/scene-fallback.png");
+await access("dist/media/hero-flow/vendor/three.module.min.js");
+await access("dist/media/hero-flow/vendor/three.core.min.js");
+await access("dist/media/hero-flow/vendor/LICENSE");
+const heroFlowScene = await readFile("dist/media/hero-flow/scene.mjs", "utf8");
+if (!heroFlowScene.includes('"./vendor/three.module.min.js"')) {
+  throw new Error(
+    "Hero flow scene must use its relative vendored Three.js import",
+  );
+}
+if (/https?:\/\//.test(heroFlowScene)) {
+  throw new Error("Hero flow scene must not make external runtime requests");
+}
 await access("dist/_headers");
 await access("dist/_redirects");
 

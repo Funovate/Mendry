@@ -14,6 +14,19 @@ export interface IntroContent {
   secondaryHref: string;
   mediaAlt: string;
   mediaCaption: string;
+  heroFlow: {
+    topLine: string;
+    description: string;
+    stageListLabel: string;
+    pauseLabel: string;
+    playLabel: string;
+    staticLabel: string;
+    statusLine: string;
+    stages: Array<{ step: string; title: string }>;
+    phaseStatus: [string, string, string, string];
+    caption: string;
+    captionDetail: string;
+  };
   sectionLabels: {
     workflow: string;
     evidence: string;
@@ -51,9 +64,32 @@ export const introContent: Record<IntroLocale, IntroContent> = {
     secondaryAction: "Architecture",
     secondaryHref: "/docs/concepts/architecture/",
     mediaAlt:
-      "FixThe incident detail showing evidence-backed diagnosis, candidate plans, and remediation review",
-    mediaCaption:
-      "Incident investigation and remediation review · Synthetic data",
+      "FixThe four-stage incident investigation workflow illustration showing evidence, investigation, plan selection, and human review",
+    mediaCaption: "Evidence workflow illustration · Synthetic data",
+    heroFlow: {
+      topLine: "Evidence-driven · human-controlled",
+      description:
+        "Four-stage incident investigation workflow: alert, log, and code artifacts provide bounded evidence; a magnifying glass connects matching trace and code clues; three candidate plans are compared with one recommendation; a human reviewer and pending checklist keep the final decision with people. All four stages remain visible, connector motion stops at human review, and the illustration does not merge or deploy changes automatically.",
+      stageListLabel: "Incident investigation stages",
+      pauseLabel: "Pause animation",
+      playLabel: "Play animation",
+      staticLabel: "Static workflow",
+      statusLine: "Merge and deployment remain human-controlled",
+      stages: [
+        { step: "01", title: "Signal & evidence" },
+        { step: "02", title: "Investigation & association" },
+        { step: "03", title: "Plan selection" },
+        { step: "04", title: "Human review" },
+      ],
+      phaseStatus: [
+        "Alerts, logs, and code preserve their evidence sources",
+        "Match clues across traces and code",
+        "Compare candidate plans; mark a recommendation",
+        "Stops at human review · no automatic merge or deployment",
+      ],
+      caption: "From signal to review",
+      captionDetail: "Traceable evidence · bounded authority",
+    },
     sectionLabels: {
       workflow: "Workflow",
       evidence: "Evidence",
@@ -129,8 +165,33 @@ export const introContent: Record<IntroLocale, IntroContent> = {
     primaryHref: "/zh-cn/docs/get-started/",
     secondaryAction: "架构说明",
     secondaryHref: "/zh-cn/docs/concepts/architecture/",
-    mediaAlt: "FixThe 事故详情，展示基于证据的诊断、候选方案和修复审查",
-    mediaCaption: "事故调查与修复审查 · 合成演示数据",
+    mediaAlt:
+      "FixThe 四阶段事故调查流程示意图，展示证据、调查、方案选取和人工审查",
+    mediaCaption: "证据流程示意 · 合成演示数据",
+    heroFlow: {
+      topLine: "证据驱动 · 人工把关",
+      description:
+        "四阶段事故调查流程示意：告警、日志与代码模型提供受限证据；放大镜关联追踪和代码中的匹配线索；三个候选方案进行比较，其中一个标记为推荐；人工审查员与待确认清单让最终决定保留在人手中。四个阶段始终可见，连接动画止于人工审查，图形不会自动合并或部署变更。",
+      stageListLabel: "事故调查阶段",
+      pauseLabel: "暂停动画",
+      playLabel: "播放动画",
+      staticLabel: "静态流程",
+      statusLine: "合并与部署，由人决定",
+      stages: [
+        { step: "01", title: "信号与证据" },
+        { step: "02", title: "调查与关联" },
+        { step: "03", title: "方案选取" },
+        { step: "04", title: "人工审查" },
+      ],
+      phaseStatus: [
+        "告警、日志与代码，保留证据来源",
+        "匹配线索，关联调用与代码",
+        "比较候选方案，标记推荐",
+        "止于人工审查 · 不自动合并或部署",
+      ],
+      caption: "从信号到审查",
+      captionDetail: "证据可追溯 · 权限有边界",
+    },
     sectionLabels: {
       workflow: "工作流程",
       evidence: "调查证据",

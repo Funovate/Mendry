@@ -9,9 +9,9 @@ for (const locale of ["en", "zh-cn"]) {
       await page.goto(locale === "en" ? "/" : "/zh-cn/");
       await page.locator("starlight-theme-select select").selectOption(theme);
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-      await expect(
-        page.locator(".intro-product-frame figcaption"),
-      ).toContainText(locale === "en" ? "Synthetic data" : "合成演示数据");
+      await expect(page.locator(".intro-flow-caption")).toContainText(
+        locale === "en" ? "From signal to review" : "从信号到审查",
+      );
       await expect(page.locator(".intro-workflow .intro-kicker")).toContainText(
         locale === "en" ? "Workflow" : "工作流程",
       );
@@ -20,14 +20,26 @@ for (const locale of ["en", "zh-cn"]) {
         .locator(".intro-workflow .intro-kicker")
         .boundingBox();
       expect(kicker).not.toBeNull();
-      expect(kicker!.y + kicker!.height).toBeLessThan(
-        page.viewportSize()!.height,
-      );
+      const hero = await page.locator(".intro-hero").boundingBox();
+      const workflow = await page.locator(".intro-workflow").boundingBox();
+      expect(hero).not.toBeNull();
+      expect(workflow).not.toBeNull();
+      expect(workflow!.y).toBeGreaterThanOrEqual(hero!.y + hero!.height);
+      if (page.viewportSize()!.width >= 768) {
+        expect(kicker!.y + kicker!.height).toBeLessThan(
+          page.viewportSize()!.height,
+        );
+      } else {
+        await page.locator(".intro-workflow").scrollIntoViewIfNeeded();
+        await expect(
+          page.locator(".intro-workflow .intro-kicker"),
+        ).toBeVisible();
+      }
       const media = await page
         .locator(".intro-product-frame img")
         .boundingBox();
       expect(media).not.toBeNull();
-      expect(media!.width / media!.height).toBeCloseTo(16 / 9, 1);
+      expect(media!.width / media!.height).toBeCloseTo(1240 / 815, 1);
       const accessibility = await new AxeBuilder({ page }).analyze();
       expect(accessibility.violations).toEqual([]);
       await testInfo.attach(`${locale}-${theme}`, {
