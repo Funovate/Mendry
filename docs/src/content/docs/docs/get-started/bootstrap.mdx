@@ -1,0 +1,64 @@
+---
+title: Bootstrap the administrator
+description: Migrate a source-evaluation database, create the first local administrator, and verify API health.
+availability: preview
+translationKey: bootstrap
+journeyOrder: 4
+sources:
+  - backend/README.md
+  - backend/cmd/bootstrap-admin/main.go
+  - .trellis/spec/backend/authentication-guidelines.md
+---
+
+**Availability: preview**
+
+Run these commands from `backend/` against dedicated evaluation PostgreSQL and
+Redis instances.
+
+## 1. Configure the process
+
+```bash
+cp .env.example .env
+export FIXTHE_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+Set `FIXTHE_POSTGRES_URL` and `FIXTHE_REDIS_URL` in the environment or private
+`.env`. Keep the encryption key stable for this database.
+
+## 2. Apply migrations
+
+```bash
+make run-migrate
+```
+
+Only the migration command changes schema. The API never migrates automatically.
+
+## 3. Create the first administrator
+
+```bash
+FIXTHE_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
+make bootstrap-admin USERNAME=admin
+```
+
+The password must contain 12 to 72 bytes. Repeating the command for the same
+enabled administrator is idempotent and does not replace its password hash.
+
+## 4. Start and verify the API
+
+```bash
+make run-api
+curl http://127.0.0.1:8080/livez
+curl http://127.0.0.1:8080/readyz
+curl http://127.0.0.1:8080/api/v1/system/status
+```
+
+`/livez` proves the process is alive. `/readyz` includes PostgreSQL and Redis
+readiness.
+
+Continue to [your first project](/docs/get-started/first-project/).
+
+## Verified against
+
+- `backend/README.md`
+- `backend/cmd/bootstrap-admin/main.go`
+- `.trellis/spec/backend/authentication-guidelines.md`

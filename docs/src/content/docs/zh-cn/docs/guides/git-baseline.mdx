@@ -1,0 +1,38 @@
+---
+title: Git 仓库与基线
+description: 配置仓库访问，并了解为每个事故 generation 捕获的不可变 deployed commit 基线。
+availability: preview
+translationKey: git-baseline
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/incident-guidelines.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
+---
+
+**可用性：preview**
+
+Git 配置为调查和候选变更提供仓库上下文，不会授予自动合并或部署权限。
+
+## 仓库配置
+
+项目保存 remote URL、SCM provider、`https` 或 `ssh` transport、credential reference、production branch 与精确 deployed commit。先单独创建凭据，再引用其服务端 ID；凭据读取不会返回 value。
+
+`deployedCommit` 应使用不可变 commit SHA。仅使用 branch name 不能构成事故基线。
+
+## 基线捕获
+
+事故 generation 开始时，FixThe 捕获项目配置的 deployed commit。重新打开 Recovered 事故会创建新 generation，并重新读取当前 configured commit。既有 generation 的证据和 review 保留原始基线。
+
+## 调查边界
+
+可信 Git adapter 可以 clone/fetch 配置的 remote、解析精确基线、检查有界 history/diff，并在隔离 workspace 中准备候选变更。仓库 URL 和凭据来自项目配置，绝不来自模型输出。
+
+候选 branch、patch、validation result 或 publication record 都只是审阅证据。人仍负责批准 change request、合并、部署和回滚。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/incident-guidelines.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`

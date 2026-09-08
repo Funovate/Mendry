@@ -1,0 +1,57 @@
+---
+title: Security and authority boundaries
+description: Review data locality, credential storage, sessions, LLM egress, trusted tools, and mandatory human control.
+availability: available
+translationKey: security
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/authentication-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - .trellis/spec/backend/logging-guidelines.md
+---
+
+**Availability: available**
+
+FixThe is customer-managed. Its security model depends on project isolation,
+write-only credentials, bounded evidence adapters, and explicit human authority.
+
+## Data and credentials
+
+- PostgreSQL stores business data; Redis stores revocable sessions only.
+- Connector credentials are encrypted with AES-256-GCM. Reads expose metadata, never plaintext, ciphertext, or nonce.
+- `FIXTHE_ENCRYPTION_KEY` must remain private and stable for a database.
+- The inbound webhook token is a credential. Logs use the route pattern, never the raw token path.
+- Request bodies are strictly decoded and limited to 1 MiB by default.
+
+## Authentication and authorization
+
+Passwords are bcrypt hashes. Browsers receive an `HttpOnly`, `SameSite=Lax`
+session cookie; staging and production cookies are also `Secure`. System admin
+and project membership are separate authorization dimensions. Clients consume
+server-derived capabilities rather than inventing permissions locally.
+
+## LLM and tool authority
+
+Deterministic webhook fallback and evidence gates continue when a configured
+model call fails. Optional OpenAI-compatible analysis uses project configuration
+and a bounded client. Provider input and output are not authority: model-selected
+tool calls pass through the service-owned catalog, scope, budget, and evidence
+checks.
+
+Never treat model text as a credential, URL authority, shell command, evidence
+proof, merge approval, or deployment approval.
+
+## Human boundary
+
+FixThe may present evidence, diagnosis, and candidate changes. A person reviews
+those outputs and controls merge, deployment, rollback, and recovery. Current
+documentation makes no autonomous production-action claim.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/spec/backend/authentication-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+- `.trellis/spec/backend/logging-guidelines.md`

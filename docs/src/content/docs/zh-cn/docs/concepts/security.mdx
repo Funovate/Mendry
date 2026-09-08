@@ -1,0 +1,46 @@
+---
+title: 安全与权限边界
+description: 审阅数据本地性、凭据存储、Session、LLM 出站、可信工具和强制人工控制。
+availability: available
+translationKey: security
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/authentication-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - .trellis/spec/backend/logging-guidelines.md
+---
+
+**可用性：available**
+
+FixThe 由客户管理，其安全模型依赖项目隔离、只写凭据、有界证据适配器和明确的人工权限。
+
+## 数据与凭据
+
+- PostgreSQL 保存业务数据；Redis 只保存可撤销 Session。
+- 连接器凭据使用 AES-256-GCM 加密，读取只返回 metadata，不返回明文、密文或 nonce。
+- 每个数据库的 `FIXTHE_ENCRYPTION_KEY` 必须始终保持私密和稳定。
+- 入站 Webhook token 是凭据。日志记录路由 pattern，不记录原始 token 路径。
+- 请求体严格解码，默认上限为 1 MiB。
+
+## 认证与授权
+
+密码以 bcrypt hash 保存。浏览器只在 `fixthe_session` Cookie 中接收原始 Session token；Cookie 带 `HttpOnly` 与 `SameSite=Lax`，staging 和 production 还带 `Secure`。系统管理员与项目成员资格是不同授权维度。客户端使用服务端返回的 capabilities，不在本地虚构权限。
+
+## LLM 与工具权限
+
+配置的模型调用失败时，确定性 Webhook fallback 与证据门禁仍然工作。可选 OpenAI-compatible 分析使用项目配置和有界 client。提供方输入输出没有权限：模型选择的工具调用必须通过服务端工具目录、scope、budget 和 evidence 检查。
+
+不得将模型文本作为凭据、URL 权威、shell 命令、证据证明、合并批准、部署批准或恢复状态。
+
+## 人工边界
+
+FixThe 可以展示证据、诊断和候选变更。人负责审阅，并控制合并、部署、回滚与恢复。当前文档不会声明自主生产操作能力。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/authentication-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+- `.trellis/spec/backend/logging-guidelines.md`

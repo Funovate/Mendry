@@ -1,0 +1,43 @@
+---
+title: 产品状态
+description: 确认 FixThe 能力属于 available、preview、planned，或仍受发布依赖阻塞。
+availability: available
+translationKey: status
+sources:
+  - backend/README.md
+  - .trellis/tasks/09-06-project-docs-starlight/prd.md
+  - .trellis/tasks/08-10-production-incident-mvp/prd.md
+---
+
+**可用性：available**
+
+状态标签描述证据，而不是愿景。
+
+- `available`：当前代码或经过测试的 release 中已实现并验证。
+- `preview`：已实现且可用于源码评估，但尚未形成受支持的客户发布路径。
+- `planned`：路线图或受发布门禁限制的行为，绝不作为可执行步骤。
+
+## 当前能力矩阵
+
+| 能力                                       | 状态      | 边界                                            |
+| ------------------------------------------ | --------- | ----------------------------------------------- |
+| 显式迁移与管理员 bootstrap                 | available | 源码命令；仍缺生产 package                      |
+| 本地登录 Session 与项目角色                | available | Redis Session、PostgreSQL 用户/membership       |
+| 组件化项目配置与加密凭据                   | available | 每个项目每种组件一条记录                        |
+| 公开签名 Webhook 摄取                      | available | 基于 token，后台异步处理                        |
+| 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 路径，不是通用轮询 connector  |
+| 事故生命周期与基于证据的修复审阅           | preview   | 必须人工审阅                                    |
+| Git/SSH/MCP/OpenAI-compatible 修复 adapter | preview   | 受项目配置、策略、budget 与 evidence scope 约束 |
+| 受支持客户安装、升级与回滚                 | planned   | 等待经过验证的 release artifact                 |
+| 自动合并、部署、回滚或恢复                 | planned   | 超出当前权限边界                                |
+| 出站通知与通用持久 worker queue            | planned   | 不属于当前 API runtime                          |
+
+## 发布阻塞项
+
+公开生产文档发布仍依赖已授权品牌资源、自定义 canonical domain、经过验证的安装制品、明确支持/安全声明和有效回滚路径。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/tasks/09-06-project-docs-starlight/prd.md`
+- `.trellis/tasks/08-10-production-incident-mvp/prd.md`

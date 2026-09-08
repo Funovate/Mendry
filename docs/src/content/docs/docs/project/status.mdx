@@ -1,0 +1,46 @@
+---
+title: Product status
+summary: Check which FixThe capabilities are available, preview-only, planned, or blocked by publication dependencies.
+description: Check which FixThe capabilities are available, preview-only, planned, or blocked by publication dependencies.
+availability: available
+translationKey: status
+sources:
+  - backend/README.md
+  - .trellis/tasks/09-06-project-docs-starlight/prd.md
+  - .trellis/tasks/08-10-production-incident-mvp/prd.md
+---
+
+**Availability: available**
+
+Status labels describe evidence, not ambition.
+
+- `available`: implemented and verified in current code or a tested release.
+- `preview`: implemented behavior suitable for source evaluation but not yet a supported customer release path.
+- `planned`: roadmap or release-gated behavior; never an executable step.
+
+## Current capability matrix
+
+| Capability                                                | Status    | Boundary                                                |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------- |
+| Explicit migrations and administrator bootstrap           | available | Source command; production package still absent         |
+| Local login sessions and project roles                    | available | Redis sessions, PostgreSQL users/memberships            |
+| Component project configuration and encrypted credentials | available | One row per component per project                       |
+| Public signed webhook ingress                             | available | Token-based, asynchronous background processing         |
+| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific path; not a general polling connector |
+| Incident lifecycle and evidence-backed remediation review | preview   | Human review remains mandatory                          |
+| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project config, policy, budget, and evidence scoped     |
+| Supported customer installation, upgrade, and rollback    | planned   | Blocked on tested release artifact                      |
+| Automatic merge, deployment, rollback, or recovery        | planned   | Outside current authority boundary                      |
+| Outbound notifications and general durable worker queue   | planned   | Not part of current API runtime                         |
+
+## Publication blockers
+
+The public production documentation promotion remains blocked on an authorized
+brand package, custom canonical domain, tested installation artifact, explicit
+support/security statement, and validated rollback path.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/tasks/09-06-project-docs-starlight/prd.md`
+- `.trellis/tasks/08-10-production-incident-mvp/prd.md`

@@ -1,18 +1,41 @@
 ---
-title: 架构预览
-description: FixThe 由客户管理的部署模式与权限边界。
+title: 架构
+description: 了解 FixThe 的包边界、运行依赖、证据流与操作控制点。
+availability: available
+translationKey: architecture
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/directory-structure.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
-FixThe 是一套由客户管理的事故系统，应用与证据适配器运行在客户自己的部署边界内。
+**可用性：available**
 
-## 确定性核心
+FixThe 是单仓库项目，前端、后端与文档可独立构建。浏览器控制台调用 Go API；PostgreSQL 保存业务状态，Redis 只保存可撤销的登录 Session。
 
-事故身份、生命周期转换、策略检查、持久化和审计记录不依赖远程大模型。
+## 运行流程
 
-## 可选分析
+1. 项目管理员保存项目配置和加密凭据引用。
+2. 签名 Webhook 或已认证连接器创建项目内 Observation。
+3. 事故摄取通过有界 fingerprint 对信号分组，并创建或更新 Incident。
+4. 修复协调器只能通过可信适配器读取项目与 run 范围内的证据。
+5. review projection 向操作员展示证据、诊断和候选方案。
+6. 合并、部署、回滚与恢复决定由人控制。
 
-已配置的模型服务可以接收受限且脱敏的上下文，但不会得到连接器凭据或不受限的进程权限。
+## 后端边界
 
-## 人工权限
+命令负责组装进程依赖。HTTP adapter 调用 application service；application 和 domain 包不导入 HTTP、PostgreSQL、Redis 或提供方 client。每个 feature 包拥有自己的 SQL 与 adapter。
 
-建议变更始终只是审查材料。合并、部署和生产恢复决策仍由人控制。
+当前 API 进程负责 Webhook 后台处理和修复协调。RabbitMQ、通用持久任务队列和远程 telemetry export 不属于当前运行时。
+
+## 相关页面
+
+- [数据模型](/zh-cn/docs/concepts/data-model/)
+- [生命周期](/zh-cn/docs/concepts/lifecycle/)
+- [安全边界](/zh-cn/docs/concepts/security/)
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/directory-structure.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`

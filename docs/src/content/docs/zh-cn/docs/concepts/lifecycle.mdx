@@ -1,0 +1,38 @@
+---
+title: 事故与修复生命周期
+description: 了解事故状态、去重、generation、自动修复资格与审阅状态。
+availability: available
+translationKey: lifecycle
+sources:
+  - .trellis/spec/backend/incident-guidelines.md
+  - .trellis/spec/backend/remediation-evidence-guidelines.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
+---
+
+**可用性：available**
+
+Incident 与 remediation run 相关但并不相同。Incident 跟踪操作条件，remediation run 记录针对特定事故 lifecycle generation 的一次有界调查。
+
+## 事故行为
+
+- 手工创建或 Webhook 新建的事故初始为 `Open`。
+- fingerprint 相同的 Webhook 会更新当前 Open 事故的 occurrence。
+- 可显式重新打开 Recovered 事故；此时创建新的 lifecycle generation，并捕获最新 configured deployed commit。
+- Webhook 摄取不会重新打开 `Recovered` 或 `Closed` 事故。
+- 项目 `admin` 与 `operator` 可写事故状态；`viewer` 不可写。
+
+## 修复行为
+
+符合条件的事故可在事故写入提交后自动启动修复。手工启动同样受项目权限与事故状态约束。协调器通过策略限制的工具目录收集证据、记录 provenance，并在缺少强制证据时拒绝成功诊断。
+
+审阅结果可能是诊断、证据不足、非代码问题或候选方案。这些都是审阅输出，不是合并或部署许可。
+
+## 失败边界
+
+Webhook 可能在异步处理完成前返回 accepted。后台失败通过安全结构化日志报告，不包含入站 token 或原始提供方密钥。如果信号被接收但未创建事故，请检查 readiness、配置和 `webhook.ingest.failed` 诊断。
+
+## 核验依据
+
+- `.trellis/spec/backend/incident-guidelines.md`
+- `.trellis/spec/backend/remediation-evidence-guidelines.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`

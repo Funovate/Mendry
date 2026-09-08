@@ -1,0 +1,7 @@
+{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Verify locale parity, content metadata, preview/public output, Pagefind, accessibility, and responsive browser gates."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Cross-check documentation claims against shipped command and integration quality boundaries."}
+{"file":".trellis/spec/backend/authentication-guidelines.md","reason":"Review bootstrap, role, session, cookie, and secret-handling claims in both locales."}
+{"file":".trellis/spec/backend/project-guidelines.md","reason":"Review configuration, connector availability, project authorization, and webhook claims."}
+{"file":".trellis/spec/backend/incident-guidelines.md","reason":"Review incident state, supported ingest path, deduplication, and remediation trigger claims."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review troubleshooting, redaction, local telemetry, and safe diagnostic guidance."}
+{"file":".trellis/spec/backend/remediation-evidence-guidelines.md","reason":"Review evidence ordering, citation, insufficiency, and Tencent CLS authority descriptions."}

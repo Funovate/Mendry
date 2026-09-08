@@ -1,17 +1,34 @@
 ---
-title: Documentation preview
-description: A preview of FixThe's current architecture and release readiness.
+title: FixThe operator documentation
+description: Evaluate current FixThe behavior, follow the source-based operator journey, and understand production release gates.
+availability: available
+translationKey: docs
+sources:
+  - backend/README.md
+  - .trellis/tasks/09-06-project-docs-starlight/prd.md
 ---
 
-This documentation surface is under active development. It describes verified
-repository behavior and labels release gates explicitly.
+**Availability: available**
 
-## Start here
+This documentation separates current executable behavior from release plans.
+FixThe is customer-managed incident investigation and controlled remediation
+software. It collects project-owned evidence, produces reviewable diagnoses and
+candidate plans, and leaves merge and deployment decisions with people.
 
-- [Review readiness-safe setup information](/docs/get-started/)
-- [Understand the system boundaries](/docs/concepts/architecture/)
+## Choose a path
 
-:::caution[Preview status]
-FixThe does not yet publish a supported customer installation artifact. Do not
-treat this preview as production deployment guidance.
-:::
+- [Get started](/docs/get-started/) with the source-based evaluation journey.
+- Review [architecture](/docs/concepts/architecture/) and [security boundaries](/docs/concepts/security/).
+- Configure [signed webhooks](/docs/guides/signed-webhooks/) or review [Tencent CLS](/docs/guides/tencent-cls/).
+- Check [product status](/docs/project/status/) before relying on a capability.
+
+## Documentation policy
+
+Commands appear only when current code, tests, or a tested release artifact
+supports them. The production installation page remains blocked until a customer
+installation artifact and support boundary are verified.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/tasks/09-06-project-docs-starlight/prd.md`

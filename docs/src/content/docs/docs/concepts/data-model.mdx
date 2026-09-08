@@ -1,0 +1,51 @@
+---
+title: Data model
+description: Learn how projects own configuration, observations, incidents, remediation runs, evidence, and audit events.
+availability: available
+translationKey: data-model
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/database-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/incident-guidelines.md
+---
+
+**Availability: available**
+
+Project is the primary data and authorization boundary. A non-member receives
+the same not-found response as an unknown project so project keys cannot be
+enumerated.
+
+## Core records
+
+| Record             | Purpose                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| User               | Local login identity and system role                                                                |
+| Project membership | `admin`, `operator`, or `viewer` authority in one project                                           |
+| Configuration      | One environment, repository, source, trigger, and optional LLM provider per project                 |
+| Credential         | AES-256-GCM ciphertext plus non-secret metadata; plaintext is write-only                            |
+| Observation        | A normalized, project-owned event-stream record                                                     |
+| Incident           | Grouped operational condition with priority, status, occurrence count, and captured deployed commit |
+| Remediation run    | Incident-generation-scoped diagnosis and candidate-plan lifecycle                                   |
+| Evidence           | Provenance-bearing facts and bounded tool results owned by a run/incident                           |
+| Audit event        | Actor, operation, target, and bounded metadata for administrative and lifecycle writes              |
+
+## Storage authority
+
+PostgreSQL is the source of truth for business records. Redis session entries
+are disposable and contain a digest-keyed login session, not business data or a
+queue. Configuration records and audit history survive process restart.
+
+## Identity and generations
+
+Public incident IDs are project-scoped numbers. Internal relationships use
+server-owned UUIDv7 values. Reopening a recovered incident increments its
+lifecycle generation and captures the current configured deployed commit; prior
+run evidence remains attached to the prior generation.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/spec/backend/database-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/incident-guidelines.md`

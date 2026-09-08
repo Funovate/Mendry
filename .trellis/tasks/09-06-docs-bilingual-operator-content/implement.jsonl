@@ -1,0 +1,7 @@
+{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Static bilingual route, metadata, media, build, and browser contracts for all docs implementation."}
+{"file":".trellis/spec/backend/authentication-guidelines.md","reason":"Authoritative administrator bootstrap, local session, cookie, and system-role behavior."}
+{"file":".trellis/spec/backend/project-guidelines.md","reason":"Authoritative project membership, configuration, secret, webhook token, and ingestion contracts."}
+{"file":".trellis/spec/backend/incident-guidelines.md","reason":"Authoritative project incident lifecycle, webhook ingestion, and remediation-start boundaries."}
+{"file":".trellis/spec/backend/remediation-evidence-guidelines.md","reason":"Evidence provenance, Tencent CLS direct-detail gates, and diagnosis review contracts."}
+{"file":".trellis/spec/backend/remediation-adapter-guidelines.md","reason":"Git, source, LLM, tool, workspace, and human authority boundaries."}
+{"file":".trellis/tasks/09-06-project-docs-starlight/research/starlight-baseline.md","reason":"Approved route taxonomy, audience, maintenance, search, localization, and publication baseline."}

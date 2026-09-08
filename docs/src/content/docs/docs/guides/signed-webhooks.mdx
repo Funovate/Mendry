@@ -1,0 +1,56 @@
+---
+title: Signed webhooks
+description: Configure, rotate, send, and troubleshoot the implemented public webhook ingestion path.
+availability: available
+translationKey: signed-webhooks
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/incident-guidelines.md
+---
+
+**Availability: available**
+
+`POST /hooks/{token}` is the implemented public ingress path. The opaque path
+token identifies an enabled project trigger without requiring a login session.
+Despite the configuration name, the current ingress contract does not require
+an HMAC secret to save or receive a webhook.
+
+## Configure
+
+1. Set `FIXTHE_PUBLIC_URL` to the externally reachable API origin.
+2. Save a `signed_webhook` trigger as a project administrator.
+3. Copy the returned `inboundUrl` only from an administrator response.
+4. Configure the sender to post UTF-8 text or JSON no larger than the API body limit.
+
+## Send
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"database latency increased","service":"checkout-api"}' \
+  'https://fixthe.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
+```
+
+A valid token/body returns `202` before background normalization and incident
+writes finish. JSON uses bounded semantic grouping with deterministic fallback;
+plain text uses its first non-empty line.
+
+## Rotate
+
+Project administrators rotate the token through
+`POST /api/v1/projects/{projectKey}/configuration/webhook-token`. Rotation
+invalidates the old token and emits bounded audit metadata. Update the sender
+immediately; do not log or paste either token into tickets.
+
+## Security behavior
+
+Unknown, disabled, incomplete, and old tokens all return
+`404 webhook_not_found`. The access log records `POST /hooks/{token}` rather
+than the raw path. Raw provider bodies are excluded from application logs.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/incident-guidelines.md`

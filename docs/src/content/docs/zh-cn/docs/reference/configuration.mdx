@@ -1,0 +1,41 @@
+---
+title: 配置参考
+description: 查阅当前进程环境变量与项目内配置边界。
+availability: available
+translationKey: configuration
+sources:
+  - backend/.env.example
+  - backend/README.md
+  - .trellis/spec/backend/project-guidelines.md
+---
+
+**可用性：available**
+
+配置分为进程环境与项目运行配置两个 scope。不要随意在两者之间移动 secret。
+
+## 进程环境
+
+| 范围       | Key 示例                                                      | 说明                                                   |
+| ---------- | ------------------------------------------------------------- | ------------------------------------------------------ |
+| Runtime    | `FIXTHE_ENVIRONMENT`、`FIXTHE_HTTP_ADDR`、`FIXTHE_PUBLIC_URL` | Public URL 用于生成 Webhook URL；只使用一个绝对 origin |
+| Data       | `FIXTHE_POSTGRES_URL`、`FIXTHE_REDIS_URL`                     | PostgreSQL 持久保存；Redis 只保存 Session              |
+| Encryption | `FIXTHE_ENCRYPTION_KEY`                                       | 32 字节的 base64；每个数据库保持稳定                   |
+| Auth       | `FIXTHE_AUTH_SESSION_TTL`                                     | 默认 24 小时                                           |
+| HTTP       | `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit            | CORS 只接受一个精确 console origin                     |
+| Logging    | `FIXTHE_LOG_FORMAT`、`FIXTHE_LOG_LEVEL`、`FIXTHE_LOG_FILE`    | production 默认 JSON；本地文件需由外部轮换             |
+
+`backend/.env.example` 是当前完整 key/default 参考。Shell 中已导出的环境变量优先于 `.env`。
+
+## 项目配置
+
+每个项目最多保存一组当前 environment、repository、source、trigger 与可选 LLM provider。Draft 端点返回不完整状态，组件 PUT 只更新一个组件，不替换其 sibling。
+
+Source kind 为 `ssh`、`cloud` 或 `mcp`；trigger kind 为 `signed_webhook` 或 `custom_rule`。保存某种配置并不等于其 runtime connector 已可用，请查看[产品状态](/zh-cn/docs/project/status/)。
+
+Credential 是独立项目记录，通过 ID 引用。读取响应从不返回明文 value。
+
+## 核验依据
+
+- `backend/.env.example`
+- `backend/README.md`
+- `.trellis/spec/backend/project-guidelines.md`

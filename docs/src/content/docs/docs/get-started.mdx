@@ -1,19 +1,35 @@
 ---
-title: Get started preview
-description: Current development paths and the gates before a supported FixThe installation.
+title: Get started
+description: Follow the preview source-evaluation path from prerequisites to the first incident review.
+availability: preview
+translationKey: get-started
+journeyOrder: 1
+sources:
+  - backend/README.md
+  - backend/Makefile
 ---
 
-FixThe currently runs from this repository as independently buildable frontend
-and backend packages. A supported customer installation artifact is not yet
-released.
+**Availability: preview**
 
-## Available now
+The current operator journey runs FixThe from this repository. It is suitable
+for evaluation and development validation, not as a supported customer
+installation.
 
-- Review the source-controlled product architecture.
-- Build and validate the frontend and backend in a development environment.
-- Evaluate incident and remediation behavior with synthetic fixtures.
+## Journey
 
-## Release gate
+1. Confirm the [prerequisites](/docs/get-started/prerequisites/).
+2. Read the [installation status](/docs/get-started/install/) before choosing an environment.
+3. Run migrations and [bootstrap the administrator](/docs/get-started/bootstrap/).
+4. Create and configure the [first project](/docs/get-started/first-project/).
+5. Send a supported signal and inspect the [first incident](/docs/get-started/first-incident/).
 
-Production installation instructions will appear only after the installation
-artifact, support policy, security boundary, and rollback process are tested.
+## Authority boundary
+
+FixThe may collect evidence and prepare a diagnosis or candidate remediation.
+A person still reviews the evidence and controls merge, deployment, rollback,
+and recovery conclusions.
+
+## Verified against
+
+- `backend/README.md`
+- `backend/Makefile`

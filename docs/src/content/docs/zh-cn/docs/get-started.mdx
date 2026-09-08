@@ -1,16 +1,32 @@
 ---
-title: 入门预览
-description: 当前开发路径，以及发布受支持安装方式之前的必要门禁。
+title: 入门
+summary: 按预览流程从前提条件走到首个事故审阅。
+description: 按预览版源码评估流程，从前提条件走到首个事故审阅。
+availability: preview
+translationKey: get-started
+journeyOrder: 1
+sources:
+  - backend/README.md
+  - backend/Makefile
 ---
 
-FixThe 当前以本仓库中的独立前端和后端包运行，尚未发布受支持的客户安装制品。
+**可用性：preview**
 
-## 当前可用
+当前操作流程直接从本仓库运行 FixThe，适合评估和开发验证，不等同于受支持的客户安装方式。
 
-- 审阅由源码管理的产品架构。
-- 在开发环境中构建并验证前端和后端。
-- 使用合成测试数据评估事故和修复流程。
+## 操作流程
 
-## 发布门禁
+1. 确认[前提条件](/zh-cn/docs/get-started/prerequisites/)。
+2. 选择环境前阅读[安装状态](/zh-cn/docs/get-started/install/)。
+3. 执行迁移并[初始化管理员](/zh-cn/docs/get-started/bootstrap/)。
+4. 创建并配置[首个项目](/zh-cn/docs/get-started/first-project/)。
+5. 发送受支持的信号并检查[首个事故](/zh-cn/docs/get-started/first-incident/)。
 
-只有安装制品、支持策略、安全边界和回滚流程通过验证后，才会提供生产安装说明。
+## 权限边界
+
+FixThe 可以收集证据并准备诊断或候选修复方案。证据审阅、合并、部署、回滚和恢复结论仍由人控制。
+
+## 核验依据
+
+- `backend/README.md`
+- `backend/Makefile`

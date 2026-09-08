@@ -1,15 +1,29 @@
 ---
-title: 文档预览
-description: FixThe 当前架构与发布就绪状态的预览。
+title: FixThe 操作文档
+description: 评估 FixThe 当前能力，完成基于源码的操作流程，并了解生产发布门禁。
+availability: available
+translationKey: docs
+sources:
+  - backend/README.md
+  - .trellis/tasks/09-06-project-docs-starlight/prd.md
 ---
 
-此文档站仍在建设中。内容只描述经过仓库验证的行为，并明确标注发布门禁。
+**可用性：available**
 
-## 从这里开始
+本文档严格区分当前可执行行为与发布计划。FixThe 是由客户管理的生产事故调查与受控修复软件。它收集项目内证据，生成可审阅的诊断和候选方案，合并与部署决定始终由人作出。
 
-- [查看不会夸大可用性的准备说明](/zh-cn/docs/get-started/)
-- [了解系统边界](/zh-cn/docs/concepts/architecture/)
+## 选择路径
 
-:::caution[预览状态]
-FixThe 尚未发布受支持的客户安装制品。请勿将此预览当作生产部署指南。
-:::
+- 从[入门流程](/zh-cn/docs/get-started/)开始基于源码的评估。
+- 阅读[架构](/zh-cn/docs/concepts/architecture/)与[安全边界](/zh-cn/docs/concepts/security/)。
+- 配置[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)或了解[腾讯云 CLS](/zh-cn/docs/guides/tencent-cls/)。
+- 依赖某项能力前先查看[产品状态](/zh-cn/docs/project/status/)。
+
+## 文档原则
+
+只有当前代码、测试或经过验证的发布制品支持时，文档才会给出命令。生产安装页会保持阻塞，直到客户安装制品和支持边界通过验证。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/tasks/09-06-project-docs-starlight/prd.md`

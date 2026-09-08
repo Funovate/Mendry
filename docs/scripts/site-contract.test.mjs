@@ -4,12 +4,35 @@ import {
   counterpart,
   expectedRoutes,
   localLinks,
+  routeEntries,
   routeToFile,
 } from "./site-contract.mjs";
 
 test("every route has a reciprocal locale counterpart", () => {
   for (const route of expectedRoutes)
     assert.ok(expectedRoutes.includes(counterpart(route)));
+});
+
+test("operator entries have matching locale metadata", () => {
+  assert.equal(routeEntries.length, 38);
+  for (const entry of routeEntries) {
+    const pair = routeEntries.find(
+      (candidate) => candidate.route === counterpart(entry.route),
+    );
+    assert.equal(pair?.translationKey, entry.translationKey);
+    assert.equal(pair?.availability, entry.availability);
+    assert.notEqual(pair?.locale, entry.locale);
+  }
+});
+
+test("installation remains a planned release-gate page", () => {
+  const installEntries = routeEntries.filter(
+    ({ translationKey }) => translationKey === "install",
+  );
+  assert.equal(installEntries.length, 2);
+  assert.ok(
+    installEntries.every(({ availability }) => availability === "planned"),
+  );
 });
 
 test("routes map to static index files", () => {

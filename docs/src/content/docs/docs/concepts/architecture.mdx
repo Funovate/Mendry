@@ -1,22 +1,48 @@
 ---
-title: Architecture preview
-description: FixThe's customer-managed deployment and authority boundaries.
+title: Architecture
+summary: Understand FixThe package boundaries, runtime dependencies, and operator control points.
+description: Understand FixThe package boundaries, runtime dependencies, evidence flow, and operator control points.
+availability: available
+translationKey: architecture
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/directory-structure.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
-FixThe is a customer-managed incident system. Its application and evidence
-adapters run inside the customer's deployment boundary.
+**Availability: available**
 
-## Deterministic core
+FixThe is one repository with independently buildable frontend, backend, and
+documentation packages. The browser console calls the Go API; PostgreSQL holds
+business state, while Redis holds only revocable login sessions.
 
-Incident identity, lifecycle transitions, policy checks, persistence, and audit
-records do not require a remote language model.
+## Runtime flow
 
-## Optional analysis
+1. A project administrator stores project configuration and encrypted credential references.
+2. A signed webhook or authenticated connector creates a project-owned Observation.
+3. Incident ingestion groups the signal by a bounded fingerprint and opens or updates an Incident.
+4. The remediation coordinator reads only project/run-scoped evidence through trusted adapters.
+5. A review projection presents evidence, diagnosis, and candidate plan to an operator.
+6. People control merge, deployment, rollback, and recovery decisions.
 
-Configured model providers may receive bounded, redacted context. They do not
-receive connector credentials or unrestricted process authority.
+## Backend boundaries
 
-## Human authority
+Commands construct process dependencies. HTTP adapters call application
+services; application and domain packages do not import HTTP, PostgreSQL, Redis,
+or provider clients. Feature packages own their SQL and adapters.
 
-Suggested changes remain review material. Merge, deployment, and production
-recovery decisions remain human-controlled.
+The API process runs webhook background work and remediation coordination today.
+RabbitMQ, a durable general job queue, and remote telemetry export are not part
+of the current runtime.
+
+## Related pages
+
+- [Data model](/docs/concepts/data-model/)
+- [Lifecycle](/docs/concepts/lifecycle/)
+- [Security boundaries](/docs/concepts/security/)
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/spec/backend/directory-structure.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`

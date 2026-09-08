@@ -1,0 +1,26 @@
+{
+  "terms": [
+    { "key": "observation", "en": "Observation", "zhCN": "观测记录" },
+    { "key": "incident", "en": "Incident", "zhCN": "事故" },
+    { "key": "remediation", "en": "Remediation", "zhCN": "修复" },
+    { "key": "evidence", "en": "Evidence", "zhCN": "证据" },
+    { "key": "baseline", "en": "Git baseline", "zhCN": "Git 基线" },
+    { "key": "project-admin", "en": "Project admin", "zhCN": "项目管理员" },
+    { "key": "operator", "en": "Operator", "zhCN": "操作员" },
+    { "key": "viewer", "en": "Viewer", "zhCN": "查看者" },
+    { "key": "signed-webhook", "en": "Signed webhook", "zhCN": "签名 Webhook" },
+    { "key": "availability", "en": "Availability", "zhCN": "可用性" }
+  ],
+  "literal": [
+    "FixThe",
+    "available",
+    "preview",
+    "planned",
+    "admin",
+    "operator",
+    "viewer",
+    "OpenAI-compatible",
+    "Tencent CLS",
+    "Pagefind"
+  ]
+}

@@ -36,7 +36,15 @@ and uses Node `>=22.12.0`.
 | `PUBLIC_SITE_ORIGIN`                       | HTTPS custom origin only in public mode | Origins ending in `.pages.dev` are rejected                                      |
 
 English is the default locale. Simplified Chinese uses `zh-CN` and the
-`/zh-cn/` prefix. Each committed product image must have a record in
+`/zh-cn/` prefix. Operator pages require `availability`, non-empty `sources`,
+and a shared `translationKey`; get-started pages may add `journeyOrder`. The
+route validator parses YAML frontmatter, verifies each cited repository path,
+requires paired metadata to agree, and rejects shell code blocks on `planned`
+pages. Keep stable translations in `docs/src/content/terminology.json` and keep
+API fields, environment variables, paths, commands, statuses, and provider
+identifiers literal.
+
+Each committed product image must have a record in
 `docs/src/assets/media.yml` covering source, capture date, dimensions,
 synthetic-data status, sensitive-data review, staleness review, and availability.
 
@@ -68,9 +76,11 @@ synthetic-data status, sensitive-data review, staleness review, and availability
   extraction including query and fragment removal.
 - Build: every expected route, every generated internal page link, reviewed
   media, `_headers`, `_redirects`, robots metadata, and `robots.txt`.
-- Browser: both introduction locales, landmarks, H1, theme and locale controls,
-  reciprocal switching, image loading, 404 status, preview metadata, axe with
-  zero violations, and no horizontal overflow.
+- Browser: both introduction locales, the complete paired get-started journey,
+  representative conventional operator pages in both themes, localized
+  Pagefind results, planned-page command exclusion, landmarks, H1, theme and
+  locale controls, reciprocal switching, image loading, 404 status, preview
+  metadata, axe with zero violations, and no horizontal overflow.
 - Reflow: Simplified Chinese at 320px with reduced motion; assert the media
   query, automatic scroll behavior, bounded transition duration, and no
   document overflow.

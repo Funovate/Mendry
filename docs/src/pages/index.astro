@@ -4,13 +4,17 @@ import Introduction from "../components/Introduction.astro";
 import { introContent } from "../content/intro";
 
 const content = introContent.en;
-const publicOrigin = process.env.DOCS_PUBLIC_RELEASE === "true" && process.env.PUBLIC_SITE_ORIGIN;
+const publicOrigin =
+  process.env.DOCS_PUBLIC_RELEASE === "true" && process.env.PUBLIC_SITE_ORIGIN;
 ---
 
 <StarlightPage
   frontmatter={{
     title: content.title,
     description: content.description,
+    availability: "preview",
+    sources: [".trellis/tasks/09-06-project-docs-starlight/prd.md"],
+    translationKey: "introduction",
     template: "splash",
     pagefind: false,
     head: publicOrigin
@@ -19,7 +23,8 @@ const publicOrigin = process.env.DOCS_PUBLIC_RELEASE === "true" && process.env.P
             tag: "meta",
             attrs: {
               property: "og:image",
-              content: new URL("/media/remediation-review.webp", publicOrigin).href,
+              content: new URL("/media/remediation-review.webp", publicOrigin)
+                .href,
             },
           },
         ]

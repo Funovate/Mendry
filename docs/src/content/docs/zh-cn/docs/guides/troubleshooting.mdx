@@ -1,0 +1,50 @@
+---
+title: 故障排查
+description: 安全诊断启动、认证、项目配置、Webhook 摄取与修复证据失败。
+availability: available
+translationKey: troubleshooting
+sources:
+  - backend/README.md
+  - backend/.env.example
+  - .trellis/spec/backend/logging-guidelines.md
+  - .trellis/spec/backend/error-handling.md
+---
+
+**可用性：available**
+
+从最窄边界开始排查。不要仅为获得更多信息就启用请求 debug 日志或暴露凭据。
+
+## API 未 ready
+
+先检查 `/livez`，再检查 `/readyz`。API 启动需要可访问的 PostgreSQL、Redis 与有效 `FIXTHE_ENCRYPTION_KEY`。启动依赖新 schema 的 binary 前需显式执行迁移，API 不会修复 migration history。
+
+## 无法登录
+
+确认 administrator bootstrap 对同一数据库成功执行。密码长度为 12 到 72 字节。API Session 需要 Redis，但 bootstrap 命令本身不使用 Redis。staging/production 必须使用 HTTPS，因为 Session Cookie 带 `Secure`。
+
+## 配置始终不完整
+
+读取 `/configuration/draft`。完整配置端点要求 environment、repository、source 与 trigger 都已保存，每个组件独立保存。可选 LLM row 不会补全缺失的必需 row。
+
+## Webhook 返回 not found
+
+确认 trigger 已保存、enabled 且 kind 为 `signed_webhook`，并确认发送端在轮换后使用最新 token。未知、禁用、不完整和已轮换 token 会故意返回相同的 `404 webhook_not_found`。
+
+## Webhook 返回 202 但没有事故
+
+`202` 早于后台处理完成。使用项目/来源 scope 和 request correlation 搜索结构化日志中的 `webhook.ingest.failed`，不要搜索原始 token。检查 provider shape、模型连接、PostgreSQL 写入和事故配置。模型失败应使用确定性 fallback；持久化或证据失败仍需操作员处理。
+
+## 修复停止或报告证据不足
+
+这是策略结果，不是绕过门禁的理由。检查不可用来源、精确 Git 基线、工具 budget、已存证据 provenance，以及必需的腾讯 CLS direct detail。只有修复缺失 capability 或 evidence 后才重试。
+
+## 安全诊断
+
+使用 JSON 日志获取完整 trace/request ID。不要把 `.env`、Session Cookie、Webhook URL、凭据、原始 prompt、provider callback 或原始客户证据粘贴到 issue 中。
+
+## 核验依据
+
+- `backend/README.md`
+- `backend/.env.example`
+- `.trellis/spec/backend/logging-guidelines.md`
+- `.trellis/spec/backend/error-handling.md`

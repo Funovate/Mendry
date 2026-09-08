@@ -1,0 +1,44 @@
+---
+title: 数据模型
+description: 了解项目如何拥有配置、观测记录、事故、修复 run、证据与审计事件。
+availability: available
+translationKey: data-model
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/database-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/incident-guidelines.md
+---
+
+**可用性：available**
+
+项目是主要的数据与授权边界。非成员访问项目时会收到与未知项目相同的 not-found 响应，避免枚举 project key。
+
+## 核心记录
+
+| 记录               | 用途                                                                      |
+| ------------------ | ------------------------------------------------------------------------- |
+| User               | 本地登录身份与系统角色                                                    |
+| Project membership | 单个项目内的 `admin`、`operator` 或 `viewer` 权限                         |
+| Configuration      | 每个项目一组 environment、repository、source、trigger 与可选 LLM provider |
+| Credential         | AES-256-GCM 密文与非敏感元数据；明文只写不读                              |
+| Observation        | 归一化的项目内 Event Stream 记录                                          |
+| Incident           | 包含 priority、status、occurrence 与已捕获 deployed commit 的分组操作条件 |
+| Remediation run    | 针对某次事故生命周期 generation 的诊断与候选方案流程                      |
+| Evidence           | 由 run/incident 拥有、带 provenance 的事实和有界工具结果                  |
+| Audit event        | 管理与生命周期写操作的 actor、operation、target 和有界 metadata           |
+
+## 存储权威
+
+PostgreSQL 是业务记录的 source of truth。Redis Session 可丢弃，只包含以摘要为 key 的登录 Session，不保存业务数据，也不是队列。配置与审计历史会跨进程重启保留。
+
+## 身份与 generation
+
+公开事故 ID 是项目内编号，内部关系使用服务端生成的 UUIDv7。重新打开 Recovered 事故会增加 lifecycle generation，并捕获当前配置的 deployed commit；旧 run 证据仍属于旧 generation。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/database-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/incident-guidelines.md`

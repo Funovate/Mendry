@@ -1,0 +1,48 @@
+---
+title: Configuration reference
+description: Review current process environment and project-owned configuration boundaries.
+availability: available
+translationKey: configuration
+sources:
+  - backend/.env.example
+  - backend/README.md
+  - .trellis/spec/backend/project-guidelines.md
+---
+
+**Availability: available**
+
+Configuration has two scopes: process environment and project-owned runtime
+configuration. Do not move secrets between them casually.
+
+## Process environment
+
+| Area       | Key examples                                                  | Notes                                                           |
+| ---------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+| Runtime    | `FIXTHE_ENVIRONMENT`, `FIXTHE_HTTP_ADDR`, `FIXTHE_PUBLIC_URL` | Public URL derives webhook URLs; use one absolute origin        |
+| Data       | `FIXTHE_POSTGRES_URL`, `FIXTHE_REDIS_URL`                     | PostgreSQL is durable; Redis holds sessions                     |
+| Encryption | `FIXTHE_ENCRYPTION_KEY`                                       | Base64 of 32 bytes; keep stable per database                    |
+| Auth       | `FIXTHE_AUTH_SESSION_TTL`                                     | Defaults to 24 hours                                            |
+| HTTP       | `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`, body/time limits           | CORS accepts one exact console origin                           |
+| Logging    | `FIXTHE_LOG_FORMAT`, `FIXTHE_LOG_LEVEL`, `FIXTHE_LOG_FILE`    | Production defaults to JSON; local file needs external rotation |
+
+`backend/.env.example` is the complete current key/default reference. Existing
+exported environment values override `.env` values.
+
+## Project configuration
+
+A project stores at most one current environment, repository, source, trigger,
+and optional LLM provider. The draft endpoint returns partial state. Component
+PUT endpoints update one component without replacing siblings.
+
+Source kinds are `ssh`, `cloud`, or `mcp`; trigger kinds are
+`signed_webhook` or `custom_rule`. Persisting a configuration kind does not by
+itself prove its runtime connector is available. Check [product status](/docs/project/status/).
+
+Credentials are separate project records referenced by ID. Read responses never
+return plaintext values.
+
+## Verified against
+
+- `backend/.env.example`
+- `backend/README.md`
+- `.trellis/spec/backend/project-guidelines.md`

@@ -1,0 +1,46 @@
+---
+title: 签名 Webhook
+description: 配置、轮换、发送并排查当前已实现的公开 Webhook 摄取路径。
+availability: available
+translationKey: signed-webhooks
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/project-guidelines.md
+  - .trellis/spec/backend/incident-guidelines.md
+---
+
+**可用性：available**
+
+`POST /hooks/{token}` 是已实现的公开摄取路径。不透明 path token 用于识别已启用的项目 trigger，无需登录 Session。尽管配置名为 signed webhook，当前摄取契约在保存或接收 Webhook 时不强制要求 HMAC secret。
+
+## 配置
+
+1. 将 `FIXTHE_PUBLIC_URL` 设置为外部可访问的 API origin。
+2. 以项目管理员身份保存 `signed_webhook` trigger。
+3. 只从管理员响应复制返回的 `inboundUrl`。
+4. 让发送端提交不超过 API body limit 的 UTF-8 文本或 JSON。
+
+## 发送
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"database latency increased","service":"checkout-api"}' \
+  'https://fixthe.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
+```
+
+有效 token/body 会在后台归一化和事故写入完成前返回 `202`。JSON 使用有界语义分组与确定性 fallback；纯文本使用第一行非空内容。
+
+## 轮换
+
+项目管理员通过 `POST /api/v1/projects/{projectKey}/configuration/webhook-token` 轮换 token。轮换会使旧 token 失效，并写入有界 audit metadata。应立即更新发送端，不要把新旧 token 写入日志或工单。
+
+## 安全行为
+
+未知、禁用、不完整和已轮换 token 都返回 `404 webhook_not_found`。访问日志记录 `POST /hooks/{token}`，而不是原始路径。应用日志不会记录原始提供方正文。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/project-guidelines.md`
+- `.trellis/spec/backend/incident-guidelines.md`

@@ -1,0 +1,43 @@
+---
+title: 角色与能力
+description: 区分系统管理权限与项目 admin、operator、viewer 能力。
+availability: available
+translationKey: roles
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/authentication-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+---
+
+**可用性：available**
+
+系统角色与项目角色相互独立。系统管理员可创建本地用户和项目；项目 membership 控制单个项目内的访问。
+
+## 系统角色
+
+| Role     | 当前能力                                                |
+| -------- | ------------------------------------------------------- |
+| `admin`  | 通过 bootstrap 创建的特权账号；可创建 viewer 用户和项目 |
+| `viewer` | 普通登录身份；项目权限来自 membership                   |
+
+通过 API 创建的新用户获得系统角色 `viewer`，项目访问需单独授予。
+
+## 项目角色
+
+| 项目角色   | 读取项目/配置/事件/事故/审计 | 创建或更新事故 | 管理成员/配置/凭据 |
+| ---------- | ---------------------------- | -------------- | ------------------ |
+| `admin`    | 是                           | 是             | 是                 |
+| `operator` | 是                           | 是             | 否                 |
+| `viewer`   | 是                           | 否             | 否                 |
+
+项目必须至少保留一名管理员。服务端在项目响应中返回 capabilities；客户端和操作员不能根据本地 UI 状态或系统角色名推断权限。
+
+## Not-found 边界
+
+非成员会收到与未知项目相同的 project-not-found 响应。这是用于防止枚举 project key 的有意设计。
+
+## 核验依据
+
+- `backend/README.md`
+- `.trellis/spec/backend/authentication-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`

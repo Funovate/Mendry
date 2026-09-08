@@ -1,0 +1,49 @@
+---
+title: Incident and remediation lifecycle
+description: Understand incident status, deduplication, generations, automatic remediation eligibility, and review states.
+availability: available
+translationKey: lifecycle
+sources:
+  - .trellis/spec/backend/incident-guidelines.md
+  - .trellis/spec/backend/remediation-evidence-guidelines.md
+  - .trellis/spec/backend/remediation-adapter-guidelines.md
+---
+
+**Availability: available**
+
+An Incident and a remediation run are related but distinct. The Incident tracks
+an operational condition; a remediation run records one bounded investigation
+for a specific incident lifecycle generation.
+
+## Incident behavior
+
+- New manual or webhook incidents begin `Open`.
+- Matching webhook fingerprints update the current open incident occurrence.
+- A recovered incident can be reopened explicitly; that creates a new lifecycle generation and captures the latest configured deployed commit.
+- Webhook ingestion does not reopen `Recovered` or `Closed` incidents.
+- Project `admin` and `operator` members can write incident status; `viewer` cannot.
+
+## Remediation behavior
+
+Eligible incidents can start remediation automatically after the incident write
+commits. Manual starts are also bounded by project access and incident state.
+The coordinator gathers evidence through a policy-limited tool catalog, records
+provenance, and refuses a successful diagnosis when mandatory evidence is
+missing.
+
+A review may show a diagnosis, insufficient evidence, non-code diagnosis, or a
+candidate plan. These are review outputs, not permission to merge or deploy.
+
+## Failure boundary
+
+A webhook can be accepted before asynchronous processing finishes. Background
+failures are emitted through safe structured logs without the inbound token or
+raw provider secrets. Operators should inspect readiness, configuration, and
+`webhook.ingest.failed` diagnostics when an accepted signal does not create an
+incident.
+
+## Verified against
+
+- `.trellis/spec/backend/incident-guidelines.md`
+- `.trellis/spec/backend/remediation-evidence-guidelines.md`
+- `.trellis/spec/backend/remediation-adapter-guidelines.md`

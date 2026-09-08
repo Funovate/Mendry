@@ -1,0 +1,48 @@
+---
+title: Roles and capabilities
+description: Distinguish system administration from project admin, operator, and viewer capabilities.
+availability: available
+translationKey: roles
+sources:
+  - backend/README.md
+  - .trellis/spec/backend/authentication-guidelines.md
+  - .trellis/spec/backend/project-guidelines.md
+---
+
+**Availability: available**
+
+System role and project role are separate. A system administrator can create
+local users and projects; project membership controls access inside one project.
+
+## System role
+
+| Role     | Current capability                                                  |
+| -------- | ------------------------------------------------------------------- |
+| `admin`  | Bootstrap-only privileged account; create viewer users and projects |
+| `viewer` | Normal login identity; project permissions come from memberships    |
+
+New users created through the API receive system role `viewer`. Grant project
+access separately.
+
+## Project role
+
+| Project role | Read project/config/events/incidents/audit | Create or update incidents | Manage members/config/credentials |
+| ------------ | ------------------------------------------ | -------------------------- | --------------------------------- |
+| `admin`      | Yes                                        | Yes                        | Yes                               |
+| `operator`   | Yes                                        | Yes                        | No                                |
+| `viewer`     | Yes                                        | No                         | No                                |
+
+A project must retain an administrator. The server returns capabilities with
+project responses; clients and operators must not infer permission from a local
+UI state or system role name.
+
+## Not-found boundary
+
+A non-member receives the same project-not-found response as an unknown project.
+This is intentional protection against project-key enumeration.
+
+## Verified against
+
+- `backend/README.md`
+- `.trellis/spec/backend/authentication-guidelines.md`
+- `.trellis/spec/backend/project-guidelines.md`
