@@ -1,0 +1,30 @@
+{
+  "id": "project-docs-starlight",
+  "name": "project-docs-starlight",
+  "title": "Project introduction and documentation site",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yarns",
+  "assignee": "yarns",
+  "createdAt": "2026-09-06",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-06-docs-foundation-introduction",
+    "09-06-docs-bilingual-operator-content",
+    "09-06-docs-production-readiness"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

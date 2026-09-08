@@ -1,0 +1,63 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+
+Astro.response.status = 404;
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Page not found | 页面不存在",
+    description: "The requested FixThe documentation page does not exist.",
+    pagefind: false,
+  }}
+  hasSidebar={false}
+>
+  <section class="not-found" data-locale="en">
+    <p>404 / FixThe</p>
+    <h2>Page not found</h2>
+    <p>The requested page is not part of this documentation preview.</p>
+    <a href="/">Return to FixThe</a>
+  </section>
+  <section class="not-found" data-locale="zh-CN" hidden>
+    <p>404 / FixThe</p>
+    <h2>页面不存在</h2>
+    <p>请求的页面不在当前文档预览中。</p>
+    <a href="/zh-cn/">返回 FixThe</a>
+  </section>
+</StarlightPage>
+
+<script is:inline>
+  const chinese = window.location.pathname.startsWith("/zh-cn/");
+  document.documentElement.lang = chinese ? "zh-CN" : "en";
+  document.querySelectorAll("[data-locale]").forEach((element) => {
+    element.hidden = element.getAttribute("data-locale") !== (chinese ? "zh-CN" : "en");
+  });
+</script>
+
+<style>
+  .not-found {
+    max-width: 42rem;
+    margin: 10vh auto;
+  }
+
+  .not-found > p:first-child {
+    color: var(--fx-accent);
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  .not-found h2 {
+    margin: 1rem 0;
+    color: var(--fx-heading);
+    font-size: 2rem;
+    letter-spacing: 0;
+  }
+
+  .not-found a {
+    display: inline-block;
+    margin-top: 1rem;
+    color: var(--fx-accent);
+    font-weight: 700;
+  }
+</style>

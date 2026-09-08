@@ -1,0 +1,31 @@
+{
+  "name": "@fixthe/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=9.6.5"
+  },
+  "scripts": {
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
+    "lint": "prettier --check .",
+    "check": "ASTRO_TELEMETRY_DISABLED=1 astro check && node scripts/check-routes.mjs",
+    "test": "node --test scripts/*.test.mjs",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build && node scripts/check-build.mjs",
+    "preview": "ASTRO_TELEMETRY_DISABLED=1 ASTRO_PREVIEW_BACKGROUND=0 astro preview",
+    "test:e2e": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.0",
+    "astro": "7.3.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.6",
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.62.1",
+    "prettier": "3.6.2",
+    "prettier-plugin-astro": "0.14.1",
+    "typescript": "5.9.2"
+  }
+}

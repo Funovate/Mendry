@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend pre-development and quality entry point"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Preserve package and stylesheet ownership boundaries"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Reuse project visual and accessibility conventions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Apply browser, build, and responsive validation patterns"}
+{"file": ".trellis/tasks/09-06-project-docs-starlight/research/starlight-baseline.md", "reason": "Verified Astro, Starlight, and Pages baseline"}

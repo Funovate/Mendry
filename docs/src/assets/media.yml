@@ -1,0 +1,13 @@
+remediation-review:
+  output: public/media/remediation-review.webp
+  source: frontend/tests/application.spec.ts route-mocked production application
+  captured: 2026-09-07
+  dimensions: 800x450
+  data: synthetic incident and project fixtures
+  review:
+    currentProductionComponents: true
+    credentials: none
+    privateEndpoints: none
+    customerOrPersonalData: none
+    obsoletePrototypeBehavior: none
+  availability: current

@@ -1,0 +1,124 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+import type { IntroContent } from "../content/intro";
+
+interface Props {
+  content: IntroContent;
+}
+
+const { content } = Astro.props;
+---
+
+<div class="intro-shell not-content">
+  <section class="intro-hero" aria-labelledby="intro-title">
+    <div class="intro-hero-copy">
+      <p class="intro-eyebrow">{content.eyebrow}</p>
+      <h1 id="intro-title">FixThe</h1>
+      <p class="intro-summary">{content.summary}</p>
+      <p class="intro-authority">{content.authority}</p>
+      <div class="intro-actions">
+        <a class="intro-action intro-action-primary" href={content.primaryHref}>
+          <span>{content.primaryAction}</span>
+          <Icon name="right-arrow" aria-hidden="true" />
+        </a>
+        <a
+          class="intro-action intro-action-secondary"
+          href={content.secondaryHref}
+        >
+          <span>{content.secondaryAction}</span>
+        </a>
+      </div>
+      <p class="intro-preview-note">
+        <span class="intro-status-dot" aria-hidden="true"></span>
+        {content.previewLabel}
+      </p>
+    </div>
+    <figure class="intro-product-frame">
+      <img
+        src="/media/remediation-review.webp"
+        width="800"
+        height="450"
+        alt={content.mediaAlt}
+        loading="eager"
+        fetchpriority="high"
+      />
+      <figcaption>{content.mediaCaption}</figcaption>
+    </figure>
+  </section>
+
+  <section
+    class="intro-section intro-workflow"
+    aria-labelledby="workflow-title"
+  >
+    <div class="intro-section-heading">
+      <p class="intro-kicker">{content.sectionLabels.workflow}</p>
+      <h2 id="workflow-title">{content.workflowHeading}</h2>
+      <p>{content.workflowIntro}</p>
+    </div>
+    <ol class="intro-flow">
+      {
+        content.workflow.map((item) => (
+          <li>
+            <span>{item.step}</span>
+            <h3>{item.title}</h3>
+            <p>{item.text}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <section
+    class="intro-section intro-evidence"
+    aria-labelledby="evidence-title"
+  >
+    <div class="intro-section-heading">
+      <p class="intro-kicker">{content.sectionLabels.evidence}</p>
+      <h2 id="evidence-title">{content.evidenceHeading}</h2>
+      <p>{content.evidenceText}</p>
+    </div>
+    <ul class="intro-evidence-list">
+      {
+        content.evidencePoints.map((point) => (
+          <li>
+            <span class="intro-evidence-mark" aria-hidden="true"></span>
+            <strong>{point}</strong>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section
+    class="intro-section intro-boundary"
+    aria-labelledby="boundary-title"
+  >
+    <div class="intro-section-heading">
+      <p class="intro-kicker">{content.sectionLabels.authority}</p>
+      <h2 id="boundary-title">{content.boundaryHeading}</h2>
+      <p>{content.boundaryText}</p>
+    </div>
+    <dl class="intro-boundary-list">
+      {
+        content.boundaries.map((boundary) => (
+          <div>
+            <dt>{boundary.label}</dt>
+            <dd>{boundary.value}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </section>
+
+  <section class="intro-readiness" aria-labelledby="readiness-title">
+    <div>
+      <p class="intro-kicker">{content.sectionLabels.readiness}</p>
+      <h2 id="readiness-title">{content.readinessHeading}</h2>
+      <p>{content.readinessText}</p>
+    </div>
+    <a class="intro-action intro-action-primary" href={content.primaryHref}>
+      <span>{content.readinessAction}</span>
+      <Icon name="right-arrow" aria-hidden="true" />
+    </a>
+  </section>
+</div>

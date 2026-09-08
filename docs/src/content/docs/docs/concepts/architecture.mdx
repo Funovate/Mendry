@@ -1,0 +1,22 @@
+---
+title: Architecture preview
+description: FixThe's customer-managed deployment and authority boundaries.
+---
+
+FixThe is a customer-managed incident system. Its application and evidence
+adapters run inside the customer's deployment boundary.
+
+## Deterministic core
+
+Incident identity, lifecycle transitions, policy checks, persistence, and audit
+records do not require a remote language model.
+
+## Optional analysis
+
+Configured model providers may receive bounded, redacted context. They do not
+receive connector credentials or unrestricted process authority.
+
+## Human authority
+
+Suggested changes remain review material. Merge, deployment, and production
+recovery decisions remain human-controlled.
