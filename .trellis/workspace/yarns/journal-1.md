@@ -1249,3 +1249,36 @@ Completed Step 9 using four real pilot incidents and five known attempts. Record
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Integrate bilingual hero flow illustration
+
+**Date**: 2026-09-08
+**Task**: Integrate bilingual hero flow illustration
+**Branch**: `main`
+
+### Summary
+
+Replaced only the bilingual docs introduction hero's right-side screenshot with a local WebGL four-stage evidence-to-human-review illustration. Added local fallback/vendor assets, localized semantic labels and lifecycle controls, media metadata/OG references, focused browser/build contracts, and documented the canvas fallback pattern. Preview/public builds, docs checks, audit, full E2E (50 passed, 2 skipped), visual screenshots, and GitNexus low-risk detection passed; unrelated worktree changes remained untouched.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4368588` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
