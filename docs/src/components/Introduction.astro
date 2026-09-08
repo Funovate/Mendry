@@ -111,9 +111,11 @@ const { content } = Astro.props;
     </div>
     <ol class="intro-flow">
       {
-        content.workflow.map((item) => (
-          <li>
-            <span>{item.step}</span>
+        content.workflow.map((item, index) => (
+          <li
+            class={`intro-flow-stage${index === 3 ? " intro-flow-stage-human" : ""}`}
+          >
+            <span class="intro-flow-step">{item.step}</span>
             <h3>{item.title}</h3>
             <p>{item.text}</p>
           </li>

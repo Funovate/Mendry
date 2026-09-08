@@ -613,30 +613,82 @@ html:not([data-has-sidebar]) main > .content-panel:has(.sl-container:empty) {
   line-height: 1.7;
 }
 
-.intro-flow {
+.intro-workflow {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+}
+
+.intro-workflow > .intro-section-heading {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 3rem;
+  align-items: end;
+}
+
+.intro-workflow .intro-kicker {
+  grid-column: 1 / -1;
+}
+
+.intro-workflow .intro-section-heading > p:last-child {
   margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--fx-border);
+  max-width: 48ch;
+}
+
+.intro-flow {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 1.75rem 1rem;
+  border: 1px solid var(--fx-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fx-accent) 3%, var(--fx-surface));
   list-style: none;
 }
 
-.intro-flow li {
-  min-height: 9rem;
-  padding: 1.2rem;
-  border-right: 1px solid var(--fx-border);
-  border-bottom: 1px solid var(--fx-border);
+.intro-flow-stage {
+  position: relative;
+  min-width: 0;
+  padding: 0 1.25rem;
+  text-align: center;
 }
 
-.intro-flow li:nth-child(2n) {
-  border-right: 0;
+.intro-flow-stage:not(:last-child)::after {
+  position: absolute;
+  z-index: 0;
+  top: 1.25rem;
+  inset-inline-start: calc(50% + 1.6rem);
+  width: calc(100% - 3.2rem);
+  height: 1px;
+  content: "";
+  background: color-mix(in srgb, var(--fx-accent) 50%, var(--fx-border));
 }
 
-.intro-flow li > span {
+.intro-flow-step {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  margin-inline: auto;
+  border: 1px solid var(--fx-accent);
+  border-radius: 50%;
   color: var(--fx-accent);
+  background: var(--fx-surface);
   font-family: var(--sl-font-mono);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.intro-flow-stage-human > .intro-flow-step {
+  border-color: var(--fx-authority);
+  color: var(--fx-authority);
+  background: color-mix(in srgb, var(--fx-authority) 8%, var(--fx-surface));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--fx-authority) 8%, transparent);
 }
 
 .intro-evidence-mark {
@@ -648,18 +700,26 @@ html:not([data-has-sidebar]) main > .content-panel:has(.sl-container:empty) {
   border-radius: 2px;
 }
 
-.intro-flow h3 {
-  margin: 0.75rem 0 0.4rem;
+.intro-flow-stage h3 {
+  margin: 1.1rem 0 0.5rem;
   color: var(--fx-heading);
-  font-size: 1rem;
-  letter-spacing: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
 }
 
-.intro-flow p {
-  margin: 0;
+.intro-flow-stage-human h3 {
+  color: var(--fx-authority);
+}
+
+.intro-flow-stage p {
+  max-width: 26ch;
+  margin: 0 auto;
   color: var(--fx-muted);
-  font-size: 0.86rem;
-  line-height: 1.55;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .intro-evidence {
@@ -772,6 +832,20 @@ html:not([data-has-sidebar]) main > .content-panel:has(.sl-container:empty) {
   .intro-authority {
     max-width: 60ch;
   }
+
+  .intro-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 2rem;
+  }
+
+  .intro-flow-stage {
+    padding-inline: 1.25rem;
+  }
+
+  .intro-flow-stage:nth-child(2)::after {
+    width: 0;
+    height: 0;
+  }
 }
 
 @media (max-width: 44rem) {
@@ -789,14 +863,53 @@ html:not([data-has-sidebar]) main > .content-panel:has(.sl-container:empty) {
     gap: 1.5rem;
   }
 
-  .intro-flow {
-    grid-template-columns: 1fr;
+  .intro-workflow > .intro-section-heading {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .intro-flow li,
-  .intro-flow li:nth-child(2n) {
+  .intro-workflow .intro-section-heading > p:last-child {
+    margin-block-start: 1rem;
+  }
+
+  .intro-flow {
+    grid-template-columns: 1fr;
+    row-gap: 0;
+    padding: 1.5rem 1rem;
+  }
+
+  .intro-flow-stage {
     min-height: 0;
-    border-right: 0;
+    padding-block: 0 1.75rem;
+    padding-inline: 3.5rem 0;
+    text-align: start;
+  }
+
+  .intro-flow-stage:last-child {
+    padding-block-end: 0;
+  }
+
+  .intro-flow-stage:not(:last-child)::after {
+    top: 2.85rem;
+    inset-inline-start: 1.25rem;
+    width: 1px;
+    height: calc(100% - 3.2rem);
+  }
+
+  .intro-flow-stage:nth-child(n) > .intro-flow-step {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    inset-inline-end: auto;
+    margin-inline: 0;
+  }
+
+  .intro-flow-stage h3 {
+    margin-block-start: 0.45rem;
+  }
+
+  .intro-flow-stage p {
+    max-width: none;
+    margin-inline: 0;
   }
 
   .intro-boundary-list > div {
