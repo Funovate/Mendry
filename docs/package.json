@@ -4,16 +4,20 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12.0",
+    "node": ">=22.19.0",
     "npm": ">=9.6.5"
   },
   "scripts": {
-    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
+    "dev": "node scripts/run-astro.mjs dev",
     "lint": "prettier --check .",
-    "check": "ASTRO_TELEMETRY_DISABLED=1 astro check && node scripts/check-routes.mjs",
+    "check": "node scripts/run-astro.mjs check && node scripts/check-routes.mjs",
     "test": "node --test scripts/*.test.mjs",
-    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build && node scripts/check-build.mjs",
-    "preview": "ASTRO_TELEMETRY_DISABLED=1 ASTRO_PREVIEW_BACKGROUND=0 astro preview",
+    "build": "node scripts/run-astro.mjs build && node scripts/check-build.mjs && node scripts/check-release-build.mjs",
+    "build:public": "node scripts/build-public.mjs",
+    "check:release": "node scripts/check-release-build.mjs",
+    "audit:production": "npm audit --omit=dev",
+    "verify": "node scripts/verify.mjs",
+    "preview": "node scripts/run-astro.mjs preview",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {

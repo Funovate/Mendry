@@ -28,15 +28,17 @@ their runtime modules.
 Run the complete gate from `docs/`:
 
 ```bash
-npm run lint
-npm run check
-npm run test
-npm run build
-npm run test:e2e
-npm audit --omit=dev
+npm ci
+npm run verify
 cd ..
 git diff --check
 ```
+
+The gate includes the focused formatting, Astro/content, route, contract,
+preview/public static-build, browser, and production-dependency checks. Keep
+preview output non-indexable and use the
+[publication runbook](../../../docs/operations/publication.md) for the
+Cloudflare Pages release checklist, smoke checks, and rollback procedure.
 
 ---
 

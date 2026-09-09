@@ -11,12 +11,15 @@ docs/      Astro and Starlight documentation site
 
 Each package documents its own development and validation commands.
 
-The documentation package requires Node.js 22.12 or newer:
+The documentation package uses Node.js `22.19.0` and provides one reproducible
+local/CI verification gate:
 
 ```bash
 cd docs
 npm ci
-npm run dev
-npm run check
-npm run build
+npm run verify
 ```
+
+See the [documentation package guide](./docs/README.md) for focused commands
+and build modes, or the [publication runbook](./docs/operations/publication.md)
+for Cloudflare Pages settings, release checks, and rollback steps.

@@ -22,10 +22,19 @@ npm run check     Astro type/content check plus locale route parity
 npm run test      Node contract tests
 npm run build     static build plus generated-output contract checks
 npm run test:e2e  static build plus Playwright browser checks
+npm run verify    platform-neutral full publication gate
+npm run build:public  reserved public-mode static contract
+npm run audit:production  production dependency audit
 ```
 
+The package pins the Pages/local build line in `docs/.node-version` at
+`22.19.0`. Run `npm ci` before `npm run verify` when starting from a clean
+checkout; future CI should invoke those same two commands without changing the
+checks. `npm run build:public` always uses the reserved
+`https://docs.fixthe.invalid` origin and is a contract test, not a deployment.
+
 Cloudflare Pages builds from `docs/` with `npm run build`, publishes `dist/`,
-and uses Node `>=22.12.0`.
+and uses the tracked Node version file.
 
 ### 3. Contracts
 
@@ -63,8 +72,9 @@ synthetic-data status, sensitive-data review, staleness review, and availability
 
 ### 5. Good / Base / Bad Cases
 
-- Good: `DOCS_PUBLIC_RELEASE=true PUBLIC_SITE_ORIGIN=https://docs.example.com npm run build`
-  emits indexed metadata and a sitemap for the approved custom domain.
+- Good contract: `npm run build:public` emits indexed metadata and a sitemap for
+  the reserved `https://docs.fixthe.invalid` origin without contacting a
+  provider or claiming a real release.
 - Base: `npm run build` produces a non-canonical, non-indexable preview with
   local Pagefind output.
 - Bad: `DOCS_PUBLIC_RELEASE=true PUBLIC_SITE_ORIGIN=https://preview.pages.dev npm run build`
@@ -103,8 +113,8 @@ This attempts to promote a transient preview hostname to the permanent origin.
 # Default preview: deliberately non-indexable and non-canonical.
 npm run build
 
-# Public release: explicit gate plus approved HTTPS custom domain.
-DOCS_PUBLIC_RELEASE=true PUBLIC_SITE_ORIGIN=https://docs.example.com npm run build
+# Public contract: reserved origin, no deployment or indexing.
+npm run build:public
 ```
 
 ## Content And Media Boundaries

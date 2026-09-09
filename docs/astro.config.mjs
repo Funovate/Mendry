@@ -1,26 +1,15 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import { validatePublicOrigin } from "./scripts/public-origin.mjs";
 
 const publicRelease = process.env.DOCS_PUBLIC_RELEASE === "true";
 const configuredOrigin = process.env.PUBLIC_SITE_ORIGIN;
-
-if (publicRelease && !configuredOrigin) {
-  throw new Error(
-    "PUBLIC_SITE_ORIGIN is required when DOCS_PUBLIC_RELEASE=true",
-  );
-}
-
-if (publicRelease) {
-  const origin = new URL(configuredOrigin);
-  if (origin.protocol !== "https:" || origin.hostname.endsWith(".pages.dev")) {
-    throw new Error(
-      "PUBLIC_SITE_ORIGIN must be an approved HTTPS custom domain",
-    );
-  }
-}
+const publicOrigin = publicRelease
+  ? validatePublicOrigin(configuredOrigin)
+  : undefined;
 
 export default defineConfig({
-  site: publicRelease ? configuredOrigin : undefined,
+  site: publicOrigin,
   output: "static",
   integrations: [
     starlight({

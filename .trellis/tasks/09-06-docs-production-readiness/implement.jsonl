@@ -1,0 +1,2 @@
+{"file":".trellis/spec/docs/index.md","reason":"Defines the docs package boundary and routes publication work to its quality contract."}
+{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Defines static output, public/preview metadata, accessibility, and Cloudflare Pages constraints."}
