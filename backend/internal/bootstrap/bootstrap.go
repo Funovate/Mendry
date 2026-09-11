@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
 
 	"go.opentelemetry.io/otel/trace"
 )

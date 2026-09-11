@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 
-	"fixthe/backend/internal/modules/projects/adapter/postgres/projectdb"
-	"fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/platform/errtrace"
-	platformpostgres "fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/modules/projects/adapter/postgres/projectdb"
+	"mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/platform/errtrace"
+	platformpostgres "mendry/backend/internal/platform/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -694,10 +694,27 @@ func (r *Repository) LookupWebhookToken(ctx context.Context, hash []byte) (appli
 	if err != nil {
 		return application.WebhookIngress{}, newRepositoryError("lookup webhook token", err)
 	}
-	if !row.ProjectID.Valid || !row.SourceID.Valid {
+	return webhookIngressFromRow(row)
+}
+
+func webhookIngressFromRow(row projectdb.LookupWebhookTokenRow) (application.WebhookIngress, error) {
+	if !row.ProjectID.Valid || !row.SourceID.Valid || !row.TriggerID.Valid {
 		return application.WebhookIngress{}, application.ErrNotFound
 	}
-	return application.WebhookIngress{ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID), Provider: domain.WebhookProvider(row.WebhookProvider)}, nil
+	config, err := domain.ParseSignedWebhookConfig(row.TriggerConfig)
+	if err != nil {
+		// Treat incomplete or corrupt stored configuration like an unknown token at
+		// the public ingress boundary; do not infer a generic provider.
+		return application.WebhookIngress{}, application.ErrNotFound
+	}
+	ingress := application.WebhookIngress{
+		ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID), TriggerID: uuidString(row.TriggerID),
+		Provider: config.Provider,
+	}
+	if config.AWSCloudWatch != nil {
+		ingress.TopicARN = config.AWSCloudWatch.TopicARN
+	}
+	return ingress, nil
 }
 
 func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, hash, ciphertext, nonce []byte, actorUserID, auditID string, rotated bool) error {

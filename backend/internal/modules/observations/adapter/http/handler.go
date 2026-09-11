@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/observations/application"
-	"fixthe/backend/internal/modules/observations/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/observations/application"
+	"mendry/backend/internal/modules/observations/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type service interface {

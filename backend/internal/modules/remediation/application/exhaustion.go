@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // exhaustionProposalRequestMessage 是服务端固定的 exhaustion proposal 请求

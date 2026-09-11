@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 var (
@@ -83,6 +83,9 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 	agg, err := c.store.Get(ctx, runID)
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("load remediation plan run: %w", err)
+	}
+	if agg.Run.AnalysisOnly {
+		return agg.Run, ErrLifecycleUnavailable
 	}
 	if domain.ParseAgentLoopMode(string(agg.Run.AgentLoopMode)) != domain.AgentLoopModeResilientV1 {
 		return agg.Run, ErrLifecycleUnavailable
@@ -174,6 +177,9 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 	agg, err := c.store.Get(ctx, runID)
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("load remediation lifecycle run: %w", err)
+	}
+	if agg.Run.AnalysisOnly {
+		return agg.Run, ErrLifecycleUnavailable
 	}
 	if domain.ParseAgentLoopMode(string(agg.Run.AgentLoopMode)) != domain.AgentLoopModeResilientV1 {
 		return agg.Run, ErrLifecycleUnavailable

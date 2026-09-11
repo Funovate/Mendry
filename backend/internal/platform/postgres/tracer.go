@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,7 +38,7 @@ type QueryTracer struct {
 // NewQueryTracer 创建数据库 query tracer；slowThreshold 只改变日志级别，
 // queryDebug 只决定日志是否附带 SQL/参数，两者都不会把 statement 写入 span 或 metric。
 func NewQueryTracer(logger *slog.Logger, tracer trace.Tracer, meter metric.Meter, slowThreshold time.Duration, queryDebug bool) (*QueryTracer, error) {
-	duration, err := meter.Float64Histogram("fixthe.postgres.query.duration",
+	duration, err := meter.Float64Histogram("mendry.postgres.query.duration",
 		metric.WithUnit("ms"),
 		metric.WithDescription("PostgreSQL query duration by safe operation and outcome"),
 	)

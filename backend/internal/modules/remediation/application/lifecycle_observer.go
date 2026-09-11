@@ -3,7 +3,7 @@ package application
 import (
 	"context"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func (c *RemediationCoordinator) observeLifecycleTool(ctx context.Context, phase domain.RunState, req *RequestTool, result ToolResult, cause error) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	platformredis "fixthe/backend/internal/platform/redis"
+	platformredis "mendry/backend/internal/platform/redis"
 )
 
 func TestDataClientsCloseInDependencyOrder(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // fakeEvidenceReadPort 是 canned EvidenceReadPort，记录请求并可按需返回

@@ -3,7 +3,7 @@ package application
 import (
 	"fmt"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // 默认 soft-budget 分配：每个 phase 的 soft allocation 占 ceiling 的 15%，

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // appendToolRecoveryChallenge 把 resilient diagnosis/planning tool failure 统一

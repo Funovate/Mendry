@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/hooks/adapter/tencentcls"
-	hooksapplication "fixthe/backend/internal/modules/hooks/application"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/hooks/adapter/tencentcls"
+	hooksapplication "mendry/backend/internal/modules/hooks/application"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -326,7 +326,7 @@ func TestResolveMirrorsTencentCLSDetailPageResponse(t *testing.T) {
     "Record": {
       "RecordId": "8f7991f9-96b8-416e-a4c0-ae9136845945",
       "AlertId": "alarm-b9b9ddc8-c46a-48c1-be75-5834fe9830e4",
-      "AlertName": "fixthe",
+      "AlertName": "mendry",
       "TopicId": "df6e99ce-44f2-495d-848d-5099c3503556",
       "TopicName": "prod-海外房产-service-cvm",
       "Status": 1,
@@ -334,7 +334,7 @@ func TestResolveMirrorsTencentCLSDetailPageResponse(t *testing.T) {
         "Region": "法兰克福",
         "LogsetName": "生产环境-海外房产-日志集",
         "Level": "Warn",
-        "Alarm": "fixthe",
+        "Alarm": "mendry",
         "Query": "lv:\"ERROR\" OR \"nil pointer\"",
         "QueryCount": [1],
         "StartTime": "2026-08-26 10:37:32",

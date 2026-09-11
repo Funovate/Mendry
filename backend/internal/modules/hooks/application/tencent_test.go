@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/modules/hooks/application"
 )
 
 func TestParseTencentCLSCallbackAcceptsBoundedJSONEnvelope(t *testing.T) {

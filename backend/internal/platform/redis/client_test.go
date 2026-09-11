@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/platform/config"
 
 	redisclient "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"

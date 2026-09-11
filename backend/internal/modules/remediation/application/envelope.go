@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // EnvelopeVersion 是 agent 协议信封的 schema 版本。

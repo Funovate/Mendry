@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/hooks/application"
-	incidentdomain "fixthe/backend/internal/modules/incidents/domain"
-	observationdomain "fixthe/backend/internal/modules/observations/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/hooks/application"
+	incidentdomain "mendry/backend/internal/modules/incidents/domain"
+	observationdomain "mendry/backend/internal/modules/observations/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
 type fakeTokens struct {
@@ -43,6 +43,7 @@ type fakeIncidents struct {
 	projectID, sourceID, title, fingerprint string
 	incident                                incidentdomain.Incident
 	created                                 bool
+	analysisOnly                            bool
 	err                                     error
 	called                                  chan struct{}
 }
@@ -64,6 +65,23 @@ func (f *fakeIncidents) IngestInboundWithEvidence(ctx context.Context, projectID
 		return incident, created, err
 	}
 	return incident, created, nil
+}
+
+func (f *fakeIncidents) IngestInboundAnalysisOnlyWithEvidence(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, incidentdomain.Incident) error) (incidentdomain.Incident, bool, error) {
+	f.analysisOnly = true
+	return f.IngestInboundWithEvidence(ctx, projectID, sourceID, title, fingerprint, occurredAt, evidenceWriter)
+}
+
+type fakeAWSVerifier struct {
+	message application.VerifiedAWSMessage
+	err     error
+	raw     string
+	topic   string
+}
+
+func (f *fakeAWSVerifier) Verify(_ context.Context, raw, topic string) (application.VerifiedAWSMessage, error) {
+	f.raw, f.topic = raw, topic
+	return f.message, f.err
 }
 
 type legacyIncidentFake struct {
@@ -145,6 +163,101 @@ func (blockingModel) Complete(ctx context.Context, _ application.ModelRequest) (
 func (f *fakeModel) Complete(_ context.Context, request application.ModelRequest) (application.ModelResponse, error) {
 	f.request = request
 	return f.result, f.err
+}
+
+func TestAWSControlAndResolvedStatesDoNotCreateIncidents(t *testing.T) {
+	for name, message := range map[string]application.VerifiedAWSMessage{
+		"subscription": {Type: application.AWSMessageSubscriptionConfirmation, TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms"},
+		"unsubscribe":  {Type: application.AWSMessageUnsubscribeConfirmation, TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms"},
+		"ok": {Type: application.AWSMessageNotification, TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms", MessageID: "message-ok", SNSTimestamp: time.Date(2025, 9, 7, 12, 0, 1, 0, time.UTC),
+			Alarm: &application.AWSCloudWatchAlarm{Name: "checkout", ARN: "arn:aws:cloudwatch:us-east-1:123456789012:alarm:checkout", State: "OK", StateChangedAt: time.Date(2025, 9, 7, 12, 0, 0, 0, time.UTC), Region: "us-east-1", AccountID: "123456789012"}},
+		"insufficient-data": {Type: application.AWSMessageNotification, TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms", MessageID: "message-insufficient", SNSTimestamp: time.Date(2025, 9, 7, 12, 0, 1, 0, time.UTC),
+			Alarm: &application.AWSCloudWatchAlarm{Name: "checkout", ARN: "arn:aws:cloudwatch:us-east-1:123456789012:alarm:checkout", State: "INSUFFICIENT_DATA", StateChangedAt: time.Date(2025, 9, 7, 12, 0, 0, 0, time.UTC), Region: "us-east-1", AccountID: "123456789012"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			observed := make(chan struct{}, 1)
+			ingested := make(chan struct{}, 1)
+			observations := &fakeObservations{called: observed}
+			incidents := &fakeIncidents{called: ingested}
+			service, err := application.NewService(application.Options{
+				Tokens:   &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "aws_cloudwatch", TopicARN: message.TopicARN}},
+				Analyzer: fixedAnalyzer{}, Observations: observations, Incidents: incidents, AWSSNS: &fakeAWSVerifier{message: message}, Now: time.Now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Ingest(context.Background(), strings.Repeat("t", 43), `{}`); err != nil {
+				t.Fatalf("Ingest() error = %v", err)
+			}
+			if message.Type == application.AWSMessageNotification {
+				select {
+				case <-observed:
+				case <-time.After(time.Second):
+					t.Fatal("resolved state observation was not written")
+				}
+			} else {
+				select {
+				case <-observed:
+					t.Fatal("control message wrote observation")
+				default:
+				}
+			}
+			select {
+			case <-ingested:
+				t.Fatal("non-ALARM message created incident")
+			default:
+			}
+		})
+	}
+}
+
+func TestAWSAlarmCreatesNormalizedEvidenceAndAnalysisOnlyIncident(t *testing.T) {
+	completed := make(chan struct{}, 1)
+	incidents := &fakeIncidents{
+		incident: incidentdomain.Incident{InternalID: "incident"}, created: true, called: make(chan struct{}, 1),
+	}
+	evidence := &fakeEvidence{called: completed}
+	message := application.VerifiedAWSMessage{
+		Type: application.AWSMessageNotification, TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms", MessageID: "message-alarm",
+		SNSTimestamp: time.Date(2025, 9, 7, 12, 0, 1, 0, time.UTC),
+		Alarm:        &application.AWSCloudWatchAlarm{Name: "checkout errors", ARN: "arn:aws:cloudwatch:us-east-1:123456789012:alarm:checkout-errors", State: "ALARM", Reason: "threshold", StateChangedAt: time.Date(2025, 9, 7, 11, 59, 0, 0, time.UTC), Region: "us-east-1", AccountID: "123456789012", Trigger: []byte(`{"MetricName":"Errors","Secret":"drop"}`)},
+	}
+	service, err := application.NewService(application.Options{
+		Tokens:   &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "aws_cloudwatch", TopicARN: message.TopicARN}},
+		Analyzer: fixedAnalyzer{}, Observations: &fakeObservations{}, Incidents: incidents, Evidence: evidence,
+		AWSSNS: &fakeAWSVerifier{message: message}, Now: func() time.Time { return time.Date(2025, 9, 7, 12, 0, 2, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Ingest(context.Background(), strings.Repeat("t", 43), `{}`); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("AWS alarm evidence was not persisted")
+	}
+	if !incidents.analysisOnly || !strings.Contains(incidents.title, "checkout errors") || incidents.fingerprint == "" {
+		t.Fatalf("incident projection = %#v analysisOnly=%v", incidents, incidents.analysisOnly)
+	}
+	if len(evidence.records) != 1 || strings.Contains(string(evidence.records[0].Payload), "Secret") || !strings.Contains(string(evidence.records[0].Payload), "MetricName") {
+		t.Fatalf("AWS evidence = %#v", evidence.records)
+	}
+}
+
+func TestAWSVerificationFailureIsSynchronous(t *testing.T) {
+	service, err := application.NewService(application.Options{
+		Tokens:   &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "aws_cloudwatch", TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms"}},
+		Analyzer: fixedAnalyzer{}, Observations: &fakeObservations{}, Incidents: &fakeIncidents{},
+		AWSSNS: &fakeAWSVerifier{err: application.ErrForbiddenAWSSNS}, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Ingest(context.Background(), strings.Repeat("t", 43), `{}`); !errors.Is(err, application.ErrForbiddenAWSSNS) {
+		t.Fatalf("Ingest() error = %v", err)
+	}
 }
 
 func TestNormalizeInboundUsesFirstNonEmptyLineForPlainText(t *testing.T) {
@@ -285,7 +398,7 @@ func TestNewServiceRejectsLegacyIncidentWhenEvidenceIsConfigured(t *testing.T) {
 func TestLegacyIncidentFallbackRemainsAvailableWithoutEvidence(t *testing.T) {
 	incidents := &legacyIncidentFake{called: make(chan struct{}, 1)}
 	service, err := application.NewService(application.Options{
-		Tokens:       &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source"}},
+		Tokens:       &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "generic"}},
 		Observations: &fakeObservations{},
 		Incidents:    incidents,
 		Now:          time.Now,
@@ -304,7 +417,7 @@ func TestLegacyIncidentFallbackRemainsAvailableWithoutEvidence(t *testing.T) {
 }
 
 func TestIngestReturnsBeforeAnalyzerAndPersistsInBackground(t *testing.T) {
-	tokens := &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source"}}
+	tokens := &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "generic"}}
 	observations := &fakeObservations{called: make(chan struct{}, 1)}
 	incidents := &fakeIncidents{incident: incidentdomain.Incident{Number: 2049}, created: true, called: make(chan struct{}, 1)}
 	analyzer := &blockingAnalyzer{
@@ -354,7 +467,7 @@ func TestIngestReturnsBeforeAnalyzerAndPersistsInBackground(t *testing.T) {
 func TestIngestReportsBackgroundFailureWithoutPayload(t *testing.T) {
 	reporter := &fakeFailures{called: make(chan struct{}, 1)}
 	service, err := application.NewService(application.Options{
-		Tokens:   &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source"}},
+		Tokens:   &fakeTokens{ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "generic"}},
 		Analyzer: failingAnalyzer{err: errors.New("classifier failed")}, Observations: &fakeObservations{},
 		Incidents: &fakeIncidents{}, Failures: reporter, Now: time.Now,
 	})
@@ -383,6 +496,32 @@ func TestIngestMapsUnknownToken(t *testing.T) {
 	}
 	if err := service.Ingest(context.Background(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", "alert"); !errors.Is(err, application.ErrWebhookNotFound) {
 		t.Fatalf("unknown token error = %v", err)
+	}
+}
+
+func TestIngestRejectsUnknownProviderAndAWSMessageType(t *testing.T) {
+	tests := []struct {
+		name     string
+		ingress  projectapplication.WebhookIngress
+		verifier application.VerifiedAWSMessage
+		want     error
+	}{
+		{name: "unknown provider", ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "aws"}, want: application.ErrWebhookNotFound},
+		{name: "unknown aws message type", ingress: projectapplication.WebhookIngress{ProjectID: "project", SourceID: "source", Provider: "aws_cloudwatch", TopicARN: "arn:aws:sns:us-east-1:123456789012:alarms"}, want: application.ErrInvalidAWSSNS},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service, err := application.NewService(application.Options{
+				Tokens: &fakeTokens{ingress: test.ingress}, Observations: &fakeObservations{}, Incidents: &fakeIncidents{},
+				AWSSNS: &fakeAWSVerifier{message: test.verifier}, Now: time.Now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Ingest(context.Background(), strings.Repeat("t", 43), `{}`); !errors.Is(err, test.want) {
+				t.Fatalf("Ingest() error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 
@@ -417,10 +556,10 @@ func TestTencentIngressUsesDeterministicProviderFingerprint(t *testing.T) {
 		return incidents.fingerprint
 	}
 
-	first := ingest(`{"TopicId":"topic-1","Alarm":"fixthe","Topic":"prod-service-cvm","TriggerParams":"count=1","DetailUrl":"https://alarm.cls.tencentcs.com/first"}`, "ai:v1:first")
-	second := ingest(`{"TopicId":"topic-2","Alarm":" fixthe ","Topic":"prod-service-cvm","TriggerParams":"-","DetailUrl":"https://alarm.cls.tencentcs.com/second"}`, "ai:v1:second")
+	first := ingest(`{"TopicId":"topic-1","Alarm":"mendry","Topic":"prod-service-cvm","TriggerParams":"count=1","DetailUrl":"https://alarm.cls.tencentcs.com/first"}`, "ai:v1:first")
+	second := ingest(`{"TopicId":"topic-2","Alarm":" mendry ","Topic":"prod-service-cvm","TriggerParams":"-","DetailUrl":"https://alarm.cls.tencentcs.com/second"}`, "ai:v1:second")
 	changedAlarm := ingest(`{"TopicId":"topic-3","Alarm":"database unavailable","Topic":"prod-service-cvm","DetailUrl":"https://alarm.cls.tencentcs.com/third"}`, "ai:v1:third")
-	changedTopic := ingest(`{"TopicId":"topic-4","Alarm":"fixthe","Topic":"staging-service-cvm","DetailUrl":"https://alarm.cls.tencentcs.com/fourth"}`, "ai:v1:fourth")
+	changedTopic := ingest(`{"TopicId":"topic-4","Alarm":"mendry","Topic":"staging-service-cvm","DetailUrl":"https://alarm.cls.tencentcs.com/fourth"}`, "ai:v1:fourth")
 
 	if first != second {
 		t.Fatalf("equivalent tencent callbacks changed fingerprint: %q != %q", first, second)

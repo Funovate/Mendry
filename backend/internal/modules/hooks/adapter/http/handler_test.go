@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	hookhttp "fixthe/backend/internal/modules/hooks/adapter/http"
-	"fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/platform/httpserver"
+	hookhttp "mendry/backend/internal/modules/hooks/adapter/http"
+	"mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type fakeService struct {
@@ -62,6 +62,30 @@ func TestIngestRejectsEmptyBodyAndUnknownToken(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != nethttp.StatusNotFound || !strings.Contains(response.Body.String(), `"webhook_not_found"`) {
 		t.Fatalf("unknown token = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestIngestMapsAWSSNSErrors(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		err    error
+		status int
+		code   string
+	}{
+		"invalid":   {application.ErrInvalidAWSSNS, nethttp.StatusBadRequest, "invalid_aws_sns_message"},
+		"forbidden": {application.ErrForbiddenAWSSNS, nethttp.StatusForbidden, "invalid_aws_sns_signature"},
+		"temporary": {application.ErrTemporaryAWSSNS, nethttp.StatusServiceUnavailable, "aws_sns_unavailable"},
+		"too large": {application.ErrAWSSNSTooLarge, nethttp.StatusRequestEntityTooLarge, "request_too_large"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler := newHandler(t, &fakeService{err: testCase.err})
+			request := httptest.NewRequest(nethttp.MethodPost, "/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", strings.NewReader(`{}`))
+			request.Header.Set("Content-Type", "text/plain; charset=UTF-8")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != testCase.status || !strings.Contains(response.Body.String(), `"`+testCase.code+`"`) {
+				t.Fatalf("response = %d %q", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

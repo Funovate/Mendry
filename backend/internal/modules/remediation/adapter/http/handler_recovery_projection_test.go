@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // TestGetRemediationSerializesRecoveryAndCheckpointProjection 验证 HTTP review

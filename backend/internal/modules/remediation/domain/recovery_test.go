@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // validRecoveryChallenge 构造一个满足 v1 边界的 challenge；测试通过修改字段制造违规。

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -63,7 +63,7 @@ func Open(ctx context.Context, options PoolOptions) (*Pool, error) {
 		healthTimeout:  options.Configuration.HealthTimeout,
 		closeDone:      make(chan struct{}),
 	}
-	pool.metrics, err = newPoolMetrics(options.MeterProvider.Meter("fixthe/backend/postgres"), rawPool)
+	pool.metrics, err = newPoolMetrics(options.MeterProvider.Meter("mendry/backend/postgres"), rawPool)
 	if err != nil {
 		rawPool.Close()
 		return nil, err
@@ -108,7 +108,7 @@ func buildPoolConfig(options PoolOptions) (*pgxpool.Config, error) {
 		slowThreshold = options.SlowThreshold
 	}
 	queryTracer, err := NewQueryTracer(options.Logger, options.Tracer,
-		options.MeterProvider.Meter("fixthe/backend/postgres"), slowThreshold, configuration.QueryDebug)
+		options.MeterProvider.Meter("mendry/backend/postgres"), slowThreshold, configuration.QueryDebug)
 	if err != nil {
 		return nil, err
 	}

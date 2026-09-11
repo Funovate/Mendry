@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "source": "local-example",
+  "externalId": "report-1",
+  "goal": "produce a short local report",
+  "payload": {
+    "question": "What is the durable local runner?"
+  },
+  "context": {
+    "environment": "development"
+  }
+}

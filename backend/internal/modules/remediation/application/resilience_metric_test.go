@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // recordingResilienceMetrics 记录 coordinator 发出的低基数指标事件。

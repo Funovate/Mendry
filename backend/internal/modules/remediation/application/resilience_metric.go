@@ -3,7 +3,7 @@ package application
 import (
 	"context"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // Resilience metric kinds：low-cardinality 事件分类，全部不含 evidence/model 内容。

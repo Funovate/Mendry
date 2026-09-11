@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/hooks/adapter/tencentcls"
-	hooksapplication "fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/modules/hooks/adapter/tencentcls"
+	hooksapplication "mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/platform/observability"
 )
 
 func TestResolveLogsOriginalDetailResponseAndFailureReason(t *testing.T) {

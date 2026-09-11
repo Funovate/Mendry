@@ -4,8 +4,8 @@ package http
 import (
 	"net/http"
 
-	"fixthe/backend/internal/modules/system/application"
-	"fixthe/backend/internal/platform/httpserver"
+	"mendry/backend/internal/modules/system/application"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 // Handler 持有 system application service，并负责健康响应的 HTTP 编解码。

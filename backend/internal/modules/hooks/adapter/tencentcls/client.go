@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	hooksapplication "fixthe/backend/internal/modules/hooks/application"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	hooksapplication "mendry/backend/internal/modules/hooks/application"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (

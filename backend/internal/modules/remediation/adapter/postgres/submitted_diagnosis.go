@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres/remediationdb"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // Compile-time assertion that the adapter satisfies the submitted-diagnosis

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
 
 	redisclient "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
@@ -57,7 +57,7 @@ func Open(ctx context.Context, options ClientOptions) (*Client, error) {
 		return nil, fmt.Errorf("Redis client name is invalid")
 	}
 	redisOptions.ClientName = options.Application
-	meter := options.MeterProvider.Meter("fixthe/backend/redis")
+	meter := options.MeterProvider.Meter("mendry/backend/redis")
 	hook, err := NewCommandHook(options.Logger, options.Tracer, meter, options.Configuration.SlowCommandThreshold)
 	if err != nil {
 		return nil, err

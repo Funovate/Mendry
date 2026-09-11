@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/platform/httpserver"
-	"fixthe/backend/internal/platform/observability"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/platform/httpserver"
+	"mendry/backend/internal/platform/observability"
 )
 
 type fakeService struct {
@@ -28,6 +28,7 @@ type fakeService struct {
 	authError   error
 	logoutError error
 	oldToken    string
+	authToken   string
 	loggedOut   string
 	createdUser domain.User
 	createError error
@@ -39,7 +40,8 @@ func (f *fakeService) Login(_ context.Context, _ string, _ []byte, oldToken stri
 	return f.loginResult, f.loginError
 }
 
-func (f *fakeService) Authenticate(_ context.Context, _ string) (domain.User, error) {
+func (f *fakeService) Authenticate(_ context.Context, token string) (domain.User, error) {
+	f.authToken = token
 	return f.authUser, f.authError
 }
 
@@ -78,8 +80,9 @@ func TestLoginSetsSecureSessionCookieAndReturnsSafeUser(t *testing.T) {
 		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
 	}
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != authhttp.SessionCookieName || cookies[0].Value != "new-session-token" ||
-		!cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].Path != "/" || cookies[0].MaxAge != 3600 {
+	if len(cookies) != 2 || cookies[0].Name != authhttp.SessionCookieName || cookies[0].Value != "new-session-token" ||
+		!cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].Path != "/" || cookies[0].MaxAge != 3600 ||
+		cookies[1].Name != "fixthe_session" || cookies[1].MaxAge != -1 {
 		t.Fatalf("cookies = %#v", cookies)
 	}
 	if strings.Contains(response.Body.String(), "secret-password") || strings.Contains(response.Body.String(), "new-session-token") ||
@@ -128,8 +131,16 @@ func TestCurrentUserRequiresSessionAndReturnsPrincipal(t *testing.T) {
 		t.Fatalf("body = %#v, error = %v", body, err)
 	}
 	data, ok := body["data"].(map[string]any)
-	if !ok || data["username"] != "viewer" || body["code"] != "ok" || body["message"] != "OK" {
-		t.Fatalf("body = %#v", body)
+	if !ok || data["username"] != "viewer" || body["code"] != "ok" || body["message"] != "OK" || service.authToken != "valid-token" {
+		t.Fatalf("body = %#v, auth token = %q", body, service.authToken)
+	}
+
+	legacyRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	legacyRequest.AddCookie(&http.Cookie{Name: "fixthe_session", Value: "legacy-token"})
+	legacyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(legacyResponse, legacyRequest)
+	if legacyResponse.Code != http.StatusOK || service.authToken != "legacy-token" {
+		t.Fatalf("legacy response = %d, auth token = %q", legacyResponse.Code, service.authToken)
 	}
 }
 
@@ -181,7 +192,8 @@ func TestLogoutIsIdempotentAndClearsCookie(t *testing.T) {
 		t.Fatalf("response = %d, logged out = %q", response.Code, service.loggedOut)
 	}
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].MaxAge != -1 || !cookies[0].HttpOnly || !cookies[0].Secure {
+	if len(cookies) != 2 || cookies[0].MaxAge != -1 || cookies[1].Name != "fixthe_session" || cookies[1].MaxAge != -1 ||
+		!cookies[0].HttpOnly || !cookies[0].Secure || !cookies[1].HttpOnly || !cookies[1].Secure {
 		t.Fatalf("cookies = %#v", cookies)
 	}
 }

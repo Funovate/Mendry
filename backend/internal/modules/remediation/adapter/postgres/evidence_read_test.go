@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // largeEvidenceInput 构造一条 payload 超过单页上限的 run 归属证据，覆盖

@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	projectpostgres "fixthe/backend/internal/modules/projects/adapter/postgres"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	remediationgit "fixthe/backend/internal/modules/remediation/adapter/git"
-	remediationmcp "fixthe/backend/internal/modules/remediation/adapter/mcp"
-	remediationopenai "fixthe/backend/internal/modules/remediation/adapter/openai"
-	remediationsshlog "fixthe/backend/internal/modules/remediation/adapter/sshlog"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
+	projectpostgres "mendry/backend/internal/modules/projects/adapter/postgres"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	remediationgit "mendry/backend/internal/modules/remediation/adapter/git"
+	remediationmcp "mendry/backend/internal/modules/remediation/adapter/mcp"
+	remediationopenai "mendry/backend/internal/modules/remediation/adapter/openai"
+	remediationsshlog "mendry/backend/internal/modules/remediation/adapter/sshlog"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
 // projectRuntimeLoaders 把项目 repository 接到 remediation 适配器，

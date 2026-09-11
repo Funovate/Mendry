@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (
@@ -240,10 +240,11 @@ func (g *ToolGateway) BuildCatalogWithBootstrap(
 	return catalog, nil
 }
 
-// BuildAnalysisOnlyCatalog creates the manual-continuation catalog without
-// resolving source policy or probing a dynamic runtime. Persisted operational
-// evidence is already present in bootstrap context, so only repository reads
-// remain available to the analysis model.
+// BuildAnalysisOnlyCatalog creates the restricted analysis catalog for a
+// persisted analysis-only run or manual continuation without resolving tool
+// policy or probing a dynamic runtime. Persisted operational evidence is
+// already present in bootstrap context, so only repository reads remain
+// available to the analysis model.
 func (g *ToolGateway) BuildAnalysisOnlyCatalog(
 	runID string,
 	phase domain.RunState,

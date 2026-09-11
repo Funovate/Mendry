@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // submittedDiagnosisFrom 构建模型提交诊断的 D4 有界审计投影。只复制 envelope

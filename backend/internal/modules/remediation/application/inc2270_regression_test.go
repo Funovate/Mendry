@@ -28,8 +28,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // --- INC-2270 replay fixture wiring -----------------------------------------
@@ -74,16 +74,13 @@ type inc2270ReplayFixture struct {
 	} `json:"requiredRegression"`
 }
 
-// inc2270FixtureCandidates 是 fixture 相对当前测试工作目录的可能路径。go test
-// 以包目录为 cwd；兜底覆盖 `go test -C backend` 与仓库根目录的调用形态。
+// inc2270FixtureCandidates 是 fixture 相对测试包工作目录的路径。
 var inc2270FixtureCandidates = []string{
-	"../../../../../.trellis/tasks/08-31-remediation-lifecycle-resilience/research/inc-2270-replay.json",
-	"../.trellis/tasks/08-31-remediation-lifecycle-resilience/research/inc-2270-replay.json",
-	".trellis/tasks/08-31-remediation-lifecycle-resilience/research/inc-2270-replay.json",
+	"testdata/inc-2270-replay.json",
 }
 
 // loadINC2270ReplayFixture 加载并断言 INC-2270 pre-change replay fixture。
-// 文件缺失（如 .trellis 未随产物分发）时 skip 而不是 fail；找到但契约不符时
+// 文件缺失时 skip 而不是 fail；找到但契约不符时
 // 直接 fail，防止 fixture 被误改后静默失效。
 func loadINC2270ReplayFixture(t *testing.T) *inc2270ReplayFixture {
 	t.Helper()

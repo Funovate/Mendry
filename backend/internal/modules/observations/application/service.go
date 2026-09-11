@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/observations/domain"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/observations/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 )
 
 var (

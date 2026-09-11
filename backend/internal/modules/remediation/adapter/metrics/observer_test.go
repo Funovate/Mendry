@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/adapter/metrics"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/metrics"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -119,16 +119,16 @@ func TestObserverMapsResilienceEventsToLowCardinalityCounters(t *testing.T) {
 
 	counts := collectCounters(t, reader)
 	want := map[string]int64{
-		"fixthe.remediation.run.started":                2,
-		"fixthe.remediation.state.transitioned":         1,
-		"fixthe.remediation.run.terminal":               1,
-		"fixthe.remediation.checkpoint.persisted":       1,
-		"fixthe.remediation.recovery.no_progress":       1,
-		"fixthe.remediation.budget.signal":              1,
-		"fixthe.remediation.exhaustion.decided":         2,
-		"fixthe.remediation.continuation.reconstructed": 1,
-		"fixthe.remediation.recovery.challenge":         1,
-		"fixthe.remediation.recovery.success":           1,
+		"mendry.remediation.run.started":                2,
+		"mendry.remediation.state.transitioned":         1,
+		"mendry.remediation.run.terminal":               1,
+		"mendry.remediation.checkpoint.persisted":       1,
+		"mendry.remediation.recovery.no_progress":       1,
+		"mendry.remediation.budget.signal":              1,
+		"mendry.remediation.exhaustion.decided":         2,
+		"mendry.remediation.continuation.reconstructed": 1,
+		"mendry.remediation.recovery.challenge":         1,
+		"mendry.remediation.recovery.success":           1,
 	}
 	for name, wantCount := range want {
 		if counts[name] != wantCount {
@@ -157,7 +157,7 @@ func TestObserverChallengeKindAttributeIsLowCardinality(t *testing.T) {
 	record("model_invented_kind")
 	record("")
 
-	values := collectAttributeValues(t, reader, "fixthe.remediation.recovery.challenge", "kind")
+	values := collectAttributeValues(t, reader, "mendry.remediation.recovery.challenge", "kind")
 	want := map[string]int64{
 		"evidence_correction": 1,
 		"tool_failure":        1,
@@ -202,7 +202,7 @@ func TestObserverStrictReasonAllowlistAndFallback(t *testing.T) {
 	success.Reason = strings.Repeat("y", 128)
 	observer.RecordResilienceMetric(ctx, success)
 
-	terminalValues := collectAttributeValues(t, reader, "fixthe.remediation.run.terminal", "terminal_reason")
+	terminalValues := collectAttributeValues(t, reader, "mendry.remediation.run.terminal", "terminal_reason")
 	wantTerminal := map[string]int64{"exhaustion_proof": 1, "unknown": 2}
 	if len(terminalValues) != len(wantTerminal) {
 		t.Fatalf("terminal_reason values = %#v, want %#v", terminalValues, wantTerminal)
@@ -212,7 +212,7 @@ func TestObserverStrictReasonAllowlistAndFallback(t *testing.T) {
 			t.Fatalf("terminal_reason %q = %d, want %d (%#v)", value, terminalValues[value], count, terminalValues)
 		}
 	}
-	checkpointValues := collectAttributeValues(t, reader, "fixthe.remediation.checkpoint.persisted", "reason")
+	checkpointValues := collectAttributeValues(t, reader, "mendry.remediation.checkpoint.persisted", "reason")
 	wantCheckpoint := map[string]int64{"recovery": 1, "unknown": 1}
 	if len(checkpointValues) != len(wantCheckpoint) {
 		t.Fatalf("checkpoint reason values = %#v, want %#v", checkpointValues, wantCheckpoint)
@@ -222,7 +222,7 @@ func TestObserverStrictReasonAllowlistAndFallback(t *testing.T) {
 			t.Fatalf("checkpoint reason %q = %d, want %d (%#v)", value, checkpointValues[value], count, checkpointValues)
 		}
 	}
-	successValues := collectAttributeValues(t, reader, "fixthe.remediation.recovery.success", "reason")
+	successValues := collectAttributeValues(t, reader, "mendry.remediation.recovery.success", "reason")
 	wantSuccess := map[string]int64{domain.CheckpointReasonPhaseBoundary: 1, "unknown": 1}
 	if len(successValues) != len(wantSuccess) {
 		t.Fatalf("recovery success reason values = %#v, want %#v", successValues, wantSuccess)

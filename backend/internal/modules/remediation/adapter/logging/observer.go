@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 // Observer 把 application observation 投影为稳定的 backend console/JSON 事件。

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func validBudgetRecovery() domain.BudgetPlanRecoveryV1 {

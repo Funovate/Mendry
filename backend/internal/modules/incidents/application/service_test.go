@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/incidents/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/incidents/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 )
 
 const (
@@ -427,6 +427,46 @@ func TestIngestInboundEvidenceFailurePreservesIncidentWithoutRemediation(t *test
 	}
 	if repository.remediation == nil {
 		t.Fatal("incident was not committed with its automatic remediation metadata")
+	}
+}
+
+func TestIngestInboundAnalysisOnlyPropagatesToEveryAutomaticEmission(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		repository *fakeRepository
+	}{
+		{name: "new root", repository: &fakeRepository{lookupErr: ErrNotFound}},
+		{name: "repeated open alarm", repository: &fakeRepository{incidents: []domain.Incident{{
+			InternalID: testIncidentID, Number: 2049, Status: domain.StatusOpen, Priority: domain.PriorityP2,
+			LifecycleGeneration: 1, DeployedCommit: testCommitA, OccurrenceCount: 1, Version: 1, LastSeen: now.Add(-time.Hour),
+		}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			trigger := &fakeTrigger{started: started}
+			service := newTestService(t, test.repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+			_, _, err := service.IngestInboundAnalysisOnlyWithEvidence(
+				context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
+				"AWS CloudWatch alarm", "aws-cloudwatch:v1:fingerprint", now,
+				func(context.Context, domain.Incident) error { return nil },
+			)
+			if err != nil {
+				t.Fatalf("IngestInboundAnalysisOnlyWithEvidence() error = %v", err)
+			}
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("analysis-only automatic emission did not start")
+			}
+			if len(trigger.calls) != 1 || !trigger.calls[0].AnalysisOnly {
+				t.Fatalf("automatic calls = %#v", trigger.calls)
+			}
+			if test.repository.remediation != nil && !test.repository.remediation.AnalysisOnly {
+				t.Fatalf("transactional remediation = %#v", test.repository.remediation)
+			}
+		})
 	}
 }
 

@@ -9,15 +9,15 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/adapter/logging"
-	remediationapplication "fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/modules/remediation/adapter/logging"
+	remediationapplication "mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/platform/observability"
 )
 
 func TestFailureReporterLogsCauseAndStackWithoutPayload(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -51,7 +51,7 @@ func TestFailureReporterLogsCauseAndStackWithoutPayload(t *testing.T) {
 func TestFailureReporterLogsSafeContinuationGateDecision(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "info", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "info", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)

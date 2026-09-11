@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"fixthe/backend/internal/modules/incidents/adapter/postgres/incidentdb"
-	"fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/incidents/domain"
-	remediationpostgres "fixthe/backend/internal/modules/remediation/adapter/postgres"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/errtrace"
-	platformpostgres "fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/modules/incidents/adapter/postgres/incidentdb"
+	"mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/incidents/domain"
+	remediationpostgres "mendry/backend/internal/modules/remediation/adapter/postgres"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/errtrace"
+	platformpostgres "mendry/backend/internal/platform/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -303,6 +303,7 @@ func createRemediationRoot(ctx context.Context, tx pgx.Tx, request *application.
 		Priority:            request.Priority,
 		TriggerReason:       request.Reason,
 		ContextVersion:      request.ContextVersion,
+		AnalysisOnly:        request.AnalysisOnly,
 	})
 	if err != nil {
 		return newRepositoryError("create remediation root", err)

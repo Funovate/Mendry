@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"fixthe/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/errtrace"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )

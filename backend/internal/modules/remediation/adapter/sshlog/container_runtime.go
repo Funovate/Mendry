@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (

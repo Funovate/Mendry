@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres/remediationdb"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // evidenceReadCursorTTL 是 evidence.read cursor 的有效期：不透明、绑定证据行、

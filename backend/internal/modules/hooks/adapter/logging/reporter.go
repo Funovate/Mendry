@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	hookapplication "fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/platform/errtrace"
-	"fixthe/backend/internal/platform/observability"
+	hookapplication "mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/observability"
 )
 
 const eventWebhookIngestFailed = "webhook.ingest.failed"

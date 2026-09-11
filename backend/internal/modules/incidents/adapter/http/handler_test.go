@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authapplication "fixthe/backend/internal/modules/auth/application"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	incidenthttp "fixthe/backend/internal/modules/incidents/adapter/http"
-	"fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/incidents/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authapplication "mendry/backend/internal/modules/auth/application"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	incidenthttp "mendry/backend/internal/modules/incidents/adapter/http"
+	"mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/incidents/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type fakeIncidentService struct {

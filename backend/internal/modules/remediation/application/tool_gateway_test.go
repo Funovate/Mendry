@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // TestToolGateway_RejectsBeforeAdapterCall is the credential-isolation /

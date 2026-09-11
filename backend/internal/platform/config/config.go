@@ -14,57 +14,76 @@ import (
 
 // 环境变量 key 由 config 包统一维护，composition root 不应散落字符串字面量。
 const (
-	EnvironmentKey              = "FIXTHE_ENVIRONMENT"
-	LogLevelKey                 = "FIXTHE_LOG_LEVEL"
-	LogFormatKey                = "FIXTHE_LOG_FORMAT"
-	LogFileKey                  = "FIXTHE_LOG_FILE"
-	ShutdownKey                 = "FIXTHE_SHUTDOWN_TIMEOUT"
-	HTTPAddressKey              = "FIXTHE_HTTP_ADDR"
-	HTTPReadHeaderKey           = "FIXTHE_HTTP_READ_HEADER_TIMEOUT"
-	HTTPReadKey                 = "FIXTHE_HTTP_READ_TIMEOUT"
-	HTTPWriteKey                = "FIXTHE_HTTP_WRITE_TIMEOUT"
-	HTTPIdleKey                 = "FIXTHE_HTTP_IDLE_TIMEOUT"
-	HTTPMaxBodyBytesKey         = "FIXTHE_HTTP_MAX_BODY_BYTES"
-	HTTPCORSAllowedOriginKey    = "FIXTHE_HTTP_CORS_ALLOWED_ORIGIN"
-	HTTPRequestDebugKey         = "FIXTHE_HTTP_REQUEST_DEBUG"
-	PublicURLKey                = "FIXTHE_PUBLIC_URL"
-	AuthSessionTTLKey           = "FIXTHE_AUTH_SESSION_TTL"
-	WebhookAITimeoutKey         = "FIXTHE_WEBHOOK_AI_TIMEOUT"
-	RemediationModelTimeoutKey  = "FIXTHE_REMEDIATION_MODEL_TIMEOUT"
-	EncryptionKey               = "FIXTHE_ENCRYPTION_KEY"
-	BootstrapAdminPasswordKey   = "FIXTHE_BOOTSTRAP_ADMIN_PASSWORD"
-	PostgresURLKey              = "FIXTHE_POSTGRES_URL"
-	PostgresConnectTimeoutKey   = "FIXTHE_POSTGRES_CONNECT_TIMEOUT"
-	PostgresAcquireTimeoutKey   = "FIXTHE_POSTGRES_ACQUIRE_TIMEOUT"
-	PostgresStatementTimeoutKey = "FIXTHE_POSTGRES_STATEMENT_TIMEOUT"
-	PostgresHealthTimeoutKey    = "FIXTHE_POSTGRES_HEALTH_TIMEOUT"
-	PostgresMinConnsKey         = "FIXTHE_POSTGRES_MIN_CONNS"
-	PostgresMaxConnsKey         = "FIXTHE_POSTGRES_MAX_CONNS"
-	PostgresMaxLifetimeKey      = "FIXTHE_POSTGRES_MAX_CONN_LIFETIME"
-	PostgresMaxIdleTimeKey      = "FIXTHE_POSTGRES_MAX_CONN_IDLE_TIME"
-	PostgresHealthPeriodKey     = "FIXTHE_POSTGRES_HEALTH_CHECK_PERIOD"
-	PostgresSlowQueryKey        = "FIXTHE_POSTGRES_SLOW_QUERY_THRESHOLD"
-	PostgresQueryDebugKey       = "FIXTHE_POSTGRES_QUERY_DEBUG"
-	PostgresMigrationLockKey    = "FIXTHE_POSTGRES_MIGRATION_LOCK_TIMEOUT"
-	RedisURLKey                 = "FIXTHE_REDIS_URL"
-	RedisDialTimeoutKey         = "FIXTHE_REDIS_DIAL_TIMEOUT"
-	RedisReadTimeoutKey         = "FIXTHE_REDIS_READ_TIMEOUT"
-	RedisWriteTimeoutKey        = "FIXTHE_REDIS_WRITE_TIMEOUT"
-	RedisPoolTimeoutKey         = "FIXTHE_REDIS_POOL_TIMEOUT"
-	RedisHealthTimeoutKey       = "FIXTHE_REDIS_HEALTH_TIMEOUT"
-	RedisPoolSizeKey            = "FIXTHE_REDIS_POOL_SIZE"
-	RedisMinIdleConnsKey        = "FIXTHE_REDIS_MIN_IDLE_CONNS"
-	RedisMaxRetriesKey          = "FIXTHE_REDIS_MAX_RETRIES"
-	RedisMinRetryBackoffKey     = "FIXTHE_REDIS_MIN_RETRY_BACKOFF"
-	RedisMaxRetryBackoffKey     = "FIXTHE_REDIS_MAX_RETRY_BACKOFF"
-	RedisMaxIdleTimeKey         = "FIXTHE_REDIS_MAX_CONN_IDLE_TIME"
-	RedisMaxLifetimeKey         = "FIXTHE_REDIS_MAX_CONN_LIFETIME"
-	RedisDatabaseKey            = "FIXTHE_REDIS_DB"
-	RedisSlowCommandKey         = "FIXTHE_REDIS_SLOW_COMMAND_THRESHOLD"
+	EnvironmentKey              = "MENDRY_ENVIRONMENT"
+	LogLevelKey                 = "MENDRY_LOG_LEVEL"
+	LogFormatKey                = "MENDRY_LOG_FORMAT"
+	LogFileKey                  = "MENDRY_LOG_FILE"
+	ShutdownKey                 = "MENDRY_SHUTDOWN_TIMEOUT"
+	HTTPAddressKey              = "MENDRY_HTTP_ADDR"
+	HTTPReadHeaderKey           = "MENDRY_HTTP_READ_HEADER_TIMEOUT"
+	HTTPReadKey                 = "MENDRY_HTTP_READ_TIMEOUT"
+	HTTPWriteKey                = "MENDRY_HTTP_WRITE_TIMEOUT"
+	HTTPIdleKey                 = "MENDRY_HTTP_IDLE_TIMEOUT"
+	HTTPMaxBodyBytesKey         = "MENDRY_HTTP_MAX_BODY_BYTES"
+	HTTPCORSAllowedOriginKey    = "MENDRY_HTTP_CORS_ALLOWED_ORIGIN"
+	HTTPRequestDebugKey         = "MENDRY_HTTP_REQUEST_DEBUG"
+	PublicURLKey                = "MENDRY_PUBLIC_URL"
+	AuthSessionTTLKey           = "MENDRY_AUTH_SESSION_TTL"
+	WebhookAITimeoutKey         = "MENDRY_WEBHOOK_AI_TIMEOUT"
+	RemediationModelTimeoutKey  = "MENDRY_REMEDIATION_MODEL_TIMEOUT"
+	EncryptionKey               = "MENDRY_ENCRYPTION_KEY"
+	BootstrapAdminPasswordKey   = "MENDRY_BOOTSTRAP_ADMIN_PASSWORD"
+	PostgresURLKey              = "MENDRY_POSTGRES_URL"
+	PostgresConnectTimeoutKey   = "MENDRY_POSTGRES_CONNECT_TIMEOUT"
+	PostgresAcquireTimeoutKey   = "MENDRY_POSTGRES_ACQUIRE_TIMEOUT"
+	PostgresStatementTimeoutKey = "MENDRY_POSTGRES_STATEMENT_TIMEOUT"
+	PostgresHealthTimeoutKey    = "MENDRY_POSTGRES_HEALTH_TIMEOUT"
+	PostgresMinConnsKey         = "MENDRY_POSTGRES_MIN_CONNS"
+	PostgresMaxConnsKey         = "MENDRY_POSTGRES_MAX_CONNS"
+	PostgresMaxLifetimeKey      = "MENDRY_POSTGRES_MAX_CONN_LIFETIME"
+	PostgresMaxIdleTimeKey      = "MENDRY_POSTGRES_MAX_CONN_IDLE_TIME"
+	PostgresHealthPeriodKey     = "MENDRY_POSTGRES_HEALTH_CHECK_PERIOD"
+	PostgresSlowQueryKey        = "MENDRY_POSTGRES_SLOW_QUERY_THRESHOLD"
+	PostgresQueryDebugKey       = "MENDRY_POSTGRES_QUERY_DEBUG"
+	PostgresMigrationLockKey    = "MENDRY_POSTGRES_MIGRATION_LOCK_TIMEOUT"
+	RedisURLKey                 = "MENDRY_REDIS_URL"
+	RedisDialTimeoutKey         = "MENDRY_REDIS_DIAL_TIMEOUT"
+	RedisReadTimeoutKey         = "MENDRY_REDIS_READ_TIMEOUT"
+	RedisWriteTimeoutKey        = "MENDRY_REDIS_WRITE_TIMEOUT"
+	RedisPoolTimeoutKey         = "MENDRY_REDIS_POOL_TIMEOUT"
+	RedisHealthTimeoutKey       = "MENDRY_REDIS_HEALTH_TIMEOUT"
+	RedisPoolSizeKey            = "MENDRY_REDIS_POOL_SIZE"
+	RedisMinIdleConnsKey        = "MENDRY_REDIS_MIN_IDLE_CONNS"
+	RedisMaxRetriesKey          = "MENDRY_REDIS_MAX_RETRIES"
+	RedisMinRetryBackoffKey     = "MENDRY_REDIS_MIN_RETRY_BACKOFF"
+	RedisMaxRetryBackoffKey     = "MENDRY_REDIS_MAX_RETRY_BACKOFF"
+	RedisMaxIdleTimeKey         = "MENDRY_REDIS_MAX_CONN_IDLE_TIME"
+	RedisMaxLifetimeKey         = "MENDRY_REDIS_MAX_CONN_LIFETIME"
+	RedisDatabaseKey            = "MENDRY_REDIS_DB"
+	RedisSlowCommandKey         = "MENDRY_REDIS_SLOW_COMMAND_THRESHOLD"
 )
 
 // Lookup 抽象环境变量读取，使配置测试无需修改进程级 environment。
 type Lookup func(string) (string, bool)
+
+func legacyEnvironmentKey(key string) string {
+	if strings.HasPrefix(key, "MENDRY_") {
+		return "FIXTHE_" + strings.TrimPrefix(key, "MENDRY_")
+	}
+	return key
+}
+
+// lookupValue 按新配置、旧配置的顺序读取，并保留显式空值的优先级。
+func lookupValue(lookup Lookup, key string) (string, bool) {
+	if value, ok := lookup(key); ok {
+		return value, true
+	}
+	legacyKey := legacyEnvironmentKey(key)
+	if legacyKey != key {
+		return lookup(legacyKey)
+	}
+	return "", false
+}
 
 // Common 包含所有后端进程共享的运行参数。
 type Common struct {
@@ -601,7 +620,7 @@ func loadHTTP(lookup Lookup) (HTTP, error) {
 }
 
 func stringValue(lookup Lookup, key, fallback string) string {
-	value, ok := lookup(key)
+	value, ok := lookupValue(lookup, key)
 	if !ok {
 		return fallback
 	}
@@ -617,7 +636,7 @@ func enumValue(lookup Lookup, key, fallback string, allowed map[string]struct{})
 }
 
 func durationValue(lookup Lookup, key string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
-	raw, ok := lookup(key)
+	raw, ok := lookupValue(lookup, key)
 	if !ok {
 		return fallback, nil
 	}
@@ -631,7 +650,7 @@ func durationValue(lookup Lookup, key string, fallback, minimum, maximum time.Du
 }
 
 func integerValue(lookup Lookup, key string, fallback, minimum, maximum int64) (int64, error) {
-	raw, ok := lookup(key)
+	raw, ok := lookupValue(lookup, key)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return fallback, nil
 	}

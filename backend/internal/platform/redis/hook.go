@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 
 	redisclient "github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -37,7 +37,7 @@ func NewCommandHook(logger *slog.Logger, tracer trace.Tracer, meter metric.Meter
 	if slowThreshold <= 0 {
 		return nil, fmt.Errorf("Redis slow command threshold must be positive")
 	}
-	duration, err := meter.Float64Histogram("fixthe.redis.command.duration",
+	duration, err := meter.Float64Histogram("mendry.redis.command.duration",
 		metric.WithUnit("ms"),
 		metric.WithDescription("Redis command latency by safe command and outcome"),
 	)

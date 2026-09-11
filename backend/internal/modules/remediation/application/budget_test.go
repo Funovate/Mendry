@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestRunBudgetDoesNotExhaustOnModelTokens(t *testing.T) {

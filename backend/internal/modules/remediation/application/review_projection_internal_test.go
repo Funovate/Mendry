@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // sampleReviewCheckpoint 构造供 review projection 测试使用的 checkpoint

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // ExecuteToolObservedWithCatalog 是 dynamic runtime 对应的 observed 执行入口，

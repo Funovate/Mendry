@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	incidentdomain "fixthe/backend/internal/modules/incidents/domain"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	incidentdomain "mendry/backend/internal/modules/incidents/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 var (

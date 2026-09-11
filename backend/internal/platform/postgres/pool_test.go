@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/errtrace"
 
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -35,7 +35,7 @@ func TestBuildPoolConfigAppliesExplicitBounds(t *testing.T) {
 	configuration := testPoolConfiguration()
 	poolConfig, err := buildPoolConfig(PoolOptions{
 		Configuration: configuration,
-		Application:   "fixthe-api",
+		Application:   "mendry-api",
 		Logger:        testLogger(&bytes.Buffer{}),
 		Tracer:        noop.NewTracerProvider().Tracer("test"),
 		MeterProvider: metricnoop.NewMeterProvider(),
@@ -54,7 +54,7 @@ func TestBuildPoolConfigAppliesExplicitBounds(t *testing.T) {
 	if got := poolConfig.ConnConfig.RuntimeParams["statement_timeout"]; got != "30000" {
 		t.Fatalf("statement_timeout = %q", got)
 	}
-	if got := poolConfig.ConnConfig.RuntimeParams["application_name"]; got != "fixthe-api" {
+	if got := poolConfig.ConnConfig.RuntimeParams["application_name"]; got != "mendry-api" {
 		t.Fatalf("application_name = %q", got)
 	}
 	if _, ok := poolConfig.ConnConfig.Tracer.(*QueryTracer); !ok {
@@ -68,7 +68,7 @@ func TestBuildPoolConfigDoesNotExposeConnectionString(t *testing.T) {
 	configuration.URL = secret
 	_, err := buildPoolConfig(PoolOptions{
 		Configuration: configuration,
-		Application:   "fixthe-api",
+		Application:   "mendry-api",
 		Logger:        testLogger(&bytes.Buffer{}),
 		Tracer:        noop.NewTracerProvider().Tracer("test"),
 		MeterProvider: metricnoop.NewMeterProvider(),
@@ -96,7 +96,7 @@ func TestBoundedContextPreservesEarlierParentDeadline(t *testing.T) {
 
 func testPoolConfiguration() config.PostgreSQL {
 	return config.PostgreSQL{
-		URL:                "postgres://test:test@localhost:5432/fixthe_test?sslmode=disable",
+		URL:                "postgres://test:test@localhost:5432/mendry_test?sslmode=disable",
 		ConnectTimeout:     5 * time.Second,
 		AcquireTimeout:     2 * time.Second,
 		StatementTimeout:   30 * time.Second,

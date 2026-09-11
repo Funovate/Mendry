@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/incidents/adapter/postgres/incidentdb"
-	"fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/incidents/domain"
+	"mendry/backend/internal/modules/incidents/adapter/postgres/incidentdb"
+	"mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/incidents/domain"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"

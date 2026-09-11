@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (
@@ -471,7 +471,7 @@ func (r *Reader) ensureClone(ctx context.Context, cfg RepositoryConfig, authenti
 	}
 	parent := r.cacheDir
 	if parent == "" {
-		created, err := os.MkdirTemp("", "fixthe-git-cache-")
+		created, err := os.MkdirTemp("", "mendry-git-cache-")
 		if err != nil {
 			return "", projectapplication.ErrGitUnreachable
 		}
@@ -696,7 +696,7 @@ func splitNonEmpty(value string) []string {
 }
 
 func writeTempKey(credential []byte) (string, func(), error) {
-	directory, err := os.MkdirTemp("", "fixthe-git-")
+	directory, err := os.MkdirTemp("", "mendry-git-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create git key directory: %w", err)
 	}

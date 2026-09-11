@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 type automaticGateStore struct {
@@ -128,6 +128,25 @@ func TestTriggerAutomaticGateContinuesOnlyEligibleRuns(t *testing.T) {
 				t.Fatal("missing series did not use the idempotent root path")
 			}
 		})
+	}
+}
+
+func TestTriggerAutomaticGateRejectsAnalysisOnlyDowngrade(t *testing.T) {
+	store := &automaticGateStore{
+		fakeRunStore: newFakeRunStore(),
+		latest:       eligibleAutomaticAggregate(domain.RunStateFailed, 1, true),
+	}
+	trigger, err := application.NewTrigger(store, nil)
+	if err != nil {
+		t.Fatalf("NewTrigger() error = %v", err)
+	}
+	request := automaticRequestForTest(2)
+	request.AnalysisOnly = true
+	if err := trigger.Emit(context.Background(), request); !errors.Is(err, application.ErrLifecycleUnavailable) {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if store.nextCalls != 0 {
+		t.Fatalf("analysis-only downgrade created %d child attempts", store.nextCalls)
 	}
 }
 
@@ -897,6 +916,24 @@ func TestCoordinatorContinueRejectsStalePredecessor(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrStalePredecessor) || store.childInput.ContinuationOfRunID != "" {
 		t.Fatalf("stale continuation error = %v, child input = %#v", err, store.childInput)
+	}
+}
+
+func TestCoordinatorContinueRejectsAnalysisOnlyDowngrade(t *testing.T) {
+	predecessor := eligibleAutomaticAggregate(domain.RunStateFailed, 1, true)
+	predecessor.Run.AnalysisOnly = true
+	store := &continuationStore{fakeRunStore: newFakeRunStore(), predecessor: predecessor}
+	model := &scriptedModel{}
+	coord := application.NewRemediationCoordinatorWithReview(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, store, store)
+	_, err := coord.Continue(context.Background(), domain.NextAttempt{
+		ContinuationOfRunID: predecessor.Run.RunID, SeriesID: predecessor.Run.SeriesID,
+		IncidentID: predecessor.Run.IncidentID, LifecycleGeneration: predecessor.Run.LifecycleGeneration,
+		DeployedCommit: predecessor.Run.DeployedCommit, ContextVersion: predecessor.Run.ContextVersion,
+		ExpectedPreviousVersion: predecessor.Run.Version, Origin: domain.TriggerOriginManualContinue,
+		TriggerReason: domain.TriggerOriginManualContinue, ContinuationReason: "operator requested continuation",
+	})
+	if !errors.Is(err, domain.ErrStalePredecessor) || model.calls != 0 || store.childInput.ContinuationOfRunID == "" {
+		t.Fatalf("analysis-only downgrade error=%v model_calls=%d child_input=%#v", err, model.calls, store.childInput)
 	}
 }
 

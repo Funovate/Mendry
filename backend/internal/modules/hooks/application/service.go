@@ -7,20 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	incidentdomain "fixthe/backend/internal/modules/incidents/domain"
-	observationapplication "fixthe/backend/internal/modules/observations/application"
-	observationdomain "fixthe/backend/internal/modules/observations/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	incidentdomain "mendry/backend/internal/modules/incidents/domain"
+	observationapplication "mendry/backend/internal/modules/observations/application"
+	observationdomain "mendry/backend/internal/modules/observations/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
 var (
 	ErrInvalidInput    = errors.New("invalid webhook input")
 	ErrWebhookNotFound = errors.New("webhook not found")
+	ErrAWSSNSTooLarge  = errors.New("AWS SNS message is too large")
 )
 
 // TokenLookup 用路径 token 定位已启用的 signed_webhook 与同项目 source。
@@ -42,6 +44,12 @@ type IncidentIngester interface {
 // 写入证据；旧的 IncidentIngester 实现仍可走兼容 fallback。
 type inboundEvidenceIngester interface {
 	IngestInboundWithEvidence(context.Context, string, string, string, string, time.Time, func(context.Context, incidentdomain.Incident) error) (incidentdomain.Incident, bool, error)
+}
+
+// analysisOnlyEvidenceIngester 把受信 provider 的执行约束写入 remediation root；
+// 该约束必须与 incident/root transaction 一起持久化，不能只存在于 goroutine context。
+type analysisOnlyEvidenceIngester interface {
+	IngestInboundAnalysisOnlyWithEvidence(context.Context, string, string, string, string, time.Time, func(context.Context, incidentdomain.Incident) error) (incidentdomain.Incident, bool, error)
 }
 
 // BackgroundFailure 是已接收 webhook 在后台处理失败时的安全诊断上下文。
@@ -87,6 +95,7 @@ type Options struct {
 	Incidents    IncidentIngester
 	Failures     FailureReporter
 	Evidence     EvidenceWriter
+	AWSSNS       AWSSNSVerifier
 	Now          func() time.Time
 }
 
@@ -99,6 +108,7 @@ type Service struct {
 	incidents    IncidentIngester
 	failures     FailureReporter
 	evidence     EvidenceWriter
+	awsSNS       AWSSNSVerifier
 	now          func() time.Time
 }
 
@@ -119,7 +129,7 @@ func NewService(options Options) (*Service, error) {
 	return &Service{
 		tokens: options.Tokens, analyzer: analyzer, observations: options.Observations,
 		incidents: options.Incidents, failures: options.Failures, evidence: options.Evidence,
-		now: options.Now,
+		awsSNS: options.AWSSNS, now: options.Now,
 	}, nil
 }
 
@@ -139,8 +149,46 @@ func (s *Service) IngestWithContentType(ctx context.Context, token, raw, content
 	if err != nil {
 		return mapLookupError(err)
 	}
+	switch ingress.Provider {
+	case projectdomain.WebhookProviderAWSCloudWatch, projectdomain.WebhookProviderTencentCLS, projectdomain.WebhookProviderGeneric:
+		// Continue through the explicitly configured provider path below.
+	default:
+		return ErrWebhookNotFound
+	}
 	analyzerInput := raw
 	var callback *TencentCLSCallback
+	if ingress.Provider == projectdomain.WebhookProviderAWSCloudWatch {
+		if len(raw) > 512*1024 {
+			return ErrAWSSNSTooLarge
+		}
+		if s.awsSNS == nil || strings.TrimSpace(ingress.TopicARN) == "" {
+			return ErrWebhookNotFound
+		}
+		receivedAt := s.now().UTC()
+		verified, err := s.awsSNS.Verify(ctx, raw, ingress.TopicARN)
+		if err != nil {
+			return err
+		}
+		switch verified.Type {
+		case AWSMessageSubscriptionConfirmation, AWSMessageUnsubscribeConfirmation:
+			return nil
+		case AWSMessageNotification:
+			// Continue with the normalized notification below.
+		default:
+			return ErrInvalidAWSSNS
+		}
+		if verified.Alarm == nil {
+			return ErrInvalidAWSSNS
+		}
+		failure := BackgroundFailure{ProjectID: ingress.ProjectID, SourceID: ingress.SourceID, OccurredAt: receivedAt}
+		background := context.WithoutCancel(ctx)
+		go func() {
+			if err := s.processAWSInbound(background, ingress, verified, failure.OccurredAt); err != nil && s.failures != nil {
+				s.failures.Report(background, failure, err)
+			}
+		}()
+		return nil
+	}
 	if ingress.Provider == projectdomain.WebhookProviderTencentCLS {
 		parsed, err := ParseTencentCLSCallback(raw, contentType)
 		if err != nil {
@@ -157,6 +205,97 @@ func (s *Service) IngestWithContentType(ctx context.Context, token, raw, content
 		}
 	}()
 	return nil
+}
+
+func (s *Service) processAWSInbound(ctx context.Context, ingress projectapplication.WebhookIngress, message VerifiedAWSMessage, receivedAt time.Time) error {
+	alarm := message.Alarm
+	if alarm == nil {
+		return ErrInvalidAWSSNS
+	}
+	normalizedContext := map[string]any{
+		"schemaVersion": 1,
+		"provider":      string(projectdomain.WebhookProviderAWSCloudWatch),
+		"topicArn":      message.TopicARN,
+		"sns": map[string]any{
+			"messageId": message.MessageID, "timestamp": message.SNSTimestamp.UTC().Format(time.RFC3339Nano),
+		},
+		"alarm": map[string]any{
+			"name": alarm.Name, "arn": alarm.ARN, "state": alarm.State, "reason": alarm.Reason,
+			"stateChangeTime": alarm.StateChangedAt.UTC().Format(time.RFC3339Nano), "region": alarm.Region,
+			"accountId": alarm.AccountID, "description": alarm.Description, "alarmRule": alarm.AlarmRule,
+			"trigger": allowlistedAWSTrigger(alarm.Trigger),
+		},
+	}
+	payload, err := json.Marshal(normalizedContext)
+	if err != nil || len(payload) > maxObservationMessage {
+		return fmt.Errorf("normalize AWS CloudWatch alarm: %w", ErrInvalidAWSSNS)
+	}
+	fingerprint := hashBytes("aws-cloudwatch:v1", ingress.ProjectID, ingress.SourceID, []byte(alarm.ARN))
+	observation, err := s.observations.CreateInbound(ctx, ingress.ProjectID, ingress.SourceID, string(payload), fingerprint, receivedAt)
+	if err != nil {
+		return fmt.Errorf("create AWS inbound observation: %w", err)
+	}
+	if alarm.State != "ALARM" {
+		return nil
+	}
+	title := limitText("AWS CloudWatch alarm: "+alarm.Name, maxTitleRunes, maxTitleRunes*4)
+	persist := func(persistContext context.Context, incident incidentdomain.Incident) error {
+		return s.persistAWSInboundEvidence(persistContext, ingress, observation, incident, payload)
+	}
+	if s.evidence == nil {
+		return fmt.Errorf("ingest AWS inbound incident: evidence writer is unavailable")
+	}
+	enriched, ok := s.incidents.(analysisOnlyEvidenceIngester)
+	if !ok {
+		return fmt.Errorf("ingest AWS inbound incident: analysis-only ingester is unavailable")
+	}
+	if _, _, err := enriched.IngestInboundAnalysisOnlyWithEvidence(ctx, ingress.ProjectID, ingress.SourceID, title, fingerprint, receivedAt, persist); err != nil {
+		return fmt.Errorf("ingest AWS inbound incident: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) persistAWSInboundEvidence(ctx context.Context, ingress projectapplication.WebhookIngress, observation observationdomain.Observation, incident incidentdomain.Incident, payload []byte) error {
+	provenance, err := json.Marshal(map[string]string{
+		"kind": "webhook", "provider": string(projectdomain.WebhookProviderAWSCloudWatch), "observation_id": observation.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("encode AWS alert provenance: %w", err)
+	}
+	return s.appendEvidence(ctx, remediationdomain.StoredEvidence{
+		ProjectID: ingress.ProjectID, EnvironmentID: observation.EnvironmentID, SourceID: ingress.SourceID,
+		IncidentID: incident.InternalID, ObservationID: observation.ID, Provider: string(projectdomain.WebhookProviderAWSCloudWatch),
+		EvidenceKind: remediationdomain.EvidenceKindNormalizedAlert, DeduplicationKey: "observation:" + observation.ID + ":normalized-alert",
+		Classification: remediationdomain.EvidenceContextual, Outcome: "success", Available: true,
+		OccurredAt: timePointer(observation.OccurredAt), IngestedAt: s.now().UTC(), ContentHash: contentHash(payload),
+		ByteCount: int64(len(payload)), Provenance: provenance, Payload: payload,
+	})
+}
+
+func allowlistedAWSTrigger(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var source map[string]any
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return nil
+	}
+	allowed := map[string]struct{}{
+		"MetricName": {}, "Namespace": {}, "Statistic": {}, "ExtendedStatistic": {}, "Period": {},
+		"EvaluationPeriods": {}, "DatapointsToAlarm": {}, "ComparisonOperator": {}, "Threshold": {},
+		"TreatMissingData": {}, "EvaluateLowSampleCountPercentile": {}, "Dimensions": {}, "Metrics": {},
+	}
+	out := make(map[string]any)
+	for key, value := range source {
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err == nil && len(encoded) <= 8192 {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func (s *Service) processInbound(ctx context.Context, ingress projectapplication.WebhookIngress, raw, analyzerInput string, callback *TencentCLSCallback, occurredAt time.Time) error {

@@ -1,6 +1,6 @@
 package application
 
-import "fixthe/backend/internal/modules/remediation/domain"
+import "mendry/backend/internal/modules/remediation/domain"
 
 func cloneCheckpointWorkspace(value *domain.CheckpointWorkspace) *domain.CheckpointWorkspace {
 	if value == nil {

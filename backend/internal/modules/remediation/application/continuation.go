@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (

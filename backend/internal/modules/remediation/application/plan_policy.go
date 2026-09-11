@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // StaticPlanPolicy 是当前 project policy 的最小只读快照。

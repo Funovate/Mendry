@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	hooksapplication "fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	hooksapplication "mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // IncidentDetailResolver 将已校验的 Tencent CLS client 接到 remediation tool 边界。

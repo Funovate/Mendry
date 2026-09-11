@@ -169,6 +169,25 @@ func TestParseSignedWebhookConfigNormalizesV1AndValidatesV2Provider(t *testing.T
 	}
 }
 
+func TestParseSignedWebhookConfigValidatesAWSCloudWatchV3(t *testing.T) {
+	config, err := ParseSignedWebhookConfig(json.RawMessage(`{"schemaVersion":3,"provider":"aws_cloudwatch","eventTypes":["alarm"],"deduplicationKey":"alarm_arn","awsCloudWatch":{"topicArn":"arn:aws:sns:us-east-1:123456789012:mendry-alarms"}}`))
+	if err != nil || config.Provider != WebhookProviderAWSCloudWatch || config.AWSCloudWatch == nil || config.AWSCloudWatch.TopicARN == "" {
+		t.Fatalf("AWS webhook config = %#v error=%v", config, err)
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"schemaVersion":2,"provider":"aws_cloudwatch","eventTypes":["alarm"],"deduplicationKey":"title"}`),
+		json.RawMessage(`{"schemaVersion":3,"provider":"generic","eventTypes":["alarm"],"deduplicationKey":"alarm_arn","awsCloudWatch":{"topicArn":"arn:aws:sns:us-east-1:123456789012:mendry-alarms"}}`),
+		json.RawMessage(`{"schemaVersion":3,"provider":"aws_cloudwatch","eventTypes":["alarm"],"deduplicationKey":"title","awsCloudWatch":{"topicArn":"arn:aws:sns:us-east-1:123456789012:alarms"}}`),
+		json.RawMessage(`{"schemaVersion":3,"provider":"aws_cloudwatch","eventTypes":["alarm","ok"],"deduplicationKey":"alarm_arn","awsCloudWatch":{"topicArn":"arn:aws:sns:us-east-1:123456789012:alarms"}}`),
+		json.RawMessage(`{"schemaVersion":3,"provider":"aws_cloudwatch","eventTypes":["alarm"],"deduplicationKey":"alarm_arn","awsCloudWatch":{"topicArn":"arn:aws-cn:sns:cn-north-1:123456789012:alarms"}}`),
+		json.RawMessage(`{"schemaVersion":3,"provider":"aws_cloudwatch","eventTypes":["alarm"],"deduplicationKey":"alarm_arn","awsCloudWatch":{"topicArn":"arn:aws:sns:us-east-1:123456789012:alarms.fifo"}}`),
+	} {
+		if _, err := ParseSignedWebhookConfig(raw); err == nil {
+			t.Fatalf("ParseSignedWebhookConfig() accepted invalid AWS config: %s", raw)
+		}
+	}
+}
+
 func TestValidateWebhookTokenColumns(t *testing.T) {
 	if err := ValidateWebhookTokenColumns(nil, nil, nil); err != nil {
 		t.Fatalf("empty columns error = %v", err)

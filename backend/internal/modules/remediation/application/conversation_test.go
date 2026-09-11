@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestRedactConversationValueRedactsTypedFileContent(t *testing.T) {
@@ -33,7 +33,7 @@ func TestRedactConversationValueRedactsTypedFileContent(t *testing.T) {
 func TestBoundedConversationValueRedactsInspectOutput(t *testing.T) {
 	value := domain.SSHInspectResult{
 		Command: "cd -- '/srv/app' && 'ls' '/var/log'", ExitCode: 0,
-		Stdout: "password=hunter2\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----\n/tmp/fixthe-sshlog-abc/id\n",
+		Stdout: "password=hunter2\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----\n/tmp/mendry-sshlog-abc/id\n",
 		Stderr: "bearer sk-secretvalue",
 	}
 	encoded, err := json.Marshal(boundedConversationValue(value, 4096))
@@ -43,7 +43,7 @@ func TestBoundedConversationValueRedactsInspectOutput(t *testing.T) {
 	text := string(encoded)
 	// canonical runtime evidence 的同一套脱敏也作用于 conversation 边界：
 	// 凭据形态文本、PEM 私钥块与临时 key 路径都不进入模型上下文。
-	for _, secret := range []string{"hunter2", "sk-secretvalue", "BEGIN OPENSSH PRIVATE KEY", "/tmp/fixthe-sshlog-abc/id"} {
+	for _, secret := range []string{"hunter2", "sk-secretvalue", "BEGIN OPENSSH PRIVATE KEY", "/tmp/mendry-sshlog-abc/id"} {
 		if strings.Contains(text, secret) {
 			t.Fatalf("inspect payload leaked %q: %s", secret, text)
 		}

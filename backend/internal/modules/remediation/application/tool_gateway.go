@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // Read tool identifiers advertised by the gateway in this slice. Built-in

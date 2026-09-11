@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/adapter/sshlog"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/adapter/sshlog"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (
@@ -321,7 +321,7 @@ func TestReaderInspectExecutesReconstructedCommandInProjectFolder(t *testing.T) 
 	if !strings.Contains(result.Stdout, wantCommand) {
 		t.Fatalf("executed argv missing reconstructed command: %q", result.Stdout)
 	}
-	if strings.Contains(result.Stdout, "PRIVATE KEY") || strings.Contains(result.Stdout, "fixthe-sshlog-") {
+	if strings.Contains(result.Stdout, "PRIVATE KEY") || strings.Contains(result.Stdout, "mendry-sshlog-") {
 		t.Fatalf("inspect output leaked key material: %q", result.Stdout)
 	}
 }
@@ -367,7 +367,7 @@ func TestReaderInspectReturnsBoundedFailureWithoutKeyPath(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-ssh")
-	script := "#!/bin/sh\necho 'Permission denied (publickey) /tmp/fixthe-sshlog-secret/id' >&2\nexit 13\n"
+	script := "#!/bin/sh\necho 'Permission denied (publickey) /tmp/mendry-sshlog-secret/id' >&2\nexit 13\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

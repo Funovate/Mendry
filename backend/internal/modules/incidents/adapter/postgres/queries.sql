@@ -85,7 +85,7 @@ WHERE project_id = sqlc.arg(project_id)
 -- name: RecordIncidentOccurrence :one
 WITH changed_incident AS (
     UPDATE incidents AS incident
-    SET last_seen = sqlc.arg(last_seen),
+    SET last_seen = GREATEST(incident.last_seen, sqlc.arg(last_seen)),
         occurrence_count = incident.occurrence_count + 1,
         version = incident.version + 1,
         updated_at = clock_timestamp()

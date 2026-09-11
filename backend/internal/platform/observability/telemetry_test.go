@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -78,7 +78,7 @@ func TestBoundedParentSamplerDoesNotTrustRemoteSampledBit(t *testing.T) {
 
 func testTelemetryOptions() TelemetryOptions {
 	return TelemetryOptions{
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Info{Version: "test"},
 	}
@@ -110,11 +110,11 @@ func TestHTTPHandlerDoesNotRecordRequestPayloads(t *testing.T) {
 
 	handler := runtime.HTTPHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = request.Body.Read(make([]byte, 64))
-		writer.Header().Set("Set-Cookie", "fixthe_session=new-session")
+		writer.Header().Set("Set-Cookie", "mendry_session=new-session")
 		_, _ = writer.Write([]byte(`{"ok":true}`))
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/items?token=query-secret", strings.NewReader(`{"password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	request.Header.Set("Authorization", "Bearer super-secret-token")
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 

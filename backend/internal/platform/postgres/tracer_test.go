@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"

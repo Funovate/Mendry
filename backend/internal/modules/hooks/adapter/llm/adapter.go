@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
-	hookapplication "fixthe/backend/internal/modules/hooks/application"
-	remediationdomain "fixthe/backend/internal/modules/remediation/domain"
+	hookapplication "mendry/backend/internal/modules/hooks/application"
+	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
 // Adapter 在不向 hooks 暴露 provider 类型的前提下复用 remediation LLM port。

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // validExhaustionProposal 构造一个满足 v1 边界的 D6 exhaustion proof；测试

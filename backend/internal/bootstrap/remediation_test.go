@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authapplication "fixthe/backend/internal/modules/auth/application"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	remediationhttp "fixthe/backend/internal/modules/remediation/adapter/http"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authapplication "mendry/backend/internal/modules/auth/application"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	remediationhttp "mendry/backend/internal/modules/remediation/adapter/http"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (

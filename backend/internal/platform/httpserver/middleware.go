@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 )
 
 const requestIDHeader = "X-Request-ID"

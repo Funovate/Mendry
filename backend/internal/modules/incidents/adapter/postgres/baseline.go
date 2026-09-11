@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"fixthe/backend/internal/modules/incidents/application"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/incidents/application"
+	projectapplication "mendry/backend/internal/modules/projects/application"
 )
 
 // ProjectBaseline 从项目配置读取触发时的 deployed commit。

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // TestObservedSSHInspectPersistsCanonicalEvidence 覆盖 PRD R9/AC8：成功的
@@ -19,7 +19,7 @@ func TestObservedSSHInspectPersistsCanonicalEvidence(t *testing.T) {
 	inspect := &fakeInspectPort{result: domain.SSHInspectResult{
 		Command:        `'hostname' '-I'`,
 		ExitCode:       0,
-		Stdout:         "10.16.6.17 43.131.29.186\n-----BEGIN PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END PRIVATE KEY-----\n/tmp/fixthe-sshlog-abc/id password=hunter2\nAWS_SECRET_ACCESS_KEY=aws-secret-value\n{\"github_token\":\"ghp-secret-value\"}",
+		Stdout:         "10.16.6.17 43.131.29.186\n-----BEGIN PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END PRIVATE KEY-----\n/tmp/mendry-sshlog-abc/id password=hunter2\nAWS_SECRET_ACCESS_KEY=aws-secret-value\n{\"github_token\":\"ghp-secret-value\"}",
 		Stderr:         "bearer sk-secretvalue",
 		BytesRetrieved: 321,
 	}}
@@ -69,7 +69,7 @@ func TestObservedSSHInspectPersistsCanonicalEvidence(t *testing.T) {
 	if persistedText != modelText {
 		t.Fatalf("persisted payload != model payload:\npersisted=%s\nmodel=%s", persistedText, modelText)
 	}
-	for _, secret := range []string{"hunter2", "sk-secretvalue", "aws-secret-value", "ghp-secret-value", "PRIVATE KEY", "fixthe-sshlog"} {
+	for _, secret := range []string{"hunter2", "sk-secretvalue", "aws-secret-value", "ghp-secret-value", "PRIVATE KEY", "mendry-sshlog"} {
 		if strings.Contains(persistedText, secret) {
 			t.Fatalf("canonical payload leaked %q: %s", secret, persistedText)
 		}

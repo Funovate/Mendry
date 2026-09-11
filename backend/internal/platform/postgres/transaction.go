@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"

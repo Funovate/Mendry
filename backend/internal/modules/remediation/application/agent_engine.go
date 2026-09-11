@@ -2,10 +2,11 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // AgentEngine runs one bounded model turn: it builds the phase prompt and tool
@@ -104,87 +105,83 @@ func (e *AgentEngine) TurnObservedWithConversationAndTools(
 	}
 
 	started := time.Now()
-	res, err := e.llmPort.Complete(ctx, req)
-	if err != nil {
-		turnErr := fmt.Errorf("model turn: %w", err)
+	step := newSharedModelStep(e.llmPort)
+	if step == nil {
+		turnErr := fmt.Errorf("model turn: shared model step is unavailable")
 		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-			Outcome: "failure", FailureClass: "provider", ErrorMessage: turnErr.Error(), Request: req, Response: res,
+			Outcome: "failure", FailureClass: "provider", ErrorMessage: turnErr.Error(), Request: req,
+		})
+		return nil, domain.ModelResult{}, turnErr
+	}
+	failureClass := "provider"
+	var env *AgentEnvelope
+	var original domain.ModelResult
+	sharedResult, err := step.Execute(ctx, coreStepRequest(
+		req,
+		func(result domain.ModelResult) error {
+			original = result
+			validated, class, validationErr := validateRemediationModelResult(phase, result)
+			failureClass = class
+			env = validated
+			return validationErr
+		},
+		func(_ string, result domain.ModelResult) error {
+			if conversation != nil {
+				conversation.RecordModelTurn(req.Continuation, result)
+			}
+			return nil
+		},
+	))
+	res := fromCoreModelResult(sharedResult, original)
+	if err != nil {
+		if res.Content != "" && len(res.ToolCalls) > 0 && !errors.Is(err, ErrInvalidEnvelope) {
+			err = wrapEnvelopeError("model returned tool calls and envelope content together", err)
+			failureClass = "protocol"
+		}
+		turnErr := err
+		if failureClass == "provider" {
+			turnErr = fmt.Errorf("model turn: %w", err)
+		}
+		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
+			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
+			Outcome: "failure", FailureClass: failureClass, ErrorMessage: turnErr.Error(), Request: req, Response: res,
 		})
 		return nil, res, turnErr
-	}
-	if len(res.ToolCalls) > 0 {
-		if res.Content != "" {
-			protocolErr := wrapEnvelopeError("model returned tool calls and envelope content together", nil)
-			observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-				Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-				Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
-			})
-			return nil, res, protocolErr
-		}
-		requests := make([]RequestTool, 0, len(res.ToolCalls))
-		for _, call := range res.ToolCalls {
-			request := RequestTool{ToolName: call.Name, Parameters: call.Arguments, CallID: call.ID}
-			if err := validateRequestTool(&request); err != nil {
-				validationErr := wrapEnvelopeError("validate native tool call", err)
-				observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-					Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-					Outcome: "failure", FailureClass: "protocol", ErrorMessage: validationErr.Error(), Request: req, Response: res,
-				})
-				return nil, res, validationErr
-			}
-			requests = append(requests, request)
-		}
-		if err := validateEnvelopeForPhase(phase, "requestTool"); err != nil {
-			protocolErr := wrapEnvelopeError("validate agent envelope phase", err)
-			observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-				Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-				Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
-			})
-			return nil, res, protocolErr
-		}
-		env := &AgentEnvelope{
-			SchemaVersion:      EnvelopeVersion,
-			Kind:               "requestTool",
-			RequestTool:        &requests[0],
-			nativeToolRequests: requests,
-		}
-		if conversation != nil {
-			conversation.RecordModelTurn(req.Continuation, res)
-		}
-		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-			Outcome: "success", EnvelopeKind: env.Kind, Request: req, Response: res,
-		})
-		return env, res, nil
-	}
-
-	env, err := DecodeAgentEnvelope([]byte(res.Content))
-	if err != nil {
-		decodeErr := wrapEnvelopeError("decode agent envelope", err)
-		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-			Outcome: "failure", FailureClass: "decode", ErrorMessage: decodeErr.Error(), Request: req, Response: res,
-		})
-		return nil, res, decodeErr
-	}
-	if err := validateEnvelopeForPhase(phase, env.Kind); err != nil {
-		protocolErr := wrapEnvelopeError("validate agent envelope phase", err)
-		observer.ModelTurnCompleted(ctx, ModelTurnObservation{
-			Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
-			Outcome: "failure", FailureClass: "protocol", ErrorMessage: protocolErr.Error(), Request: req, Response: res,
-		})
-		return nil, res, protocolErr
-	}
-	if conversation != nil {
-		conversation.RecordModelTurn(req.Continuation, res)
 	}
 	observer.ModelTurnCompleted(ctx, ModelTurnObservation{
 		Run: run, Phase: phase, Sequence: sequence, Duration: time.Since(started),
 		Outcome: "success", EnvelopeKind: env.Kind, Request: req, Response: res,
 	})
-
 	return env, res, nil
+}
+
+func validateRemediationModelResult(phase domain.RunState, res domain.ModelResult) (*AgentEnvelope, string, error) {
+	if len(res.ToolCalls) > 0 {
+		requests := make([]RequestTool, 0, len(res.ToolCalls))
+		for _, call := range res.ToolCalls {
+			request := RequestTool{ToolName: call.Name, Parameters: call.Arguments, CallID: call.ID}
+			if err := validateRequestTool(&request); err != nil {
+				return nil, "protocol", wrapEnvelopeError("validate native tool call", err)
+			}
+			requests = append(requests, request)
+		}
+		if err := validateEnvelopeForPhase(phase, "requestTool"); err != nil {
+			return nil, "protocol", wrapEnvelopeError("validate agent envelope phase", err)
+		}
+		return &AgentEnvelope{
+			SchemaVersion: EnvelopeVersion, Kind: "requestTool", RequestTool: &requests[0], nativeToolRequests: requests,
+		}, "", nil
+	}
+
+	env, err := DecodeAgentEnvelope([]byte(res.Content))
+	if err != nil {
+		return nil, "decode", wrapEnvelopeError("decode agent envelope", err)
+	}
+	if err := validateEnvelopeForPhase(phase, env.Kind); err != nil {
+		return nil, "protocol", wrapEnvelopeError("validate agent envelope phase", err)
+	}
+	return env, "", nil
 }
 
 func validateEnvelopeForPhase(phase domain.RunState, kind string) error {

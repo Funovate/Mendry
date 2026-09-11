@@ -9,7 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 )
 
 func TestSnapshotRemediationPayloadRedactsBeforeHashAndTruncation(t *testing.T) {

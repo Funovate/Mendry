@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestParseRunState(t *testing.T) {

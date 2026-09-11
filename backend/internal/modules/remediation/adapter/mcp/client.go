@@ -20,9 +20,9 @@ import (
 
 	modelmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (
@@ -464,7 +464,7 @@ func (r *Runtime) sessionFor(ctx context.Context, scope domain.DynamicToolScope)
 	if err != nil {
 		return nil, err
 	}
-	client := modelmcp.NewClient(&modelmcp.Implementation{Name: "fixthe-remediation", Version: "1"}, nil)
+	client := modelmcp.NewClient(&modelmcp.Implementation{Name: "mendry-remediation", Version: "1"}, nil)
 	connectCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	conn, err := client.Connect(connectCtx, transport, nil)

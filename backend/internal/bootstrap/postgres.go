@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"fixthe/backend/internal/modules/system/application"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
-	"fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/modules/system/application"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/postgres"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -24,7 +24,7 @@ func openPostgreSQL(ctx context.Context, logger *slog.Logger, telemetryRuntime *
 		Configuration: configuration,
 		Application:   applicationName,
 		Logger:        logger,
-		Tracer:        telemetryRuntime.Tracer("fixthe/backend/postgres"),
+		Tracer:        telemetryRuntime.Tracer("mendry/backend/postgres"),
 		MeterProvider: telemetryRuntime.MeterProvider(),
 	})
 	if err != nil {

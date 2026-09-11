@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authapplication "fixthe/backend/internal/modules/auth/application"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	projecthttp "fixthe/backend/internal/modules/projects/adapter/http"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authapplication "mendry/backend/internal/modules/auth/application"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	projecthttp "mendry/backend/internal/modules/projects/adapter/http"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type fakeService struct {

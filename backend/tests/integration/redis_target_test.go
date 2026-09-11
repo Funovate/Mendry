@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/platform/config"
 )
 
 const (
-	testRedisURLKey    = "FIXTHE_TEST_REDIS_URL"
-	testRedisPrefixKey = "FIXTHE_TEST_REDIS_PREFIX"
+	testRedisURLKey    = "MENDRY_TEST_REDIS_URL"
+	testRedisPrefixKey = "MENDRY_TEST_REDIS_PREFIX"
 )
 
 func TestIsolatedRedisTargetFailsClosed(t *testing.T) {
@@ -22,11 +22,11 @@ func TestIsolatedRedisTargetFailsClosed(t *testing.T) {
 		{name: "missing values"},
 		{name: "invalid URL", values: map[string]string{
 			testRedisURLKey:    "redis://user:" + secret + "@%invalid:6379",
-			testRedisPrefixKey: "fixthe:test:",
+			testRedisPrefixKey: "mendry:test:",
 		}},
 		{name: "non-test prefix", values: map[string]string{
 			testRedisURLKey:    "redis://localhost:6379",
-			testRedisPrefixKey: "fixthe:production:",
+			testRedisPrefixKey: "mendry:production:",
 		}},
 		{name: "test substring is not marker", values: map[string]string{
 			testRedisURLKey:    "redis://localhost:6379",
@@ -34,7 +34,7 @@ func TestIsolatedRedisTargetFailsClosed(t *testing.T) {
 		}},
 		{name: "prefix lacks delimiter", values: map[string]string{
 			testRedisURLKey:    "redis://localhost:6379",
-			testRedisPrefixKey: "fixthe:test",
+			testRedisPrefixKey: "mendry:test",
 		}},
 	}
 
@@ -55,12 +55,12 @@ func TestIsolatedRedisTargetAcceptsExplicitTestPrefix(t *testing.T) {
 	const connectionURL = "redis://localhost:6379"
 	url, prefix, err := isolatedRedisTarget(mapLookup(map[string]string{
 		testRedisURLKey:    connectionURL,
-		testRedisPrefixKey: "fixthe:test:",
+		testRedisPrefixKey: "mendry:test:",
 	}))
 	if err != nil {
 		t.Fatalf("isolatedRedisTarget() error = %v", err)
 	}
-	if url != connectionURL || prefix != "fixthe:test:" {
+	if url != connectionURL || prefix != "mendry:test:" {
 		t.Fatalf("target = %q, %q", url, prefix)
 	}
 }

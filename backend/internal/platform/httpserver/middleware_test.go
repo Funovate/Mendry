@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 )
 
 func TestBoundaryNormalizesMuxErrorsAndRequestID(t *testing.T) {

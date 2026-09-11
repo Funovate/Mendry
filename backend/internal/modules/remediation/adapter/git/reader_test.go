@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/adapter/git"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/adapter/git"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (

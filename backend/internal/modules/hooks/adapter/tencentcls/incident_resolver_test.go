@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	hooksapplication "fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	hooksapplication "mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestTrustedDirectProjectionRequiresObjectPayloadAndExplicitContradictions(t *testing.T) {

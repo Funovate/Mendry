@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"fixthe/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/projects/domain"
 )
 
 func TestAESGCMUsesUniqueNonceAndBindsProjectContext(t *testing.T) {
@@ -61,6 +61,24 @@ func TestAESGCMWebhookTokenUsesDistinctContext(t *testing.T) {
 	}
 	if _, err := cipher.Decrypt("project-a", "trigger-a", domain.SecretWebhookHMAC, ciphertext, nonce); err == nil {
 		t.Fatal("secret cipher accepted webhook token ciphertext")
+	}
+}
+
+func TestAESGCMReadsLegacyAssociatedData(t *testing.T) {
+	cipher, err := NewAESGCM(bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatalf("NewAESGCM() error = %v", err)
+	}
+	nonce := bytes.Repeat([]byte{0x17}, cipher.aead.NonceSize())
+	secretCiphertext := cipher.aead.Seal(nil, nonce, []byte("legacy-secret"), legacyAssociatedData("project-a", "secret-a", domain.SecretHTTPBearer))
+	plaintext, err := cipher.Decrypt("project-a", "secret-a", domain.SecretHTTPBearer, secretCiphertext, nonce)
+	if err != nil || string(plaintext) != "legacy-secret" {
+		t.Fatalf("legacy secret decrypt = %q, %v", plaintext, err)
+	}
+	webhookCiphertext := cipher.aead.Seal(nil, nonce, []byte("legacy-token"), legacyWebhookTokenAssociatedData("project-a", "trigger-a"))
+	plaintext, err = cipher.DecryptWebhookToken("project-a", "trigger-a", webhookCiphertext, nonce)
+	if err != nil || string(plaintext) != "legacy-token" {
+		t.Fatalf("legacy webhook decrypt = %q, %v", plaintext, err)
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	systemhttp "fixthe/backend/internal/modules/system/adapter/http"
-	"fixthe/backend/internal/modules/system/application"
+	systemhttp "mendry/backend/internal/modules/system/adapter/http"
+	"mendry/backend/internal/modules/system/application"
 )
 
 func TestSystemEndpoints(t *testing.T) {

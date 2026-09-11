@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"fixthe/backend/internal/modules/auth/adapter/postgres/authdb"
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/platform/errtrace"
-	platformpostgres "fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/modules/auth/adapter/postgres/authdb"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/platform/errtrace"
+	platformpostgres "mendry/backend/internal/platform/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"

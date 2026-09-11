@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // maxResilientEvidenceIndex 是进程内 checkpoint evidence index 的条目上限，

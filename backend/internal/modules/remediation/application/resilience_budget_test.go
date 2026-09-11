@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // TestSoftBudgetRecoveryMirrorsElapsedAsDelta 证明 soft-budget 镜像把 runBudget

@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
 )
 
 func TestLoggerWritesToConsoleAndConfiguredFile(t *testing.T) {
 	var output bytes.Buffer
-	path := filepath.Join(t.TempDir(), "logs", "fixthe.log")
-	processLogger, sink, err := logger(testOptions(&output, nil), "fixthe-test", config.Common{
+	path := filepath.Join(t.TempDir(), "logs", "mendry.log")
+	processLogger, sink, err := logger(testOptions(&output, nil), "mendry-test", config.Common{
 		Environment: "test", LogLevel: "info", LogFormat: "json", LogFile: path,
 	})
 	if err != nil {

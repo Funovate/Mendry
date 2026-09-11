@@ -10,15 +10,15 @@ import (
 	"strings"
 	"testing"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authapplication "fixthe/backend/internal/modules/auth/application"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	remediationhttp "fixthe/backend/internal/modules/remediation/adapter/http"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authapplication "mendry/backend/internal/modules/auth/application"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	remediationhttp "mendry/backend/internal/modules/remediation/adapter/http"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type mockService struct {

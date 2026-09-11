@@ -28,7 +28,7 @@ func TestWithOptionalDotEnvMissingFileUsesBase(t *testing.T) {
 func TestWithOptionalDotEnvProcessEnvironmentWins(t *testing.T) {
 	t.Parallel()
 
-	path := writeDotEnv(t, "FIXTHE_LOG_LEVEL=debug\nFIXTHE_HTTP_ADDR=0.0.0.0:9000\n")
+	path := writeDotEnv(t, "MENDRY_LOG_LEVEL=debug\nMENDRY_HTTP_ADDR=0.0.0.0:9000\n")
 	lookup, err := WithOptionalDotEnv(mapLookup(map[string]string{LogLevelKey: "error"}), path)
 	if err != nil {
 		t.Fatalf("WithOptionalDotEnv() error = %v", err)
@@ -42,10 +42,36 @@ func TestWithOptionalDotEnvProcessEnvironmentWins(t *testing.T) {
 	}
 }
 
+func TestWithOptionalDotEnvLegacyProcessValueWinsOverNewDotEnv(t *testing.T) {
+	t.Parallel()
+
+	path := writeDotEnv(t, "MENDRY_LOG_LEVEL=debug\n")
+	lookup, err := WithOptionalDotEnv(mapLookup(map[string]string{"FIXTHE_LOG_LEVEL": "warn"}), path)
+	if err != nil {
+		t.Fatalf("WithOptionalDotEnv() error = %v", err)
+	}
+	if value, ok := lookup(LogLevelKey); !ok || value != "warn" {
+		t.Fatalf("legacy process lookup(%s) = %q, %v", LogLevelKey, value, ok)
+	}
+}
+
+func TestWithOptionalDotEnvExplicitNewEmptyWinsOverLegacyDotEnv(t *testing.T) {
+	t.Parallel()
+
+	path := writeDotEnv(t, "MENDRY_HTTP_CORS_ALLOWED_ORIGIN=\nFIXTHE_HTTP_CORS_ALLOWED_ORIGIN=https://legacy.example.com\n")
+	lookup, err := WithOptionalDotEnv(func(string) (string, bool) { return "", false }, path)
+	if err != nil {
+		t.Fatalf("WithOptionalDotEnv() error = %v", err)
+	}
+	if value, ok := lookup(HTTPCORSAllowedOriginKey); !ok || value != "" {
+		t.Fatalf("explicit new empty lookup(%s) = %q, %v", HTTPCORSAllowedOriginKey, value, ok)
+	}
+}
+
 func TestWithOptionalDotEnvParsesSupportedSyntax(t *testing.T) {
 	t.Parallel()
 
-	path := writeDotEnv(t, "\ufeff# local overlay\n\nFIXTHE_ENVIRONMENT=development\nFIXTHE_HTTP_CORS_ALLOWED_ORIGIN=\nFIXTHE_POSTGRES_URL=\"postgres://fixthe:secret@127.0.0.1:5432/fixthe?sslmode=disable\"\nFIXTHE_REDIS_URL='redis://:password@127.0.0.1:6379'\n")
+	path := writeDotEnv(t, "\ufeff# local overlay\n\nMENDRY_ENVIRONMENT=development\nMENDRY_HTTP_CORS_ALLOWED_ORIGIN=\nMENDRY_POSTGRES_URL=\"postgres://mendry:secret@127.0.0.1:5432/mendry?sslmode=disable\"\nMENDRY_REDIS_URL='redis://:password@127.0.0.1:6379'\n")
 	lookup, err := WithOptionalDotEnv(func(string) (string, bool) { return "", false }, path)
 	if err != nil {
 		t.Fatalf("WithOptionalDotEnv() error = %v", err)
@@ -54,7 +80,7 @@ func TestWithOptionalDotEnvParsesSupportedSyntax(t *testing.T) {
 	cases := map[string]string{
 		EnvironmentKey:           "development",
 		HTTPCORSAllowedOriginKey: "",
-		PostgresURLKey:           "postgres://fixthe:secret@127.0.0.1:5432/fixthe?sslmode=disable",
+		PostgresURLKey:           "postgres://mendry:secret@127.0.0.1:5432/mendry?sslmode=disable",
 		RedisURLKey:              "redis://:password@127.0.0.1:6379",
 	}
 	for key, want := range cases {
@@ -74,11 +100,11 @@ func TestWithOptionalDotEnvRejectsMalformedLinesWithoutRawValue(t *testing.T) {
 		reason  string
 		secret  string
 	}{
-		{name: "missing assignment", content: "FIXTHE_LOG_LEVEL\n", reason: "must be KEY=VALUE", secret: "FIXTHE_LOG_LEVEL"},
-		{name: "export prefix", content: "export FIXTHE_LOG_LEVEL=debug\n", reason: "must be KEY=VALUE", secret: "debug"},
+		{name: "missing assignment", content: "MENDRY_LOG_LEVEL\n", reason: "must be KEY=VALUE", secret: "MENDRY_LOG_LEVEL"},
+		{name: "export prefix", content: "export MENDRY_LOG_LEVEL=debug\n", reason: "must be KEY=VALUE", secret: "debug"},
 		{name: "invalid key", content: "1LEVEL=debug\n", reason: "has an invalid key", secret: "debug"},
-		{name: "inline comment", content: "FIXTHE_LOG_LEVEL=debug # local\n", reason: "has an inline comment", secret: "debug"},
-		{name: "unclosed quote", content: "FIXTHE_LOG_LEVEL=\"debug\n", reason: "has invalid quoting", secret: "debug"},
+		{name: "inline comment", content: "MENDRY_LOG_LEVEL=debug # local\n", reason: "has an inline comment", secret: "debug"},
+		{name: "unclosed quote", content: "MENDRY_LOG_LEVEL=\"debug\n", reason: "has invalid quoting", secret: "debug"},
 	}
 
 	for _, test := range tests {
@@ -94,7 +120,7 @@ func TestWithOptionalDotEnvRejectsMalformedLinesWithoutRawValue(t *testing.T) {
 			if !strings.Contains(message, path+":1") || !strings.Contains(message, test.reason) {
 				t.Fatalf("error = %q", message)
 			}
-			if strings.Contains(message, test.secret) && test.secret != "FIXTHE_LOG_LEVEL" {
+			if strings.Contains(message, test.secret) && test.secret != "MENDRY_LOG_LEVEL" {
 				t.Fatalf("error echoed raw value: %q", message)
 			}
 		})

@@ -6,41 +6,42 @@ import (
 	"net/http"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	"fixthe/backend/internal/modules/auth/adapter/password"
-	authpostgres "fixthe/backend/internal/modules/auth/adapter/postgres"
-	authredis "fixthe/backend/internal/modules/auth/adapter/redis"
-	authapplication "fixthe/backend/internal/modules/auth/application"
-	hookhttp "fixthe/backend/internal/modules/hooks/adapter/http"
-	hookllm "fixthe/backend/internal/modules/hooks/adapter/llm"
-	hooklogging "fixthe/backend/internal/modules/hooks/adapter/logging"
-	hooktencentcls "fixthe/backend/internal/modules/hooks/adapter/tencentcls"
-	hookapplication "fixthe/backend/internal/modules/hooks/application"
-	incidenthttp "fixthe/backend/internal/modules/incidents/adapter/http"
-	incidentpostgres "fixthe/backend/internal/modules/incidents/adapter/postgres"
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	observationhttp "fixthe/backend/internal/modules/observations/adapter/http"
-	observationpostgres "fixthe/backend/internal/modules/observations/adapter/postgres"
-	observationapplication "fixthe/backend/internal/modules/observations/application"
-	projectgit "fixthe/backend/internal/modules/projects/adapter/git"
-	projecthttp "fixthe/backend/internal/modules/projects/adapter/http"
-	projectopenai "fixthe/backend/internal/modules/projects/adapter/openai"
-	projectpostgres "fixthe/backend/internal/modules/projects/adapter/postgres"
-	projectsecret "fixthe/backend/internal/modules/projects/adapter/secret"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	remediationgit "fixthe/backend/internal/modules/remediation/adapter/git"
-	remediationhttp "fixthe/backend/internal/modules/remediation/adapter/http"
-	remediationlogging "fixthe/backend/internal/modules/remediation/adapter/logging"
-	remediationmcp "fixthe/backend/internal/modules/remediation/adapter/mcp"
-	remediationmetrics "fixthe/backend/internal/modules/remediation/adapter/metrics"
-	remediationopenai "fixthe/backend/internal/modules/remediation/adapter/openai"
-	remediationpostgres "fixthe/backend/internal/modules/remediation/adapter/postgres"
-	remediationsshlog "fixthe/backend/internal/modules/remediation/adapter/sshlog"
-	remediationapplication "fixthe/backend/internal/modules/remediation/application"
-	systemhttp "fixthe/backend/internal/modules/system/adapter/http"
-	"fixthe/backend/internal/modules/system/application"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	"mendry/backend/internal/modules/auth/adapter/password"
+	authpostgres "mendry/backend/internal/modules/auth/adapter/postgres"
+	authredis "mendry/backend/internal/modules/auth/adapter/redis"
+	authapplication "mendry/backend/internal/modules/auth/application"
+	hookawssns "mendry/backend/internal/modules/hooks/adapter/awssns"
+	hookhttp "mendry/backend/internal/modules/hooks/adapter/http"
+	hookllm "mendry/backend/internal/modules/hooks/adapter/llm"
+	hooklogging "mendry/backend/internal/modules/hooks/adapter/logging"
+	hooktencentcls "mendry/backend/internal/modules/hooks/adapter/tencentcls"
+	hookapplication "mendry/backend/internal/modules/hooks/application"
+	incidenthttp "mendry/backend/internal/modules/incidents/adapter/http"
+	incidentpostgres "mendry/backend/internal/modules/incidents/adapter/postgres"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	observationhttp "mendry/backend/internal/modules/observations/adapter/http"
+	observationpostgres "mendry/backend/internal/modules/observations/adapter/postgres"
+	observationapplication "mendry/backend/internal/modules/observations/application"
+	projectgit "mendry/backend/internal/modules/projects/adapter/git"
+	projecthttp "mendry/backend/internal/modules/projects/adapter/http"
+	projectopenai "mendry/backend/internal/modules/projects/adapter/openai"
+	projectpostgres "mendry/backend/internal/modules/projects/adapter/postgres"
+	projectsecret "mendry/backend/internal/modules/projects/adapter/secret"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	remediationgit "mendry/backend/internal/modules/remediation/adapter/git"
+	remediationhttp "mendry/backend/internal/modules/remediation/adapter/http"
+	remediationlogging "mendry/backend/internal/modules/remediation/adapter/logging"
+	remediationmcp "mendry/backend/internal/modules/remediation/adapter/mcp"
+	remediationmetrics "mendry/backend/internal/modules/remediation/adapter/metrics"
+	remediationopenai "mendry/backend/internal/modules/remediation/adapter/openai"
+	remediationpostgres "mendry/backend/internal/modules/remediation/adapter/postgres"
+	remediationsshlog "mendry/backend/internal/modules/remediation/adapter/sshlog"
+	remediationapplication "mendry/backend/internal/modules/remediation/application"
+	systemhttp "mendry/backend/internal/modules/system/adapter/http"
+	"mendry/backend/internal/modules/system/application"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/httpserver"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -54,24 +55,24 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		return fmt.Errorf("load API configuration: %w", err)
 	}
 
-	logger, logSink, err := logger(options, "fixthe-api", apiConfig.Common)
+	logger, logSink, err := logger(options, "mendry-api", apiConfig.Common)
 	if err != nil {
 		return err
 	}
 	defer closeLogSink(&result, logSink)
-	telemetryRuntime, err := telemetry(ctx, options, "fixthe-api", apiConfig.Common.Environment)
+	telemetryRuntime, err := telemetry(ctx, options, "mendry-api", apiConfig.Common.Environment)
 	if err != nil {
 		return err
 	}
-	ctx, processSpan := telemetryRuntime.Tracer("fixthe/backend/bootstrap").Start(ctx, "process.api",
+	ctx, processSpan := telemetryRuntime.Tracer("mendry/backend/bootstrap").Start(ctx, "process.api",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	logStart(ctx, logger, "api")
-	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "fixthe-api", apiConfig.PostgreSQL)
+	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "mendry-api", apiConfig.PostgreSQL)
 	if err != nil {
 		return finishProcess(ctx, processSpan, telemetryRuntime, apiConfig.Common.ShutdownTimeout, err)
 	}
-	redisClient, err := openRedis(ctx, logger, telemetryRuntime, "fixthe-api", apiConfig.Redis)
+	redisClient, err := openRedis(ctx, logger, telemetryRuntime, "mendry-api", apiConfig.Redis)
 	if err != nil {
 		return finishWithPostgreSQL(processSpan, telemetryRuntime, postgresPool, apiConfig.Common.ShutdownTimeout, err)
 	}
@@ -98,7 +99,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 	passwordHasher := password.Bcrypt{}
-	dummyPasswordHash, err := passwordHasher.Hash([]byte("fixthe-dummy-login-password"))
+	dummyPasswordHash, err := passwordHasher.Hash([]byte("mendry-dummy-login-password"))
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
 			fmt.Errorf("create authentication password verifier: %w", err),
@@ -274,7 +275,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 	// Phase 4：resilient_v1 恢复/生命周期事件的低基数 counters。observer 可选，
 	// metrics 只携带枚举 kind/mode/reason code，绝不影响 coordinator 语义。
 	remediationMetricsObserver, metricsErr := remediationmetrics.NewObserver(remediationmetrics.Options{
-		Meter: telemetryRuntime.MeterProvider().Meter("fixthe/backend/remediation"),
+		Meter: telemetryRuntime.MeterProvider().Meter("mendry/backend/remediation"),
 	})
 	if metricsErr != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -337,10 +338,16 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create incident HTTP handler: %w", err),
 		)
 	}
+	awsSNSVerifier, err := hookawssns.NewVerifier(hookawssns.Options{})
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create AWS SNS verifier: %w", err),
+		)
+	}
 	hookService, err := hookapplication.NewService(hookapplication.Options{
 		Tokens: projectService, Analyzer: webhookAnalyzer, Observations: observationService,
 		Incidents: incidentService, Failures: webhookFailureReporter, Evidence: remediationStore,
-		Now: time.Now,
+		AWSSNS: awsSNSVerifier, Now: time.Now,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

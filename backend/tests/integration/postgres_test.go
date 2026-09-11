@@ -13,21 +13,21 @@ import (
 	"testing"
 	"time"
 
-	migratecommand "fixthe/backend/internal/commands/migrate"
-	"fixthe/backend/internal/commands/migrate/migratedb"
-	"fixthe/backend/internal/modules/auth/adapter/postgres/authdb"
-	incidentpostgres "fixthe/backend/internal/modules/incidents/adapter/postgres"
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	incidentdomain "fixthe/backend/internal/modules/incidents/domain"
-	observationpostgres "fixthe/backend/internal/modules/observations/adapter/postgres"
-	observationapplication "fixthe/backend/internal/modules/observations/application"
-	observationdomain "fixthe/backend/internal/modules/observations/domain"
-	projectpostgres "fixthe/backend/internal/modules/projects/adapter/postgres"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
-	"fixthe/backend/internal/platform/postgres"
+	migratecommand "mendry/backend/internal/commands/migrate"
+	"mendry/backend/internal/commands/migrate/migratedb"
+	"mendry/backend/internal/modules/auth/adapter/postgres/authdb"
+	incidentpostgres "mendry/backend/internal/modules/incidents/adapter/postgres"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	incidentdomain "mendry/backend/internal/modules/incidents/domain"
+	observationpostgres "mendry/backend/internal/modules/observations/adapter/postgres"
+	observationapplication "mendry/backend/internal/modules/observations/application"
+	observationdomain "mendry/backend/internal/modules/observations/domain"
+	projectpostgres "mendry/backend/internal/modules/projects/adapter/postgres"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/postgres"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -43,7 +43,7 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	telemetryRuntime, err := observability.NewTelemetry(ctx, observability.TelemetryOptions{
-		Service:     "fixthe-postgres-integration",
+		Service:     "mendry-postgres-integration",
 		Environment: "test",
 		Build:       buildinfo.Info{Version: "test", Commit: "test", BuildDate: time.Unix(0, 0).UTC().Format(time.RFC3339)},
 	})
@@ -60,9 +60,9 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 
 	pool, err := postgres.Open(ctx, postgres.PoolOptions{
 		Configuration: integrationPostgresConfiguration(connectionURL),
-		Application:   "fixthe-postgres-integration",
+		Application:   "mendry-postgres-integration",
 		Logger:        logger,
-		Tracer:        telemetryRuntime.Tracer("fixthe/backend/tests/integration"),
+		Tracer:        telemetryRuntime.Tracer("mendry/backend/tests/integration"),
 		MeterProvider: telemetryRuntime.MeterProvider(),
 	})
 	if err != nil {
@@ -110,8 +110,8 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list applied migrations: %v", err)
 	}
-	if len(applied) != 18 {
-		t.Fatalf("applied migration count = %d, want 18: %#v", len(applied), applied)
+	if len(applied) != 19 {
+		t.Fatalf("applied migration count = %d, want 19: %#v", len(applied), applied)
 	}
 	for index, migration := range applied {
 		if migration.Version != int64(index+1) || len(migration.Checksum) != 64 {

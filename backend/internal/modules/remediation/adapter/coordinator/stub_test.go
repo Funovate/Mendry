@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/adapter/coordinator"
-	"fixthe/backend/internal/modules/remediation/port"
+	"mendry/backend/internal/modules/remediation/adapter/coordinator"
+	"mendry/backend/internal/modules/remediation/port"
 )
 
 func TestStubCoordinator(t *testing.T) {

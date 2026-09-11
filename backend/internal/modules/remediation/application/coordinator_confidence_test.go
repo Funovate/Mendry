@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestCoordinator_ConfidenceTypeMismatchRetriesWithSpecificCorrection(t *testing.T) {

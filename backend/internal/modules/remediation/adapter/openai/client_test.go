@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/adapter/openai"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/adapter/openai"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (
@@ -275,7 +275,7 @@ func TestCompleteRetriesTransientHTTPStatus(t *testing.T) {
 	attempts := 0
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -467,7 +467,7 @@ func TestCompleteLogsBoundedFailure(t *testing.T) {
 
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)

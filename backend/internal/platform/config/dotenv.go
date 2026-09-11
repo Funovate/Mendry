@@ -33,8 +33,20 @@ func WithOptionalDotEnv(base Lookup, path string) (Lookup, error) {
 		if value, ok := base(key); ok {
 			return value, true
 		}
-		value, ok := values[key]
-		return value, ok
+		legacyKey := legacyEnvironmentKey(key)
+		if legacyKey != key {
+			if value, ok := base(legacyKey); ok {
+				return value, true
+			}
+		}
+		if value, ok := values[key]; ok {
+			return value, true
+		}
+		if legacyKey != key {
+			value, ok := values[legacyKey]
+			return value, ok
+		}
+		return "", false
 	}, nil
 }
 

@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // RunIdentity 是所有 remediation observation 共享的关联身份，不含项目凭据。

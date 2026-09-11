@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestTriggerEmitSkipsNonQualifyingAutomaticInfo(t *testing.T) {

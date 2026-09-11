@@ -831,8 +831,8 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUs
 }
 
 const lookupWebhookToken = `-- name: LookupWebhookToken :one
-SELECT trigger.project_id, source.id AS source_id,
-       COALESCE(trigger.config->>'provider', 'generic')::text AS webhook_provider
+SELECT trigger.project_id, source.id AS source_id, trigger.id AS trigger_id,
+       trigger.config AS trigger_config
 FROM project_triggers AS trigger
 JOIN project_sources AS source
     ON source.project_id = trigger.project_id
@@ -844,15 +844,21 @@ WHERE trigger.ingress_token_hash = $1
 `
 
 type LookupWebhookTokenRow struct {
-	ProjectID       pgtype.UUID
-	SourceID        pgtype.UUID
-	WebhookProvider string
+	ProjectID     pgtype.UUID
+	SourceID      pgtype.UUID
+	TriggerID     pgtype.UUID
+	TriggerConfig []byte
 }
 
 func (q *Queries) LookupWebhookToken(ctx context.Context, ingressTokenHash []byte) (LookupWebhookTokenRow, error) {
 	row := q.db.QueryRow(ctx, lookupWebhookToken, ingressTokenHash)
 	var i LookupWebhookTokenRow
-	err := row.Scan(&i.ProjectID, &i.SourceID, &i.WebhookProvider)
+	err := row.Scan(
+		&i.ProjectID,
+		&i.SourceID,
+		&i.TriggerID,
+		&i.TriggerConfig,
+	)
 	return i, err
 }
 

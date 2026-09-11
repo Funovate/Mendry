@@ -8,8 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -57,34 +57,34 @@ func NewObserver(options Options) (*Observer, error) {
 	}
 	observer := &Observer{}
 	var err error
-	if observer.runStarted, err = newCounter("fixthe.remediation.run.started", "Remediation runs started by snapshotted agent loop mode"); err != nil {
+	if observer.runStarted, err = newCounter("mendry.remediation.run.started", "Remediation runs started by snapshotted agent loop mode"); err != nil {
 		return nil, err
 	}
-	if observer.stateTransition, err = newCounter("fixthe.remediation.state.transitioned", "Durable remediation state transitions"); err != nil {
+	if observer.stateTransition, err = newCounter("mendry.remediation.state.transitioned", "Durable remediation state transitions"); err != nil {
 		return nil, err
 	}
-	if observer.runTerminal, err = newCounter("fixthe.remediation.run.terminal", "Terminal remediation transitions by terminal reason"); err != nil {
+	if observer.runTerminal, err = newCounter("mendry.remediation.run.terminal", "Terminal remediation transitions by terminal reason"); err != nil {
 		return nil, err
 	}
-	if observer.checkpoint, err = newCounter("fixthe.remediation.checkpoint.persisted", "Durable working-memory checkpoints by trigger reason and phase"); err != nil {
+	if observer.checkpoint, err = newCounter("mendry.remediation.checkpoint.persisted", "Durable working-memory checkpoints by trigger reason and phase"); err != nil {
 		return nil, err
 	}
-	if observer.noProgress, err = newCounter("fixthe.remediation.recovery.no_progress", "Checkpoints persisted while a no-progress recovery loop is detected"); err != nil {
+	if observer.noProgress, err = newCounter("mendry.remediation.recovery.no_progress", "Checkpoints persisted while a no-progress recovery loop is detected"); err != nil {
 		return nil, err
 	}
-	if observer.budgetSignal, err = newCounter("fixthe.remediation.budget.signal", "Recoverable soft-budget signal crossings by signal code"); err != nil {
+	if observer.budgetSignal, err = newCounter("mendry.remediation.budget.signal", "Recoverable soft-budget signal crossings by signal code"); err != nil {
 		return nil, err
 	}
-	if observer.exhaustion, err = newCounter("fixthe.remediation.exhaustion.decided", "Exhaustion proposal decisions by acceptance"); err != nil {
+	if observer.exhaustion, err = newCounter("mendry.remediation.exhaustion.decided", "Exhaustion proposal decisions by acceptance"); err != nil {
 		return nil, err
 	}
-	if observer.reconstruction, err = newCounter("fixthe.remediation.continuation.reconstructed", "Continuations reconstructed from a durable predecessor checkpoint"); err != nil {
+	if observer.reconstruction, err = newCounter("mendry.remediation.continuation.reconstructed", "Continuations reconstructed from a durable predecessor checkpoint"); err != nil {
 		return nil, err
 	}
-	if observer.challenge, err = newCounter("fixthe.remediation.recovery.challenge", "D5 recovery challenges appended to a resilient conversation by challenge kind"); err != nil {
+	if observer.challenge, err = newCounter("mendry.remediation.recovery.challenge", "D5 recovery challenges appended to a resilient conversation by challenge kind"); err != nil {
 		return nil, err
 	}
-	if observer.recoverySuccess, err = newCounter("fixthe.remediation.recovery.success", "Recovery episodes that durably converged to forward progress"); err != nil {
+	if observer.recoverySuccess, err = newCounter("mendry.remediation.recovery.success", "Recovery episodes that durably converged to forward progress"); err != nil {
 		return nil, err
 	}
 	return observer, nil

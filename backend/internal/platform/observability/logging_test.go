@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -21,7 +21,7 @@ func TestLoggerWritesStableJSONEnvelope(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build: buildinfo.Info{
 			Version: "1.2.3",
@@ -42,7 +42,7 @@ func TestLoggerWritesStableJSONEnvelope(t *testing.T) {
 	}
 
 	assertField(t, record, FieldEvent, EventProcessStarted)
-	assertField(t, record, FieldService, "fixthe-test")
+	assertField(t, record, FieldService, "mendry-test")
 	assertField(t, record, FieldVersion, "1.2.3")
 	assertField(t, record, FieldCommit, "abc123")
 	assertField(t, record, FieldEnvironment, "test")
@@ -58,7 +58,7 @@ func TestLoggerWritesQueryDebugJSONFields(t *testing.T) {
 		Writer:      &output,
 		Level:       "debug",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -83,7 +83,7 @@ func TestConsoleRendersTencentCLSResponseAndEvidenceAsPhysicalBlocks(t *testing.
 	var output bytes.Buffer
 	logger, err := NewLogger(LoggerOptions{
 		Writer: &output, Level: "info", Format: "console",
-		Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+		Service: "mendry-test", Environment: "test", Build: buildinfo.Current(),
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -123,7 +123,7 @@ func TestLoggerWritesHTTPCompletedDebugJSONRecord(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -133,11 +133,11 @@ func TestLoggerWritesHTTPCompletedDebugJSONRecord(t *testing.T) {
 
 	Log(context.Background(), logger, slog.LevelInfo, EventHTTPCompleted, "request completed",
 		slog.String(FieldComponent, "httpserver"),
-		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie"),
+		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: mendry_session=secret-cookie"),
 		slog.String(FieldHTTPRequestQuery, "token=query-secret"),
 		slog.String(FieldHTTPRequest, `{"password":"hunter2"}`),
 		slog.Bool(FieldHTTPRequestTruncated, true),
-		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session"),
+		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: mendry_session=new-session"),
 		slog.String(FieldHTTPResponse, `{"ok":true}`),
 		slog.Bool(FieldHTTPResponseTruncated, false),
 	)
@@ -147,11 +147,11 @@ func TestLoggerWritesHTTPCompletedDebugJSONRecord(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v; output = %q", err, output.String())
 	}
 	assertField(t, record, FieldEvent, EventHTTPCompleted)
-	assertField(t, record, FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie")
+	assertField(t, record, FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: mendry_session=secret-cookie")
 	assertField(t, record, FieldHTTPRequestQuery, "token=query-secret")
 	assertField(t, record, FieldHTTPRequest, `{"password":"hunter2"}`)
 	assertField(t, record, FieldHTTPRequestTruncated, true)
-	assertField(t, record, FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session")
+	assertField(t, record, FieldHTTPResponseHeaders, "Set-Cookie: mendry_session=new-session")
 	assertField(t, record, FieldHTTPResponse, `{"ok":true}`)
 	assertField(t, record, FieldHTTPResponseTruncated, false)
 }
@@ -169,10 +169,10 @@ func TestConsoleHandlerFormatsInboundHTTPDebugBlocks(t *testing.T) {
 		slog.String("route", "POST /login"),
 		slog.Int("status", 200),
 		slog.Int64(FieldDurationMS, 12),
-		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie"),
+		slog.String(FieldHTTPRequestHeaders, "Authorization: Bearer secret-token\nCookie: mendry_session=secret-cookie"),
 		slog.String(FieldHTTPRequestQuery, "env=prod"),
 		slog.String(FieldHTTPRequest, `{"password":"hunter2"}`),
-		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: fixthe_session=new-session"),
+		slog.String(FieldHTTPResponseHeaders, "Set-Cookie: mendry_session=new-session"),
 		slog.String(FieldHTTPResponse, `{"ok":true}`),
 	)
 	if err := handler.Handle(context.Background(), record); err != nil {
@@ -190,10 +190,10 @@ func TestConsoleHandlerFormatsInboundHTTPDebugBlocks(t *testing.T) {
 		`route="POST /login"`,
 		"status=200",
 		"took=12ms",
-		"request_headers:\nAuthorization: Bearer secret-token\nCookie: fixthe_session=secret-cookie\n",
+		"request_headers:\nAuthorization: Bearer secret-token\nCookie: mendry_session=secret-cookie\n",
 		"request_query:\nenv=prod\n",
 		"request:\n{\"password\":\"hunter2\"}\n",
-		"response_headers:\nSet-Cookie: fixthe_session=new-session\n",
+		"response_headers:\nSet-Cookie: mendry_session=new-session\n",
 		"response:\n{\"ok\":true}\n",
 	} {
 		if !strings.Contains(formatted, expected) {
@@ -213,7 +213,7 @@ func TestLoggerWritesHTTPFailedJSONRecord(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -246,7 +246,7 @@ func TestLoggerWritesHTTPFailedJSONRecord(t *testing.T) {
 func TestLoggerWritesHTTPErrorAndPanicDiagnosticFields(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := NewLogger(LoggerOptions{
-		Writer: &output, Level: "info", Format: "json", Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+		Writer: &output, Level: "info", Format: "json", Service: "mendry-test", Environment: "test", Build: buildinfo.Current(),
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -286,7 +286,7 @@ func TestLoggerFiltersBelowConfiguredLevel(t *testing.T) {
 		Writer:      &output,
 		Level:       "warn",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -306,7 +306,7 @@ func TestLogAddsTraceCorrelationFromContext(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -334,7 +334,7 @@ func TestLoggerWritesReadableConsoleRecordWithoutColorForBuffer(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "console",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "development",
 		Build:       buildinfo.Current(),
 	})
@@ -522,7 +522,7 @@ func TestLoggerRejectsUnsupportedFormat(t *testing.T) {
 		Writer:      &bytes.Buffer{},
 		Level:       "info",
 		Format:      "pretty-secret-marker",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})

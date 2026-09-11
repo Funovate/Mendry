@@ -12,16 +12,16 @@ import (
 	"testing"
 )
 
-var exampleAssignment = regexp.MustCompile(`^#?\s*(FIXTHE_[A-Z0-9_]+)=`)
+var exampleAssignment = regexp.MustCompile(`^#?\s*(MENDRY_[A-Z0-9_]+)=`)
 
 func TestEnvironmentExampleDocumentsEveryConfigurationKey(t *testing.T) {
 	runtimeKeys := configurationKeysFromSource(t)
 	exampleKeys := environmentExampleKeys(t)
 	testKeys := map[string]struct{}{
-		"FIXTHE_TEST_POSTGRES_URL":       {},
-		"FIXTHE_TEST_POSTGRES_ISOLATION": {},
-		"FIXTHE_TEST_REDIS_URL":          {},
-		"FIXTHE_TEST_REDIS_PREFIX":       {},
+		"MENDRY_TEST_POSTGRES_URL":       {},
+		"MENDRY_TEST_POSTGRES_ISOLATION": {},
+		"MENDRY_TEST_REDIS_URL":          {},
+		"MENDRY_TEST_REDIS_PREFIX":       {},
 	}
 
 	for key := range runtimeKeys {
@@ -74,7 +74,7 @@ func configurationKeysFromSource(t *testing.T) map[string]struct{} {
 					continue
 				}
 				value, err := strconv.Unquote(literal.Value)
-				if err == nil && strings.HasPrefix(value, "FIXTHE_") {
+				if err == nil && strings.HasPrefix(value, "MENDRY_") {
 					keys[value] = struct{}{}
 				}
 			}

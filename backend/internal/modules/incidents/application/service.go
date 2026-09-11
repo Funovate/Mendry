@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/incidents/domain"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/incidents/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 )
 
 var (
@@ -65,6 +65,8 @@ type RemediationRequest struct {
 	Priority            string
 	Reason              string
 	ContextVersion      int64
+	// AnalysisOnly 由受信 ingress 决定并写入 root run；后续 continuation 只继承。
+	AnalysisOnly bool
 }
 
 // RemediationTrigger 是 remediation 触发 seam。
@@ -179,7 +181,7 @@ func (s *Service) Create(ctx context.Context, principal authdomain.User, project
 		return domain.Incident{}, fmt.Errorf("create incident: %w", err)
 	}
 	if remediation != nil {
-		if err := s.emitAutomatic(ctx, created); err != nil {
+		if err := s.emitAutomatic(ctx, created, false); err != nil {
 			return domain.Incident{}, err
 		}
 	}
@@ -230,7 +232,7 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 		return domain.Incident{}, fmt.Errorf("update incident status: %w", err)
 	}
 	if remediation != nil {
-		if err := s.emitAutomatic(ctx, updated); err != nil {
+		if err := s.emitAutomatic(ctx, updated, false); err != nil {
 			return domain.Incident{}, err
 		}
 	}
@@ -239,30 +241,36 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 
 // IngestInbound 按 fingerprint 打开或更新事故；新建事故提交后异步触发 remediation，Closed / Recovered 不重开。
 func (s *Service) IngestInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time) (domain.Incident, bool, error) {
-	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, nil)
+	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, false, nil)
 }
 
 // IngestInboundWithEvidence 在事故写入后、remediation 异步启动前运行一次
 // evidenceWriter。这个窄回调保持事故模块不依赖 remediation；失败仍保留已提交
 // 的事故并返回错误，避免在证据不完整时触发 remediation。
 func (s *Service) IngestInboundWithEvidence(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
-	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, evidenceWriter)
+	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, false, evidenceWriter)
 }
 
-func (s *Service) ingestInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
+// IngestInboundAnalysisOnlyWithEvidence 为受信 provider 创建不可执行 repair effects 的 run。
+// occurredAt 仍使用接收时间；provider 原始时间由 Observation/evidence 单独保存。
+func (s *Service) IngestInboundAnalysisOnlyWithEvidence(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
+	return s.ingestInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, true, evidenceWriter)
+}
+
+func (s *Service) ingestInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, analysisOnly bool, evidenceWriter func(context.Context, domain.Incident) error) (domain.Incident, bool, error) {
 	current, err := s.repository.GetByFingerprint(ctx, projectID, fingerprint)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return domain.Incident{}, false, fmt.Errorf("get incident by fingerprint: %w", err)
 	}
 	if errors.Is(err, ErrNotFound) {
-		created, createErr := s.createInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt)
+		created, createErr := s.createInbound(ctx, projectID, sourceID, title, fingerprint, occurredAt, analysisOnly)
 		if createErr == nil {
 			if evidenceWriter != nil {
 				if evidenceErr := evidenceWriter(ctx, created); evidenceErr != nil {
 					return created, true, fmt.Errorf("persist inbound evidence: %w", evidenceErr)
 				}
 			}
-			s.emitAutomaticAsync(ctx, created)
+			s.emitAutomaticAsync(ctx, created, analysisOnly)
 			return created, true, nil
 		}
 		if !errors.Is(createErr, ErrConflict) {
@@ -290,12 +298,12 @@ func (s *Service) ingestInbound(ctx context.Context, projectID, sourceID, title,
 		}
 		// Repeated open observations can only enter the automatic continuation gate
 		// after their occurrence and evidence are both committed successfully.
-		s.emitAutomaticAsync(ctx, updated)
+		s.emitAutomaticAsync(ctx, updated, analysisOnly)
 	}
 	return updated, false, nil
 }
 
-func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time) (domain.Incident, error) {
+func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title, fingerprint string, occurredAt time.Time, analysisOnly bool) (domain.Incident, error) {
 	commit, err := s.baseline.DeployedCommit(ctx, projectID)
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("load project deployed commit: %w", err)
@@ -313,6 +321,9 @@ func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title,
 		return domain.Incident{}, fmt.Errorf("generate incident audit ID: %w", err)
 	}
 	remediation := automaticRequest(incident)
+	if remediation != nil {
+		remediation.AnalysisOnly = analysisOnly
+	}
 	created, err := s.repository.Create(ctx, incident, "", auditID, remediation)
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("create incident: %w", err)
@@ -320,18 +331,19 @@ func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title,
 	return created, nil
 }
 
-func (s *Service) emitAutomatic(ctx context.Context, incident domain.Incident) error {
+func (s *Service) emitAutomatic(ctx context.Context, incident domain.Incident, analysisOnly bool) error {
 	request := automaticRequest(incident)
 	if request == nil {
 		return nil
 	}
+	request.AnalysisOnly = analysisOnly
 	if err := s.remediation.Emit(ctx, *request); err != nil {
 		return fmt.Errorf("start remediation: %w", err)
 	}
 	return nil
 }
 
-func (s *Service) emitAutomaticAsync(ctx context.Context, incident domain.Incident) {
+func (s *Service) emitAutomaticAsync(ctx context.Context, incident domain.Incident, analysisOnly bool) {
 	if automaticRequest(incident) == nil {
 		return
 	}
@@ -340,7 +352,7 @@ func (s *Service) emitAutomaticAsync(ctx context.Context, incident domain.Incide
 	background := context.WithoutCancel(ctx)
 	go func() {
 		// remediation coordinator 会把启动后的失败写回 run 状态；Webhook 不等待该结果。
-		_ = s.emitAutomatic(background, incident)
+		_ = s.emitAutomatic(background, incident, analysisOnly)
 	}()
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/incidents/domain"
-	"fixthe/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/incidents/domain"
+	"mendry/backend/internal/modules/remediation/application"
 )
 
 // IncidentLookup 把全局事故编号解析成 remediation 需要的内部身份。

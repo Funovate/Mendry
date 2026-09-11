@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/modules/remediation/port"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/port"
 )
 
 // Compile-time assertion that the coordinator satisfies the port contract.
@@ -310,6 +310,9 @@ func (c *RemediationCoordinator) Start(ctx context.Context, in domain.NewRun) (d
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("create series and run: %w", err)
 	}
+	if in.AnalysisOnly && !run.AnalysisOnly {
+		return run, ErrLifecycleUnavailable
+	}
 	if run.State != domain.RunStateQueued {
 		return run, nil
 	}
@@ -337,6 +340,10 @@ func (c *RemediationCoordinator) Resume(ctx context.Context, runID string) (doma
 		return domain.Run{}, fmt.Errorf("load remediation run for resume: %w", err)
 	}
 	run := aggregate.Run
+	if run.AnalysisOnly && (run.State == domain.RunStatePatching || run.State == domain.RunStateValidating ||
+		run.State == domain.RunStatePublishing || run.State == domain.RunStateAwaitingHumanReview) {
+		return run, ErrLifecycleUnavailable
+	}
 	if domain.ParseAgentLoopMode(string(run.AgentLoopMode)) != domain.AgentLoopModeResilientV1 || c.checkpointStore == nil {
 		return run, ErrLifecycleUnavailable
 	}
@@ -369,21 +376,28 @@ func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate d
 	run := aggregate.Run
 	ctx = withRunObservationContext(ctx, run)
 	tracker := newResilientRunState(c.checkpointStore, run, "")
-	analysisOnly := run.TriggerReason == domain.TriggerOriginManualContinue
+	analysisOnly := run.AnalysisOnly || run.TriggerReason == domain.TriggerOriginManualContinue
 	tracker.analysisOnly = analysisOnly
 	for _, invocation := range aggregate.ToolInvocations {
 		tracker.recordPriorToolAction(invocation)
 	}
-	if snapshot, err := c.checkpointStore.LoadLatestCheckpoint(ctx, run.RunID); err == nil {
-		if err := restoreAnalysisCheckpoint(tracker, snapshot, run); err != nil {
-			return domain.Run{}, err
+	if c.checkpointStore != nil {
+		if snapshot, err := c.checkpointStore.LoadLatestCheckpoint(ctx, run.RunID); err == nil {
+			if err := restoreAnalysisCheckpoint(tracker, snapshot, run); err != nil {
+				return domain.Run{}, err
+			}
+			tracker.reconstruction = renderCheckpointReconstruction(snapshot, nil, nil, aggregate.ToolInvocations)
+		} else if !errors.Is(err, domain.ErrCheckpointNotFound) ||
+			(run.State != domain.RunStatePreparingContext && !(run.State == domain.RunStateDiagnosing && run.Budget.ModelCalls == 0)) {
+			// 初始 preparing→diagnosing after-window 尚无 checkpoint；zero model calls
+			// 证明尚未进入首轮 provider turn，可从 run/bootstrap authority 重建。
+			return domain.Run{}, fmt.Errorf("load remediation checkpoint for resume: %w", err)
 		}
-		tracker.reconstruction = renderCheckpointReconstruction(snapshot, nil, nil, aggregate.ToolInvocations)
-	} else if !errors.Is(err, domain.ErrCheckpointNotFound) ||
-		(run.State != domain.RunStatePreparingContext && !(run.State == domain.RunStateDiagnosing && run.Budget.ModelCalls == 0)) {
-		// 初始 preparing→diagnosing after-window 尚无 checkpoint；zero model calls
-		// 证明尚未进入首轮 provider turn，可从 run/bootstrap authority 重建。
-		return domain.Run{}, fmt.Errorf("load remediation checkpoint for resume: %w", err)
+	} else if run.State != domain.RunStatePreparingContext &&
+		!(run.State == domain.RunStateDiagnosing && run.Budget.ModelCalls == 0) {
+		// Legacy runs without a checkpoint store retain the historical restart
+		// boundary: only pre-first-turn states can be rebuilt safely.
+		return domain.Run{}, fmt.Errorf("load remediation checkpoint for resume: %w", domain.ErrCheckpointNotFound)
 	}
 	if tracker.alloc == nil {
 		budgetPhase := run.State
@@ -535,7 +549,8 @@ func (c *RemediationCoordinator) prepareContinuation(
 	if child.State != domain.RunStateQueued || child.RunID == "" || child.SeriesID != in.SeriesID ||
 		child.IncidentID != in.IncidentID || child.LifecycleGeneration != in.LifecycleGeneration ||
 		child.DeployedCommit != in.DeployedCommit || child.ContinuationOfRunID != in.ContinuationOfRunID ||
-		child.AttemptNumber != predecessor.Run.AttemptNumber+1 {
+		child.AttemptNumber != predecessor.Run.AttemptNumber+1 ||
+		(predecessor.Run.AnalysisOnly && !child.AnalysisOnly) {
 		return preparedContinuation{}, domain.ErrStalePredecessor
 	}
 	// resilient_v1：从 predecessor 的 durable working-memory checkpoint 重建
@@ -623,7 +638,7 @@ func (c *RemediationCoordinator) runQueued(
 	if !claimed {
 		return claimedRun, nil
 	}
-	analysisOnly := triggerReason == domain.TriggerOriginManualContinue
+	analysisOnly := run.AnalysisOnly || triggerReason == domain.TriggerOriginManualContinue
 	// resilient_v1 feature gate：只有 run 快照模式为 resilient_v1 且注入了
 	// checkpoint store 时才挂载 per-run resilient 状态；legacy 或 nil store
 	// 完全走既有路径（所有 checkpoint/recovery 辅助都是 no-op）。allocator 必须

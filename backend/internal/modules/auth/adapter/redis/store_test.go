@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/modules/auth/domain"
 
 	redisclient "github.com/redis/go-redis/v9"
 )
@@ -84,6 +84,26 @@ func TestStoreHashesTokenAndRoundTripsSession(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), token); err != application.ErrSessionNotFound {
 		t.Fatalf("Get(deleted) error = %v", err)
+	}
+}
+
+func TestStoreReadsAndDeletesLegacySessionKey(t *testing.T) {
+	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
+	commands := &fakeCommands{values: make(map[string][]byte)}
+	store, err := NewStore(StoreOptions{Client: commands, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, tokenBytes))
+	commands.values[legacySessionKey(token)] = []byte(`{"userId":"019ff544-405c-7d10-8f10-cb3fc579605c","username":"admin","role":"admin","expiresAt":"2026-08-13T02:02:03Z"}`)
+	if session, err := store.Get(context.Background(), token); err != nil || session.User.Username != "admin" {
+		t.Fatalf("Get(legacy) = %#v, %v", session, err)
+	}
+	if err := store.Delete(context.Background(), token); err != nil {
+		t.Fatalf("Delete(legacy) error = %v", err)
+	}
+	if _, ok := commands.values[legacySessionKey(token)]; ok {
+		t.Fatal("legacy session key was not deleted")
 	}
 }
 

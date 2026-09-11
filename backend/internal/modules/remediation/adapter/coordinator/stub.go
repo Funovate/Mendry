@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/remediation/port"
+	"mendry/backend/internal/modules/remediation/port"
 )
 
 // StubCoordinator is a minimal coordinator that returns canned responses.

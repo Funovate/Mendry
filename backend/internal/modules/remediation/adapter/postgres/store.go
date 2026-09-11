@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres/remediationdb"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // transactor 是 RunStore 需要的最小数据库合同：查询加上事务。
@@ -336,6 +336,7 @@ func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain
 		State:          string(domain.RunStateQueued),
 		ContextVersion: in.ContextVersion,
 		TriggerReason:  safeTriggerReason(in.TriggerReason),
+		AnalysisOnly:   in.AnalysisOnly,
 	})
 	if uniqueViolation(err) {
 		existing, loadErr := q.GetRemediationRunsBySeriesID(ctx, series.ID)
@@ -373,6 +374,7 @@ func mapCreatedRun(run remediationdb.RemediationRun, series remediationdb.Remedi
 		Retryable:              run.Retryable,
 		AgentLoopMode:          domain.ParseAgentLoopMode(run.AgentLoopMode),
 		AgentLoopPolicyVersion: run.AgentLoopPolicyVersion,
+		AnalysisOnly:           run.AnalysisOnly,
 		Version:                run.Version,
 		CreatedAt:              run.StartedAt.Time,
 		UpdatedAt:              run.StartedAt.Time,
@@ -1364,6 +1366,7 @@ func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
 		Retryable:              row.Retryable,
 		AgentLoopMode:          domain.ParseAgentLoopMode(row.AgentLoopMode),
 		AgentLoopPolicyVersion: row.AgentLoopPolicyVersion,
+		AnalysisOnly:           row.AnalysisOnly,
 		Budget: domain.BudgetCounters{
 			ElapsedSeconds:  elapsedSeconds,
 			ModelCalls:      int64(row.ModelCalls),

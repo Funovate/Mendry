@@ -1,4 +1,4 @@
-module fixthe/backend/tools
+module mendry/backend/tools
 
 go 1.26.0
 

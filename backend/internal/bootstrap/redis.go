@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"fixthe/backend/internal/modules/system/application"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
-	platformredis "fixthe/backend/internal/platform/redis"
+	"mendry/backend/internal/modules/system/application"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
+	platformredis "mendry/backend/internal/platform/redis"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -27,7 +27,7 @@ func openRedis(ctx context.Context, logger *slog.Logger, telemetryRuntime *obser
 		Configuration: configuration,
 		Application:   applicationName,
 		Logger:        logger,
-		Tracer:        telemetryRuntime.Tracer("fixthe/backend/redis"),
+		Tracer:        telemetryRuntime.Tracer("mendry/backend/redis"),
 		MeterProvider: telemetryRuntime.MeterProvider(),
 	})
 	if err != nil {

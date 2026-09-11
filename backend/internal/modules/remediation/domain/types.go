@@ -358,6 +358,8 @@ type NewRun struct {
 	Priority            string
 	TriggerReason       string
 	ContextVersion      int64
+	// AnalysisOnly 是持久化执行约束；允许分析和方案输出，但禁止 repair lifecycle effects。
+	AnalysisOnly bool
 }
 
 // AttemptSummary 是随 requested run 暴露的有界安全 history projection；不含 prompt、
@@ -401,12 +403,14 @@ type Run struct {
 	// AgentLoopPolicyVersion records the project policy version captured by the
 	// root run; continuations inherit it unchanged from their predecessor.
 	AgentLoopPolicyVersion int64
-	Budget                 BudgetCounters
-	ModelProvider          string
-	ModelName              string
-	Version                int64
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	// AnalysisOnly 为 true 时，run 及其 continuation 永远不能进入 patch/validation/publication。
+	AnalysisOnly  bool
+	Budget        BudgetCounters
+	ModelProvider string
+	ModelName     string
+	Version       int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // RunAggregate 是完整的 run 聚合，包括决策、计划和工具调用。

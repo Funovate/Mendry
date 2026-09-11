@@ -8,7 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	coreapplication "mendry/backend/internal/modules/agentcore/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (
@@ -194,70 +195,14 @@ func (c *AgentConversation) History() []domain.ModelMessage {
 	if c == nil || len(c.messages) == 0 {
 		return nil
 	}
-	groups := make([][]domain.ModelMessage, 0, len(c.messages)/2+1)
-	for _, message := range c.messages {
-		if message.Role == "user" {
-			groups = append(groups, nil)
-		}
-		if len(groups) == 0 {
-			continue
-		}
-		copyMessage := message
-		copyMessage.Content = boundedText(message.Content, maxMessageBytes)
-		copyMessage.ToolCalls = append([]domain.ToolCall(nil), message.ToolCalls...)
-		last := len(groups) - 1
-		groups[last] = append(groups[last], copyMessage)
-	}
-
-	// provider-native history 只能按完整 user/assistant/tool group 裁剪，
-	// 否则 OpenAI-compatible provider 会拒绝孤立的 tool result。
-	var selected []domain.ModelMessage
-	for index := len(groups) - 1; index >= 0; index-- {
-		group := groups[index]
-		if !completeConversationGroup(group) {
-			continue
-		}
-		candidate := make([]domain.ModelMessage, 0, len(group)+len(selected))
-		candidate = append(candidate, group...)
-		candidate = append(candidate, selected...)
-		if len(candidate) > maxConversationItems || encodedConversationBytes(candidate) > maxConversationBytes {
-			break
-		}
-		selected = candidate
-	}
-	return selected
-}
-
-func completeConversationGroup(group []domain.ModelMessage) bool {
-	if len(group) == 0 || group[0].Role != "user" {
-		return false
-	}
-	pending := make(map[string]struct{})
-	for _, message := range group {
-		switch message.Role {
-		case "assistant":
-			for _, call := range message.ToolCalls {
-				if call.ID == "" {
-					return false
-				}
-				pending[call.ID] = struct{}{}
-			}
-		case "tool":
-			if _, exists := pending[message.ToolCallID]; !exists {
-				return false
-			}
-			delete(pending, message.ToolCallID)
-		}
-	}
-	return len(pending) == 0
+	selected := coreapplication.SelectPairedHistory(toCoreMessages(c.messages), coreapplication.HistoryBounds{
+		MaxItems: maxConversationItems, MaxBytes: maxConversationBytes, MaxMessageBytes: maxMessageBytes,
+	})
+	return fromCoreMessages(selected)
 }
 
 func encodedConversationBytes(messages []domain.ModelMessage) int {
-	encoded, err := json.Marshal(messages)
-	if err != nil {
-		return maxConversationBytes + 1
-	}
-	return len(encoded)
+	return coreapplication.EncodedHistoryBytes(toCoreMessages(messages))
 }
 
 func encodedModelMessage(message domain.ModelMessage) int {
@@ -902,7 +847,7 @@ var (
 	conversationBearerPattern      = regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}`)
 	conversationRemotePattern      = regexp.MustCompile(`(?i)\b(https?|ssh)://[^/\s:@]+:[^@\s/]+@`)
 	conversationAssignmentPattern  = regexp.MustCompile(`(?i)(\b(?:password|token|secret|authorization|api[-_]?key|credential)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
-	conversationTempKeyPattern     = regexp.MustCompile(`(?i)(?:^|[\s:=])(/[^\s]*fixthe-ssh(?:log|inspect)?-[^\s]+)`)
+	conversationTempKeyPattern     = regexp.MustCompile(`(?i)(?:^|[\s:=])(/[^\s]*mendry-ssh(?:log|inspect)?-[^\s]+)`)
 )
 
 func redactConversationText(value string) string {

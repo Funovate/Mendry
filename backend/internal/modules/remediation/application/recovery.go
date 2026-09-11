@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // NewRecoveryChallenge 构造经过 sanitize 与边界检查的 provider-neutral recovery

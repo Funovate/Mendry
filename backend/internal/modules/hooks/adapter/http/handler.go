@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"fixthe/backend/internal/modules/hooks/application"
-	"fixthe/backend/internal/platform/httpserver"
+	"mendry/backend/internal/modules/hooks/application"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type service interface {
@@ -115,6 +115,22 @@ func writeBodyError(writer nethttp.ResponseWriter, request *nethttp.Request, err
 
 func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Request, err error) {
 	switch {
+	case errors.Is(err, application.ErrAWSSNSTooLarge):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusRequestEntityTooLarge, Code: "request_too_large", Message: "Request body is too large.",
+		})
+	case errors.Is(err, application.ErrForbiddenAWSSNS):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusForbidden, Code: "invalid_aws_sns_signature", Message: "AWS SNS signature is invalid.",
+		})
+	case errors.Is(err, application.ErrTemporaryAWSSNS):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusServiceUnavailable, Code: "aws_sns_unavailable", Message: "AWS SNS verification is temporarily unavailable.",
+		})
+	case errors.Is(err, application.ErrInvalidAWSSNS):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusBadRequest, Code: "invalid_aws_sns_message", Message: "AWS SNS message is invalid.",
+		})
 	case errors.Is(err, application.ErrInvalidTencentCallback):
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: nethttp.StatusBadRequest, Code: "invalid_tencent_cls_callback", Message: "Tencent CLS callback is invalid.",

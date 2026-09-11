@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/projects/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/projects/domain"
 )
 
 var (
@@ -67,7 +67,9 @@ type Repository interface {
 type WebhookIngress struct {
 	ProjectID string
 	SourceID  string
+	TriggerID string
 	Provider  domain.WebhookProvider
+	TopicARN  string
 }
 
 type Cipher interface {

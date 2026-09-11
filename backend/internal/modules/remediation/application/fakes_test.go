@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // fakeRunStore is an in-memory RunStore that records every mutation and
@@ -67,6 +67,7 @@ func (f *fakeRunStore) CreateSeriesAndRun(_ context.Context, in domain.NewRun) (
 		ContextVersion:      in.ContextVersion,
 		Version:             1,
 		AgentLoopMode:       f.mode,
+		AnalysisOnly:        in.AnalysisOnly,
 	}
 	f.created = &run
 	return run, nil
@@ -162,6 +163,7 @@ func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate
 		run.Version = f.created.Version
 		run.AgentLoopMode = f.created.AgentLoopMode
 		run.AgentLoopPolicyVersion = f.created.AgentLoopPolicyVersion
+		run.AnalysisOnly = f.created.AnalysisOnly
 	}
 	return domain.RunAggregate{
 		Run:               run,

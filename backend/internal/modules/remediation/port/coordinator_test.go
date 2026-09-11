@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/port"
+	"mendry/backend/internal/modules/remediation/port"
 )
 
 // TestCoordinatorInterfaceDoesNotAcceptCredentials verifies R1 contract:

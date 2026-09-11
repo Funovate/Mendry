@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
@@ -591,7 +591,7 @@ func writerSupportsColor(writer io.Writer) bool {
 // attrs 只能包含调用边界允许的低基数字段。除 http.request.failed 的脱敏截断
 // 入参快照、llm.request.completed / git.request.completed 的脱敏截断出站快照、
 // remediation.*.payload 的 64 KiB 脱敏调试快照，
-// 以及 FIXTHE_HTTP_REQUEST_DEBUG 打开时挂在 http.request.completed 上的未脱敏
+// 以及 MENDRY_HTTP_REQUEST_DEBUG 打开时挂在 http.request.completed 上的未脱敏
 // 入站请求/响应转储外，不得携带 payload、secret 或原始 URL。
 func Log(ctx context.Context, logger *slog.Logger, level slog.Level, event, message string, attrs ...slog.Attr) {
 	base := []slog.Attr{slog.String(FieldEvent, event)}

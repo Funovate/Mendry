@@ -8,13 +8,13 @@ import (
 	nethttp "net/http"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type service interface {

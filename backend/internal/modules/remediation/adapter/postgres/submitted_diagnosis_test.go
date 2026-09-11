@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // submittedDiagnosisInput 构造一条有界 submitted diagnosis 审计输入；correction

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"fixthe/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/projects/domain"
 )
 
 const KeyVersion int32 = 1
@@ -49,14 +49,20 @@ func (c *AESGCM) Encrypt(projectID, secretID string, kind domain.SecretKind, pla
 }
 
 func (c *AESGCM) Decrypt(projectID, secretID string, kind domain.SecretKind, ciphertext, nonce []byte) ([]byte, error) {
-	plaintext, err := c.aead.Open(nil, nonce, ciphertext, associatedData(projectID, secretID, kind))
-	if err != nil {
-		return nil, fmt.Errorf("decrypt project credential: authentication failed")
+	for _, data := range [][]byte{associatedData(projectID, secretID, kind), legacyAssociatedData(projectID, secretID, kind)} {
+		plaintext, err := c.aead.Open(nil, nonce, ciphertext, data)
+		if err == nil {
+			return plaintext, nil
+		}
 	}
-	return plaintext, nil
+	return nil, fmt.Errorf("decrypt project credential: authentication failed")
 }
 
 func associatedData(projectID, secretID string, kind domain.SecretKind) []byte {
+	return []byte(fmt.Sprintf("mendry:project-secret:v%d:%s:%s:%s", KeyVersion, projectID, secretID, kind))
+}
+
+func legacyAssociatedData(projectID, secretID string, kind domain.SecretKind) []byte {
 	return []byte(fmt.Sprintf("fixthe:project-secret:v%d:%s:%s:%s", KeyVersion, projectID, secretID, kind))
 }
 
@@ -76,13 +82,19 @@ func (c *AESGCM) EncryptWebhookToken(projectID, triggerID string, plaintext []by
 }
 
 func (c *AESGCM) DecryptWebhookToken(projectID, triggerID string, ciphertext, nonce []byte) ([]byte, error) {
-	plaintext, err := c.aead.Open(nil, nonce, ciphertext, webhookTokenAssociatedData(projectID, triggerID))
-	if err != nil {
-		return nil, fmt.Errorf("decrypt webhook token: authentication failed")
+	for _, data := range [][]byte{webhookTokenAssociatedData(projectID, triggerID), legacyWebhookTokenAssociatedData(projectID, triggerID)} {
+		plaintext, err := c.aead.Open(nil, nonce, ciphertext, data)
+		if err == nil {
+			return plaintext, nil
+		}
 	}
-	return plaintext, nil
+	return nil, fmt.Errorf("decrypt webhook token: authentication failed")
 }
 
 func webhookTokenAssociatedData(projectID, triggerID string) []byte {
+	return []byte(fmt.Sprintf("mendry:project-secret:v%d:%s:%s:%s", KeyVersion, projectID, triggerID, webhookTokenContext))
+}
+
+func legacyWebhookTokenAssociatedData(projectID, triggerID string) []byte {
 	return []byte(fmt.Sprintf("fixthe:project-secret:v%d:%s:%s:%s", KeyVersion, projectID, triggerID, webhookTokenContext))
 }

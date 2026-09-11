@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"time"
 
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/platform/httpserver"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/platform/httpserver"
 )
 
-const SessionCookieName = "fixthe_session"
+const (
+	SessionCookieName       = "mendry_session"
+	legacySessionCookieName = "fixthe_session"
+)
 
 type principalContextKey struct{}
 
@@ -194,21 +197,29 @@ func (h *Handler) setSessionCookie(writer http.ResponseWriter, token string, exp
 		Name: SessionCookieName, Value: token, Path: "/", Expires: expiresAt.UTC(),
 		MaxAge: int(expiresAt.Sub(h.now().UTC()).Seconds()), HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
 	})
+	clearCookie(writer, legacySessionCookieName, h.secureCookie)
 }
 
 func (h *Handler) clearSessionCookie(writer http.ResponseWriter) {
+	clearCookie(writer, SessionCookieName, h.secureCookie)
+	clearCookie(writer, legacySessionCookieName, h.secureCookie)
+}
+
+func clearCookie(writer http.ResponseWriter, name string, secure bool) {
 	http.SetCookie(writer, &http.Cookie{
-		Name: SessionCookieName, Value: "", Path: "/", Expires: time.Unix(1, 0).UTC(),
-		MaxAge: -1, HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode,
+		Name: name, Value: "", Path: "/", Expires: time.Unix(1, 0).UTC(),
+		MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 }
 
 func sessionToken(request *http.Request) string {
-	cookie, err := request.Cookie(SessionCookieName)
-	if err != nil {
-		return ""
+	for _, name := range []string{SessionCookieName, legacySessionCookieName} {
+		cookie, err := request.Cookie(name)
+		if err == nil && cookie.Value != "" {
+			return cookie.Value
+		}
 	}
-	return cookie.Value
+	return ""
 }
 
 func mapUser(user domain.User) userResponse {

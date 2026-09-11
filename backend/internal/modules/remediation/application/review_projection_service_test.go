@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // fakeCheckpointReader 记录读取次数并返回固定 snapshot/error，供 review 的

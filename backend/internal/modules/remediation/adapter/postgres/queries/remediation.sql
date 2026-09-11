@@ -34,11 +34,12 @@ INSERT INTO remediation_run (
     state,
     context_version,
     trigger_reason,
+    analysis_only,
     agent_loop_mode,
     agent_loop_policy_version
 )
 SELECT sqlc.arg(series_id), sqlc.arg(attempt_number), sqlc.arg(state),
-       sqlc.arg(context_version), sqlc.arg(trigger_reason),
+       sqlc.arg(context_version), sqlc.arg(trigger_reason), sqlc.arg(analysis_only),
        project.agent_loop_mode, project.agent_loop_policy_version
 FROM remediation_series AS series
 JOIN incidents AS incident ON incident.id = series.incident_id
@@ -55,12 +56,14 @@ INSERT INTO remediation_run (
     trigger_reason,
     continuation_reason,
     context_version,
+    analysis_only,
     agent_loop_mode,
     agent_loop_policy_version
 ) VALUES (
     sqlc.arg(series_id), sqlc.arg(attempt_number), 'queued',
     sqlc.arg(continuation_of_run_id), sqlc.arg(trigger_reason),
     sqlc.arg(continuation_reason), sqlc.arg(context_version),
+    (SELECT analysis_only FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
     (SELECT agent_loop_mode FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
     (SELECT agent_loop_policy_version FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id))
 )

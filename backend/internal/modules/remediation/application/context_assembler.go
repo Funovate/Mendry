@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // ContextAssembler 构造 remediation 首轮的 control-plane bootstrap metadata。

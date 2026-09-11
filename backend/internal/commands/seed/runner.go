@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/dev"
-	"fixthe/backend/internal/platform/postgres"
+	"mendry/backend/dev"
+	"mendry/backend/internal/platform/postgres"
 
 	"github.com/jackc/pgx/v5"
 )

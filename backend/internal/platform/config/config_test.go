@@ -65,7 +65,7 @@ func TestLoadAPICustomValues(t *testing.T) {
 		AuthSessionTTLKey:        "12h",
 		WebhookAITimeoutKey:      "75s",
 		EncryptionKey:            "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=",
-		PublicURLKey:             "https://fixthe.example.com/ingress",
+		PublicURLKey:             "https://mendry.example.com/ingress",
 	}))
 	if err != nil {
 		t.Fatalf("LoadAPI() error = %v", err)
@@ -86,7 +86,7 @@ func TestLoadAPICustomValues(t *testing.T) {
 	if configuration.WebhookAI.NormalizationTimeout != 75*time.Second {
 		t.Fatalf("WebhookAI = %#v", configuration.WebhookAI)
 	}
-	if configuration.PublicURL != "https://fixthe.example.com/ingress" {
+	if configuration.PublicURL != "https://mendry.example.com/ingress" {
 		t.Fatalf("PublicURL = %q", configuration.PublicURL)
 	}
 }
@@ -155,11 +155,11 @@ func TestLoadCommonLogFileIsOptionalAndValidated(t *testing.T) {
 		t.Fatalf("LogFile = %q, want disabled", configuration.LogFile)
 	}
 
-	configuration, err = LoadCommon(mapLookup(map[string]string{LogFileKey: " ./logs/fixthe.log "}))
+	configuration, err = LoadCommon(mapLookup(map[string]string{LogFileKey: " ./logs/mendry.log "}))
 	if err != nil {
 		t.Fatalf("LoadCommon() error = %v", err)
 	}
-	if configuration.LogFile != "./logs/fixthe.log" {
+	if configuration.LogFile != "./logs/mendry.log" {
 		t.Fatalf("LogFile = %q", configuration.LogFile)
 	}
 
@@ -445,26 +445,72 @@ func TestLoadAPIRejectsInvalidAddressAndDuration(t *testing.T) {
 	}
 }
 
+func TestConfigurationPrefersMendryAndFallsBackToFixthe(t *testing.T) {
+	legacy := mapLookup(map[string]string{"FIXTHE_LOG_LEVEL": "warn", "FIXTHE_HTTP_ADDR": "0.0.0.0:9000"})
+	common, err := LoadCommon(legacy)
+	if err != nil {
+		t.Fatalf("LoadCommon() error = %v", err)
+	}
+	if common.LogLevel != "warn" {
+		t.Fatalf("legacy log level = %q", common.LogLevel)
+	}
+	if _, err := LoadAPI(mapLookup(map[string]string{
+		"FIXTHE_LOG_LEVEL": "warn",
+		LogLevelKey:        "",
+	})); err == nil || !strings.Contains(err.Error(), LogLevelKey) {
+		t.Fatalf("explicit empty MENDRY value should win with validation error, got %v", err)
+	}
+}
+
+func TestConfigurationLegacyValuesSupportTypedSettings(t *testing.T) {
+	lookup := mapLookup(map[string]string{
+		"FIXTHE_AUTH_SESSION_TTL":    "12h",
+		"FIXTHE_HTTP_MAX_BODY_BYTES": "2048",
+		"FIXTHE_POSTGRES_MAX_CONNS":  "20",
+		"FIXTHE_REDIS_POOL_SIZE":     "12",
+		"FIXTHE_REDIS_URL":           "redis://localhost:6379",
+		"FIXTHE_ENCRYPTION_KEY":      testEncryptionKey,
+		"FIXTHE_PUBLIC_URL":          testPublicURL,
+		"FIXTHE_POSTGRES_URL":        testPostgresURL,
+	})
+	configuration, err := LoadAPI(lookup)
+	if err != nil {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if configuration.Auth.SessionTTL != 12*time.Hour || configuration.HTTP.MaxBodyBytes != 2048 ||
+		configuration.PostgreSQL.MaxConnections != 20 || configuration.Redis.PoolSize != 12 {
+		t.Fatalf("legacy configuration = %#v", configuration)
+	}
+}
+
 func mapLookup(values map[string]string) Lookup {
 	return func(key string) (string, bool) {
 		value, ok := values[key]
 		if key == PostgresURLKey && !ok {
-			return testPostgresURL, true
+			if _, legacySet := values[legacyEnvironmentKey(key)]; !legacySet {
+				return testPostgresURL, true
+			}
 		}
 		if key == RedisURLKey && !ok {
-			return testRedisURL, true
+			if _, legacySet := values[legacyEnvironmentKey(key)]; !legacySet {
+				return testRedisURL, true
+			}
 		}
 		if key == EncryptionKey && !ok {
-			return testEncryptionKey, true
+			if _, legacySet := values[legacyEnvironmentKey(key)]; !legacySet {
+				return testEncryptionKey, true
+			}
 		}
 		if key == PublicURLKey && !ok {
-			return testPublicURL, true
+			if _, legacySet := values[legacyEnvironmentKey(key)]; !legacySet {
+				return testPublicURL, true
+			}
 		}
 		return value, ok
 	}
 }
 
-const testPostgresURL = "postgres://test:test@localhost:5432/fixthe_test?sslmode=disable"
+const testPostgresURL = "postgres://test:test@localhost:5432/mendry_test?sslmode=disable"
 const testRedisURL = "redis://localhost:6379"
 const testEncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 const testPublicURL = "http://127.0.0.1:8080"

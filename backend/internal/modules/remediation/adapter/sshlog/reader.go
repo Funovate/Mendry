@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (
@@ -519,7 +519,7 @@ func shellQuote(value string) string {
 }
 
 func writeTempKey(credential []byte) (string, func(), error) {
-	directory, err := os.MkdirTemp("", "fixthe-sshlog-")
+	directory, err := os.MkdirTemp("", "mendry-sshlog-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create ssh key directory: %w", err)
 	}

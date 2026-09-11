@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/errtrace"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/observability"
 )
 
 type stackAwareTestError struct {
@@ -275,7 +275,7 @@ func TestAccessLogRedactsPasswordAndOmitsHeaders(t *testing.T) {
 	})
 
 	request := httptest.NewRequest(http.MethodPost, "/login?token=query-secret", strings.NewReader(`{"username":"alice","password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	request.Header.Set("Authorization", "Bearer super-secret-token")
 	AccessLog(logger, 1<<20, false, mux).ServeHTTP(httptest.NewRecorder(), request)
 
@@ -358,7 +358,7 @@ func TestAccessLogOmitsPayloadsWhenDebugOffEvenWithSecrets(t *testing.T) {
 	})
 
 	request := httptest.NewRequest(http.MethodPost, "/login?token=query-secret", strings.NewReader(`{"password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	request.Header.Set("Authorization", "Bearer super-secret-token")
 	AccessLog(logger, 1<<20, false, mux).ServeHTTP(httptest.NewRecorder(), request)
 
@@ -390,13 +390,13 @@ func TestAccessLogDebugAttachesUnredactedDumpOnCompleted(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login", func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = io.ReadAll(request.Body)
-		writer.Header().Set("Set-Cookie", "fixthe_session=new-session")
+		writer.Header().Set("Set-Cookie", "mendry_session=new-session")
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"ok":true}`))
 	})
 
 	request := httptest.NewRequest(http.MethodPost, "/login?env=prod&token=query-secret", strings.NewReader(`{"username":"alice","password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	request.Header.Set("Authorization", "Bearer super-secret-token")
 	AccessLog(logger, 1<<20, true, mux).ServeHTTP(httptest.NewRecorder(), request)
 
@@ -416,14 +416,14 @@ func TestAccessLogDebugAttachesUnredactedDumpOnCompleted(t *testing.T) {
 	}
 	headers, _ := completed[observability.FieldHTTPRequestHeaders].(string)
 	if !strings.Contains(headers, "Authorization: Bearer super-secret-token") ||
-		!strings.Contains(headers, "Cookie: fixthe_session=super-secret-session") {
+		!strings.Contains(headers, "Cookie: mendry_session=super-secret-session") {
 		t.Fatalf("http.request_headers = %#v", headers)
 	}
 	if completed[observability.FieldHTTPResponse] != `{"ok":true}` {
 		t.Fatalf("http.response = %#v", completed[observability.FieldHTTPResponse])
 	}
 	responseHeaders, _ := completed[observability.FieldHTTPResponseHeaders].(string)
-	if !strings.Contains(responseHeaders, "Set-Cookie: fixthe_session=new-session") {
+	if !strings.Contains(responseHeaders, "Set-Cookie: mendry_session=new-session") {
 		t.Fatalf("http.response_headers = %#v", responseHeaders)
 	}
 	if _, ok := completed[observability.FieldHTTPRequestTruncated]; ok {
@@ -459,7 +459,7 @@ func TestAccessLogDebugConsoleShowsPathForUnmatchedScan(t *testing.T) {
 		Writer:      &output,
 		Level:       "info",
 		Format:      "console",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -569,7 +569,7 @@ func TestAccessLogDebugKeepsTraceCorrelationWithoutChangingClientResponse(t *tes
 	var output bytes.Buffer
 	logger := testLogger(t, &output)
 	telemetry, err := observability.NewTelemetry(context.Background(), observability.TelemetryOptions{
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -587,7 +587,7 @@ func TestAccessLogDebugKeepsTraceCorrelationWithoutChangingClientResponse(t *tes
 		_, _ = writer.Write([]byte(`{"ok":true}`))
 	})
 	request := httptest.NewRequest(http.MethodPost, "/items?token=query-secret", strings.NewReader(`{"password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	request.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 	response := httptest.NewRecorder()
 	telemetry.HTTPHandler(AccessLog(logger, 1<<20, true, mux)).ServeHTTP(response, request)
@@ -610,7 +610,7 @@ func TestAccessLogDebugLevelLoggerDoesNotAttachPayloads(t *testing.T) {
 		Writer:      &output,
 		Level:       "debug",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -623,7 +623,7 @@ func TestAccessLogDebugLevelLoggerDoesNotAttachPayloads(t *testing.T) {
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"password":"hunter2"}`))
-	request.Header.Set("Cookie", "fixthe_session=super-secret-session")
+	request.Header.Set("Cookie", "mendry_session=super-secret-session")
 	AccessLog(logger, 1<<20, false, mux).ServeHTTP(httptest.NewRecorder(), request)
 
 	completed := findLogRecord(t, output.Bytes(), observability.EventHTTPCompleted)
@@ -667,7 +667,7 @@ func TestAccessLogIncludesHTTPSpanCorrelation(t *testing.T) {
 	var output bytes.Buffer
 	logger := testLogger(t, &output)
 	telemetry, err := observability.NewTelemetry(context.Background(), observability.TelemetryOptions{
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})
@@ -818,7 +818,7 @@ func testLogger(t *testing.T, writer io.Writer) *slog.Logger {
 		Writer:      writer,
 		Level:       "info",
 		Format:      "json",
-		Service:     "fixthe-test",
+		Service:     "mendry-test",
 		Environment: "test",
 		Build:       buildinfo.Current(),
 	})

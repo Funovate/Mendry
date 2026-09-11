@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // TestPortContractNoCredentials 验证所有 port 接口不暴露凭据、裸客户端或 provider SDK 类型。

@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	testPostgresURLKey       = "FIXTHE_TEST_POSTGRES_URL"
-	testPostgresIsolationKey = "FIXTHE_TEST_POSTGRES_ISOLATION"
+	testPostgresURLKey       = "MENDRY_TEST_POSTGRES_URL"
+	testPostgresIsolationKey = "MENDRY_TEST_POSTGRES_ISOLATION"
 )
 
 func TestIsolatedPostgresTargetFailsClosed(t *testing.T) {
@@ -27,15 +27,15 @@ func TestIsolatedPostgresTargetFailsClosed(t *testing.T) {
 			testPostgresURLKey: "postgres://user:" + secret + "@%invalid/database",
 		}},
 		{name: "non-test database", values: map[string]string{
-			testPostgresURLKey:       "postgres://localhost/fixthe_production",
-			testPostgresIsolationKey: "fixthe_production",
+			testPostgresURLKey:       "postgres://localhost/mendry_production",
+			testPostgresIsolationKey: "mendry_production",
 		}},
 		{name: "test substring is not marker", values: map[string]string{
 			testPostgresURLKey:       "postgres://localhost/contest_production",
 			testPostgresIsolationKey: "contest_production",
 		}},
 		{name: "isolation mismatch", values: map[string]string{
-			testPostgresURLKey:       "postgres://localhost/fixthe_test",
+			testPostgresURLKey:       "postgres://localhost/mendry_test",
 			testPostgresIsolationKey: "another_test",
 		}},
 	}
@@ -54,15 +54,15 @@ func TestIsolatedPostgresTargetFailsClosed(t *testing.T) {
 }
 
 func TestIsolatedPostgresTargetAcceptsExplicitTestDatabase(t *testing.T) {
-	const connectionURL = "postgres://localhost/fixthe_test?sslmode=disable"
+	const connectionURL = "postgres://localhost/mendry_test?sslmode=disable"
 	url, database, err := isolatedPostgresTarget(mapLookup(map[string]string{
 		testPostgresURLKey:       connectionURL,
-		testPostgresIsolationKey: "fixthe_test",
+		testPostgresIsolationKey: "mendry_test",
 	}))
 	if err != nil {
 		t.Fatalf("isolatedPostgresTarget() error = %v", err)
 	}
-	if url != connectionURL || database != "fixthe_test" {
+	if url != connectionURL || database != "mendry_test" {
 		t.Fatalf("target = %q, %q", url, database)
 	}
 }

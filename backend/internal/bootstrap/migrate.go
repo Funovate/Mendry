@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	migratecommand "fixthe/backend/internal/commands/migrate"
-	"fixthe/backend/internal/platform/config"
+	migratecommand "mendry/backend/internal/commands/migrate"
+	"mendry/backend/internal/platform/config"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -18,20 +18,20 @@ func RunMigrate(ctx context.Context, options Options) (result error) {
 		return fmt.Errorf("load migrate configuration: %w", err)
 	}
 
-	logger, logSink, err := logger(options, "fixthe-migrate", migrateConfig.Common)
+	logger, logSink, err := logger(options, "mendry-migrate", migrateConfig.Common)
 	if err != nil {
 		return err
 	}
 	defer closeLogSink(&result, logSink)
-	telemetryRuntime, err := telemetry(ctx, options, "fixthe-migrate", migrateConfig.Common.Environment)
+	telemetryRuntime, err := telemetry(ctx, options, "mendry-migrate", migrateConfig.Common.Environment)
 	if err != nil {
 		return err
 	}
-	ctx, processSpan := telemetryRuntime.Tracer("fixthe/backend/bootstrap").Start(ctx, "process.migrate",
+	ctx, processSpan := telemetryRuntime.Tracer("mendry/backend/bootstrap").Start(ctx, "process.migrate",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	logStart(ctx, logger, "migrate")
-	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "fixthe-migrate", migrateConfig.PostgreSQL)
+	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "mendry-migrate", migrateConfig.PostgreSQL)
 	if err != nil {
 		return finishProcess(ctx, processSpan, telemetryRuntime, migrateConfig.Common.ShutdownTimeout, err)
 	}

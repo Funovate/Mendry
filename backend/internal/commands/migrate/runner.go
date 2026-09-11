@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"fixthe/backend/internal/commands/migrate/migratedb"
-	"fixthe/backend/internal/platform/observability"
-	"fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/commands/migrate/migratedb"
+	"mendry/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/postgres"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"

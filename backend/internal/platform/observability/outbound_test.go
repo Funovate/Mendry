@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 )
 
 func TestHTTPIdentityStripsUserinfoAndQuery(t *testing.T) {
@@ -60,7 +60,7 @@ func TestClassifyOutboundUsesStableClasses(t *testing.T) {
 func TestLogLLMRequestWritesJSONRecord(t *testing.T) {
 	var output bytes.Buffer
 	logger, err := NewLogger(LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test", Build: buildinfo.Current(),
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -194,7 +194,7 @@ func TestLogGitRequestWritesJSONRecord(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		var output bytes.Buffer
 		logger, err := NewLogger(LoggerOptions{
-			Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+			Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test", Build: buildinfo.Current(),
 		})
 		if err != nil {
 			t.Fatalf("NewLogger() error = %v", err)
@@ -242,7 +242,7 @@ func TestLogGitRequestWritesJSONRecord(t *testing.T) {
 	t.Run("failure", func(t *testing.T) {
 		var output bytes.Buffer
 		logger, err := NewLogger(LoggerOptions{
-			Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test", Build: buildinfo.Current(),
+			Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test", Build: buildinfo.Current(),
 		})
 		if err != nil {
 			t.Fatalf("NewLogger() error = %v", err)

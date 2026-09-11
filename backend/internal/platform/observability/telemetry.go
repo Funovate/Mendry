@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"fixthe/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/buildinfo"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/metric"
@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "fixthe/backend"
+const instrumentationName = "mendry/backend"
 
 // TelemetryOptions 声明一个进程实例的本地 OpenTelemetry 身份。
 type TelemetryOptions struct {

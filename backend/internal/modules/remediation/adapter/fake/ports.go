@@ -3,7 +3,7 @@ package fake
 import (
 	"context"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // Repository 是仓库只读占位适配器，供测试使用。

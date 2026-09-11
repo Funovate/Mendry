@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/adapter/logging"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/modules/remediation/adapter/logging"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 var remediationSecretMarkers = []string{

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 type fakeLifecycleStore struct {
@@ -372,6 +372,25 @@ func TestLifecyclePlanPolicyFeedsRecoverableFeedbackIntoPlanning(t *testing.T) {
 	}
 	if len(checkpoints.appends) < 2 {
 		t.Fatalf("planning checkpoints = %d, want recovery checkpoint", len(checkpoints.appends))
+	}
+}
+
+func TestAnalysisOnlyRunRejectsInitialAndResumedLifecycleEffects(t *testing.T) {
+	coord, store, _, _, workspace, validation, publication := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+	})
+	startLifecyclePlan(t, coord, store)
+	store.created.AnalysisOnly = true
+
+	if _, err := coord.ApplyPlan(context.Background(), "run-1", "p1"); !errors.Is(err, application.ErrLifecycleUnavailable) {
+		t.Fatalf("ApplyPlan() error = %v", err)
+	}
+	forceLifecycleState(store, domain.RunStatePatching)
+	if _, err := coord.ResumeLifecycle(context.Background(), "run-1"); !errors.Is(err, application.ErrLifecycleUnavailable) {
+		t.Fatalf("ResumeLifecycle() error = %v", err)
+	}
+	if workspace.patches != 0 || validation.calls != 0 || publication.calls != 0 {
+		t.Fatalf("analysis-only external effects = patch:%d validation:%d publication:%d", workspace.patches, validation.calls, publication.calls)
 	}
 }
 

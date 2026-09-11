@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"fixthe/backend/internal/modules/auth/adapter/password"
-	authpostgres "fixthe/backend/internal/modules/auth/adapter/postgres"
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/modules/auth/adapter/password"
+	authpostgres "mendry/backend/internal/modules/auth/adapter/postgres"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/platform/config"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
@@ -28,20 +28,20 @@ func RunBootstrapAdmin(ctx context.Context, options BootstrapAdminOptions) (resu
 	if err != nil {
 		return fmt.Errorf("load bootstrap administrator configuration: %w", err)
 	}
-	logger, logSink, err := logger(options.Options, "fixthe-bootstrap-admin", configuration.Common)
+	logger, logSink, err := logger(options.Options, "mendry-bootstrap-admin", configuration.Common)
 	if err != nil {
 		return err
 	}
 	defer closeLogSink(&result, logSink)
-	telemetryRuntime, err := telemetry(ctx, options.Options, "fixthe-bootstrap-admin", configuration.Common.Environment)
+	telemetryRuntime, err := telemetry(ctx, options.Options, "mendry-bootstrap-admin", configuration.Common.Environment)
 	if err != nil {
 		return err
 	}
-	ctx, processSpan := telemetryRuntime.Tracer("fixthe/backend/bootstrap").Start(ctx, "process.bootstrap_admin",
+	ctx, processSpan := telemetryRuntime.Tracer("mendry/backend/bootstrap").Start(ctx, "process.bootstrap_admin",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	logStart(ctx, logger, "bootstrap-admin")
-	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "fixthe-bootstrap-admin", configuration.PostgreSQL)
+	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "mendry-bootstrap-admin", configuration.PostgreSQL)
 	if err != nil {
 		return finishProcess(ctx, processSpan, telemetryRuntime, configuration.Common.ShutdownTimeout, err)
 	}

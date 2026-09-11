@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"time"
 
-	"fixthe/backend/internal/modules/observations/adapter/postgres/observationdb"
-	"fixthe/backend/internal/modules/observations/application"
-	"fixthe/backend/internal/modules/observations/domain"
-	"fixthe/backend/internal/platform/errtrace"
-	platformpostgres "fixthe/backend/internal/platform/postgres"
+	"mendry/backend/internal/modules/observations/adapter/postgres/observationdb"
+	"mendry/backend/internal/modules/observations/application"
+	"mendry/backend/internal/modules/observations/domain"
+	"mendry/backend/internal/platform/errtrace"
+	platformpostgres "mendry/backend/internal/platform/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"

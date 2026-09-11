@@ -389,8 +389,8 @@ SELECT changed_environment.id AS environment_id,
 FROM changed_environment, changed_repository, changed_source, changed_trigger, changed_llm;
 
 -- name: LookupWebhookToken :one
-SELECT trigger.project_id, source.id AS source_id,
-       COALESCE(trigger.config->>'provider', 'generic')::text AS webhook_provider
+SELECT trigger.project_id, source.id AS source_id, trigger.id AS trigger_id,
+       trigger.config AS trigger_config
 FROM project_triggers AS trigger
 JOIN project_sources AS source
     ON source.project_id = trigger.project_id

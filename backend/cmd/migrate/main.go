@@ -1,4 +1,4 @@
-// Command fixthe-migrate 运行显式的数据库迁移入口。
+// Command mendry-migrate 运行显式的数据库迁移入口。
 package main
 
 import (
@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"fixthe/backend/internal/bootstrap"
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/bootstrap"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	lookup, err := config.WithOptionalDotEnv(os.LookupEnv, ".env")
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "fixthe-migrate: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "mendry-migrate: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -31,7 +31,7 @@ func main() {
 		Build:  buildinfo.Current(),
 	})
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "fixthe-migrate: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "mendry-migrate: %v\n", err)
 		os.Exit(1)
 	}
 }

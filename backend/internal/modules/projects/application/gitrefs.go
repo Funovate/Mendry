@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"fixthe/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/projects/domain"
 )
 
 type GitRef struct {

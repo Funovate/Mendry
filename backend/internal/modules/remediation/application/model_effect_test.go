@@ -3,7 +3,7 @@ package application
 import (
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestModelEffectUsesProviderCallCountAndLegacyDefault(t *testing.T) {

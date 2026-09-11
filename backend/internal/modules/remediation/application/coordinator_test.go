@@ -3,13 +3,14 @@ package application_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // newCoordinator wires the coordinator against the supplied fakes.
@@ -51,6 +52,33 @@ func runStartWithBudget(t *testing.T, model *scriptedModel, limits domain.Budget
 		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
 	})
 	return store, run, err
+}
+
+type droppingAnalysisOnlyStore struct {
+	*fakeRunStore
+}
+
+func (s *droppingAnalysisOnlyStore) CreateSeriesAndRun(ctx context.Context, in domain.NewRun) (domain.Run, error) {
+	run, err := s.fakeRunStore.CreateSeriesAndRun(ctx, in)
+	if err == nil {
+		run.AnalysisOnly = false
+		s.created.AnalysisOnly = false
+	}
+	return run, err
+}
+
+func TestCoordinatorStartFailsClosedWhenStoreDropsAnalysisOnly(t *testing.T) {
+	base := newFakeRunStore()
+	store := &droppingAnalysisOnlyStore{fakeRunStore: base}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("code_fixable")}}
+	coord := application.NewRemediationCoordinatorWithReview(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, base, base)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123", AnalysisOnly: true,
+	})
+	if !errors.Is(err, application.ErrLifecycleUnavailable) || run.RunID == "" || model.calls != 0 || len(base.transitions) != 0 {
+		t.Fatalf("Start() run=%#v error=%v model_calls=%d transitions=%#v", run, err, model.calls, base.transitions)
+	}
 }
 
 // TestCoordinator_RoutesFixabilityToTerminalState verifies each fixability

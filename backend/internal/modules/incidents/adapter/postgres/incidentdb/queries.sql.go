@@ -512,7 +512,7 @@ func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([
 const recordIncidentOccurrence = `-- name: RecordIncidentOccurrence :one
 WITH changed_incident AS (
     UPDATE incidents AS incident
-    SET last_seen = $1,
+    SET last_seen = GREATEST(incident.last_seen, $1),
         occurrence_count = incident.occurrence_count + 1,
         version = incident.version + 1,
         updated_at = clock_timestamp()

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func TestDecodeEnvelope_ValidRequestTool(t *testing.T) {

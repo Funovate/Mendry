@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	incidentapplication "fixthe/backend/internal/modules/incidents/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (
@@ -25,6 +25,7 @@ type TriggerRequest struct {
 	Priority            string
 	Reason              string
 	ContextVersion      int64
+	AnalysisOnly        bool
 }
 
 // FailureReporter 记录 remediation 失败的完整服务端诊断，不接收原始 webhook payload。
@@ -75,7 +76,7 @@ func (t *Trigger) Emit(ctx context.Context, req incidentapplication.RemediationR
 	request := TriggerRequest{
 		IncidentID: req.IncidentID, LifecycleGeneration: req.LifecycleGeneration,
 		DeployedCommit: req.DeployedCommit, Priority: req.Priority, Reason: req.Reason,
-		ContextVersion: req.ContextVersion,
+		ContextVersion: req.ContextVersion, AnalysisOnly: req.AnalysisOnly,
 	}
 	if !qualifies(request) {
 		if request.Reason == TriggerReasonAutomatic {
@@ -167,6 +168,10 @@ func (t *Trigger) emitAutomatic(ctx context.Context, req TriggerRequest) (domain
 		wrapped := fmt.Errorf("latest remediation attempt does not match the requested series")
 		t.reportFailure(ctx, req, wrapped)
 		return domain.Run{}, wrapped
+	}
+	if req.AnalysisOnly && !latest.Run.AnalysisOnly {
+		t.reportFailure(ctx, req, ErrLifecycleUnavailable)
+		return domain.Run{}, ErrLifecycleUnavailable
 	}
 
 	switch latest.Run.State {
@@ -290,7 +295,7 @@ func (t *Trigger) Start(ctx context.Context, req TriggerRequest) (domain.Run, er
 	in := domain.NewRun{
 		IncidentID: req.IncidentID, LifecycleGeneration: req.LifecycleGeneration,
 		DeployedCommit: req.DeployedCommit, Priority: req.Priority, TriggerReason: req.Reason,
-		ContextVersion: req.ContextVersion,
+		ContextVersion: req.ContextVersion, AnalysisOnly: req.AnalysisOnly,
 	}
 	if t.coordinator != nil {
 		run, err := t.coordinator.Start(ctx, in)
@@ -304,6 +309,10 @@ func (t *Trigger) Start(ctx context.Context, req TriggerRequest) (domain.Run, er
 		err = fmt.Errorf("create series and run: %w", err)
 		t.reportFailure(ctx, req, err)
 		return domain.Run{}, err
+	}
+	if req.AnalysisOnly && !run.AnalysisOnly {
+		t.reportFailure(ctx, req, ErrLifecycleUnavailable)
+		return run, ErrLifecycleUnavailable
 	}
 	return run, nil
 }

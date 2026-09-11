@@ -1,4 +1,4 @@
-module fixthe/backend
+module mendry/backend
 
 go 1.25.0
 

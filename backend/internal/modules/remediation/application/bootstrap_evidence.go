@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const (

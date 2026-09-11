@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "source": "local-example",
+  "externalId": "workspace-1",
+  "goal": "perform a workspace write and verify it",
+  "payload": {
+    "requestedPath": "fixture/reversible.txt"
+  },
+  "context": {
+    "environment": "development"
+  }
+}

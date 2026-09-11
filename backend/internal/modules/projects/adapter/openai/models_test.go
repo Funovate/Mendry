@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/observability"
 )
 
 func TestListModelsReturnsSortedIDs(t *testing.T) {
@@ -97,7 +97,7 @@ func TestProbeChatLogsBoundedFailure(t *testing.T) {
 
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
@@ -155,7 +155,7 @@ func TestListModelsLogsBoundedSuccess(t *testing.T) {
 
 	var output bytes.Buffer
 	logger, err := observability.NewLogger(observability.LoggerOptions{
-		Writer: &output, Level: "debug", Format: "json", Service: "fixthe-test", Environment: "test",
+		Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test",
 	})
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)

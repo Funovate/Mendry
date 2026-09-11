@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres/remediationdb"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // CheckpointStore 实现 domain.CheckpointStore：immutable event append 与 latest

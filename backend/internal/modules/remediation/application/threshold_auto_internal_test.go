@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // thresholdStoreStub 是决策单测的最小 domain.CheckpointStore：只满足

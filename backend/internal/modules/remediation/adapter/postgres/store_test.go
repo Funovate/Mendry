@@ -17,9 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func mustStore(t *testing.T, pool *pgxpool.Pool) *postgres.RunStore {
@@ -35,11 +35,11 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
 	ctx := context.Background()
-	// 默认使用本地测试库；开发/CI 环境可用 FIXTHE_POSTGRES_URL 覆盖（例如指向共享的
+	// 默认使用本地测试库；开发/CI 环境可用 MENDRY_POSTGRES_URL 覆盖（例如指向共享的
 	// 测试开发库，fixture 自包含，不依赖 seed 数据）。
-	connStr := os.Getenv("FIXTHE_POSTGRES_URL")
+	connStr := os.Getenv("MENDRY_POSTGRES_URL")
 	if connStr == "" {
-		connStr = "postgres://fixthe:fixthe@localhost:5432/fixthe_test?sslmode=disable"
+		connStr = "postgres://mendry:mendry@localhost:5432/mendry_test?sslmode=disable"
 	}
 
 	pool, err := pgxpool.New(ctx, connStr)

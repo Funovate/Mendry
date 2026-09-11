@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // validSubmittedDiagnosis 返回一个满足全部边界的 submitted diagnosis。

@@ -3,7 +3,7 @@ package application
 import (
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func publicationTargetBranch(tracker *resilientRunState, fallback LifecyclePublicationPolicy) string {

@@ -11,17 +11,18 @@ import (
 	"io"
 	"time"
 
-	"fixthe/backend/internal/modules/auth/application"
-	"fixthe/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/auth/application"
+	"mendry/backend/internal/modules/auth/domain"
 
 	"github.com/google/uuid"
 	redisclient "github.com/redis/go-redis/v9"
 )
 
 const (
-	sessionKeyPrefix = "fixthe:session:v1:"
-	tokenBytes       = 32
-	createAttempts   = 3
+	sessionKeyPrefix       = "mendry:session:v1:"
+	legacySessionKeyPrefix = "fixthe:session:v1:"
+	tokenBytes             = 32
+	createAttempts         = 3
 )
 
 type commandClient interface {
@@ -99,6 +100,11 @@ func (s *Store) Get(ctx context.Context, token string) (application.Session, err
 		return application.Session{}, application.ErrSessionNotFound
 	}
 	payload, err := s.client.Get(ctx, sessionKey(token)).Bytes()
+	key := sessionKey(token)
+	if err == redisclient.Nil {
+		key = legacySessionKey(token)
+		payload, err = s.client.Get(ctx, key).Bytes()
+	}
 	if err == redisclient.Nil {
 		return application.Session{}, application.ErrSessionNotFound
 	}
@@ -116,7 +122,7 @@ func (s *Store) Get(ctx context.Context, token string) (application.Session, err
 		return application.Session{}, fmt.Errorf("Redis session value is invalid")
 	}
 	if !value.ExpiresAt.After(s.now().UTC()) {
-		_ = s.client.Del(ctx, sessionKey(token)).Err()
+		_ = s.client.Del(ctx, key).Err()
 		return application.Session{}, application.ErrSessionNotFound
 	}
 	return application.Session{User: domain.User{
@@ -128,7 +134,7 @@ func (s *Store) Delete(ctx context.Context, token string) error {
 	if !validToken(token) {
 		return nil
 	}
-	if err := s.client.Del(ctx, sessionKey(token)).Err(); err != nil {
+	if err := s.client.Del(ctx, sessionKey(token), legacySessionKey(token)).Err(); err != nil {
 		return fmt.Errorf("delete Redis session: %w", err)
 	}
 	return nil
@@ -150,4 +156,9 @@ func validToken(token string) bool {
 func sessionKey(token string) string {
 	digest := sha256.Sum256([]byte(token))
 	return sessionKeyPrefix + hex.EncodeToString(digest[:])
+}
+
+func legacySessionKey(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return legacySessionKeyPrefix + hex.EncodeToString(digest[:])
 }

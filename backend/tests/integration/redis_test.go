@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
-	"fixthe/backend/internal/platform/observability"
-	platformredis "fixthe/backend/internal/platform/redis"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
+	"mendry/backend/internal/platform/observability"
+	platformredis "mendry/backend/internal/platform/redis"
 )
 
 func TestRedisConnectivityAndOwnedKeyCleanup(t *testing.T) {
@@ -33,7 +33,7 @@ func TestRedisConnectivityAndOwnedKeyCleanup(t *testing.T) {
 	defer cancel()
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	telemetryRuntime, err := observability.NewTelemetry(ctx, observability.TelemetryOptions{
-		Service:     "fixthe-redis-integration",
+		Service:     "mendry-redis-integration",
 		Environment: "test",
 		Build:       buildinfo.Info{Version: "test", Commit: "test", BuildDate: time.Unix(0, 0).UTC().Format(time.RFC3339)},
 	})
@@ -54,9 +54,9 @@ func TestRedisConnectivityAndOwnedKeyCleanup(t *testing.T) {
 	}
 	client, err := platformredis.Open(ctx, platformredis.ClientOptions{
 		Configuration: configuration,
-		Application:   "fixthe-redis-integration",
+		Application:   "mendry-redis-integration",
 		Logger:        logger,
-		Tracer:        telemetryRuntime.Tracer("fixthe/backend/tests/integration"),
+		Tracer:        telemetryRuntime.Tracer("mendry/backend/tests/integration"),
 		MeterProvider: telemetryRuntime.MeterProvider(),
 	})
 	if err != nil {

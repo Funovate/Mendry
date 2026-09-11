@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/projects/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/projects/domain"
 )
 
 const (

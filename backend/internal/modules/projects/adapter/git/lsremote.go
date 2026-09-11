@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/platform/observability"
 )
 
 const (
@@ -113,7 +113,7 @@ func probeOutput(stdout, stderr []byte, err error) []byte {
 }
 
 func writeTempKey(credential []byte) (string, func(), error) {
-	directory, err := os.MkdirTemp("", "fixthe-git-")
+	directory, err := os.MkdirTemp("", "mendry-git-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create git key directory: %w", err)
 	}

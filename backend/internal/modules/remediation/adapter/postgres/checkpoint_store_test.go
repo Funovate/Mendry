@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"fixthe/backend/internal/modules/remediation/adapter/postgres"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/adapter/postgres"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 func checkpointBudgetRecovery() domain.BudgetPlanRecoveryV1 {

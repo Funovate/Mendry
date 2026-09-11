@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"fixthe/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/auth/domain"
 )
 
 var (

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"fixthe/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/auth/domain"
 )
 
 type fakeUsers struct {

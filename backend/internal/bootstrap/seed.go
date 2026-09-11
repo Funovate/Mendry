@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	seedcommand "fixthe/backend/internal/commands/seed"
-	"fixthe/backend/internal/platform/config"
+	seedcommand "mendry/backend/internal/commands/seed"
+	"mendry/backend/internal/platform/config"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -16,20 +16,20 @@ func RunSeed(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return fmt.Errorf("load development seed configuration: %w", err)
 	}
-	logger, logSink, err := logger(options, "fixthe-seed", configuration.Common)
+	logger, logSink, err := logger(options, "mendry-seed", configuration.Common)
 	if err != nil {
 		return err
 	}
 	defer closeLogSink(&result, logSink)
-	telemetryRuntime, err := telemetry(ctx, options, "fixthe-seed", configuration.Common.Environment)
+	telemetryRuntime, err := telemetry(ctx, options, "mendry-seed", configuration.Common.Environment)
 	if err != nil {
 		return err
 	}
-	ctx, processSpan := telemetryRuntime.Tracer("fixthe/backend/bootstrap").Start(ctx, "process.seed",
+	ctx, processSpan := telemetryRuntime.Tracer("mendry/backend/bootstrap").Start(ctx, "process.seed",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	logStart(ctx, logger, "seed")
-	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "fixthe-seed", configuration.PostgreSQL)
+	postgresPool, err := openPostgreSQL(ctx, logger, telemetryRuntime, "mendry-seed", configuration.PostgreSQL)
 	if err != nil {
 		return finishProcess(ctx, processSpan, telemetryRuntime, configuration.Common.ShutdownTimeout, err)
 	}

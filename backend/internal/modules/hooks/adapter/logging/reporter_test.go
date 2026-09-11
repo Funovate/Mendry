@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	hooklogging "fixthe/backend/internal/modules/hooks/adapter/logging"
-	hookapplication "fixthe/backend/internal/modules/hooks/application"
+	hooklogging "mendry/backend/internal/modules/hooks/adapter/logging"
+	hookapplication "mendry/backend/internal/modules/hooks/application"
 )
 
 func TestFailureReporterLogsSafeScopeAndDiagnostics(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"fixthe/backend/internal/platform/errtrace"
-	"fixthe/backend/internal/platform/observability"
+	"mendry/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/observability"
 )
 
 // Options 声明 HTTP server 的依赖和所有资源边界。
@@ -163,6 +163,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 			route = "unmatched"
 		}
 
+		protectedWebhook := route == "POST /hooks/{token}" || strings.HasPrefix(request.URL.Path, "/hooks/")
 		attrs := []slog.Attr{
 			slog.String(observability.FieldComponent, "httpserver"),
 			slog.String(observability.FieldRequestID, RequestID(request.Context())),
@@ -171,7 +172,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 			slog.Int("status", recorder.status),
 			slog.Int64(observability.FieldDurationMS, time.Since(started).Milliseconds()),
 		}
-		if requestDebug {
+		if requestDebug && !protectedWebhook {
 			attrs = appendRequestDebugAttrs(attrs, request, capture, capturedResponse)
 		}
 		observability.Log(request.Context(), logger, slog.LevelInfo, observability.EventHTTPCompleted, "request completed", attrs...)
@@ -179,7 +180,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 		if recorder.internalError != nil {
 			logInternalError(request, logger, route, recorder.status, recorder.internalError, recorder.internalErrorStack)
 		}
-		if !requestDebug && recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
+		if !requestDebug && !protectedWebhook && recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
 			logFailureSnapshot(request, logger, route, recorder.status, capture)
 		}
 	})

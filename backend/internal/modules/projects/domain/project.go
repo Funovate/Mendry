@@ -477,18 +477,25 @@ type mcpConfig struct {
 type WebhookProvider string
 
 const (
-	WebhookProviderGeneric    WebhookProvider = "generic"
-	WebhookProviderTencentCLS WebhookProvider = "tencent_cls"
+	WebhookProviderGeneric       WebhookProvider = "generic"
+	WebhookProviderTencentCLS    WebhookProvider = "tencent_cls"
+	WebhookProviderAWSCloudWatch WebhookProvider = "aws_cloudwatch"
 )
 
-// SignedWebhookConfig is the normalized, non-secret signed webhook contract.
-// Version-1 JSON is accepted and returned as schema version 2 with a generic
-// provider.
+// SignedWebhookConfig 是归一化且不含凭据的 signed webhook 合同。
+// Version 1/2 保持既有 provider 语义；AWS CloudWatch 使用 version 3，
+// 并绑定唯一的标准 SNS Topic ARN。
 type SignedWebhookConfig struct {
-	SchemaVersion    int             `json:"schemaVersion"`
-	Provider         WebhookProvider `json:"provider"`
-	EventTypes       []string        `json:"eventTypes"`
-	DeduplicationKey string          `json:"deduplicationKey"`
+	SchemaVersion    int                         `json:"schemaVersion"`
+	Provider         WebhookProvider             `json:"provider"`
+	EventTypes       []string                    `json:"eventTypes"`
+	DeduplicationKey string                      `json:"deduplicationKey"`
+	AWSCloudWatch    *AWSCloudWatchWebhookConfig `json:"awsCloudWatch,omitempty"`
+}
+
+// AWSCloudWatchWebhookConfig 保存允许向该 trigger 投递的唯一标准 SNS Topic ARN。
+type AWSCloudWatchWebhookConfig struct {
+	TopicARN string `json:"topicArn"`
 }
 
 type webhookConfigV1 struct {
@@ -502,6 +509,14 @@ type webhookConfigV2 struct {
 	Provider         WebhookProvider `json:"provider"`
 	EventTypes       []string        `json:"eventTypes"`
 	DeduplicationKey string          `json:"deduplicationKey"`
+}
+
+type webhookConfigV3 struct {
+	SchemaVersion    int                         `json:"schemaVersion"`
+	Provider         WebhookProvider             `json:"provider"`
+	EventTypes       []string                    `json:"eventTypes"`
+	DeduplicationKey string                      `json:"deduplicationKey"`
+	AWSCloudWatch    *AWSCloudWatchWebhookConfig `json:"awsCloudWatch"`
 }
 
 // ParseSSHSourceConfig strictly decodes a project SSH source and normalizes
@@ -581,9 +596,60 @@ func ParseSignedWebhookConfig(raw json.RawMessage) (SignedWebhookConfig, error) 
 			EventTypes:       append([]string(nil), value.EventTypes...),
 			DeduplicationKey: value.DeduplicationKey,
 		}, nil
+	case 3:
+		var value webhookConfigV3
+		if err := decodeStrict(raw, &value); err != nil || value.Provider != WebhookProviderAWSCloudWatch ||
+			len(value.EventTypes) != 1 || value.EventTypes[0] != "alarm" || value.DeduplicationKey != "alarm_arn" ||
+			value.AWSCloudWatch == nil || !validAWSTopicARN(value.AWSCloudWatch.TopicARN) {
+			return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid")
+		}
+		return SignedWebhookConfig{
+			SchemaVersion: 3, Provider: value.Provider,
+			EventTypes: append([]string(nil), value.EventTypes...), DeduplicationKey: value.DeduplicationKey,
+			AWSCloudWatch: &AWSCloudWatchWebhookConfig{TopicARN: strings.TrimSpace(value.AWSCloudWatch.TopicARN)},
+		}, nil
 	default:
 		return SignedWebhookConfig{}, fmt.Errorf("signed webhook config is invalid")
 	}
+}
+
+func validAWSTopicARN(value string) bool {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[1] != "aws" || parts[2] != "sns" ||
+		!knownAWSCommercialRegion(parts[3]) || len(parts[4]) != 12 || !bounded(parts[5], 1, 256) ||
+		strings.HasSuffix(parts[5], ".fifo") || !validAWSTopicName(parts[5]) {
+		return false
+	}
+	for _, digit := range parts[4] {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func knownAWSCommercialRegion(value string) bool {
+	switch value {
+	case "af-south-1", "ap-east-1", "ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3",
+		"ap-south-1", "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
+		"ap-southeast-5", "ap-southeast-6", "ap-southeast-7", "ca-central-1", "ca-west-1", "eu-central-1", "eu-central-2",
+		"eu-north-1", "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3",
+		"il-central-1", "me-central-1", "me-south-1", "mx-central-1", "sa-east-1",
+		"us-east-1", "us-east-2", "us-west-1", "us-west-2":
+		return true
+	default:
+		return false
+	}
+}
+
+func validAWSTopicName(value string) bool {
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func configSchemaVersion(raw []byte) (int, error) {

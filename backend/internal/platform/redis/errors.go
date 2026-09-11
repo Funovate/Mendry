@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net"
 
-	"fixthe/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/errtrace"
 
 	redisclient "github.com/redis/go-redis/v9"
 )

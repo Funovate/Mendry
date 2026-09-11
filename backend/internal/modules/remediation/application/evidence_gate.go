@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // EvidenceResolver resolves model references against project/run-owned

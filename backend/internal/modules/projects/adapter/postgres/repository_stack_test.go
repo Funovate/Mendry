@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/errtrace"
 )
 
 func repositoryErrorForStackTest() error {

@@ -14,21 +14,21 @@ type poolMetrics struct {
 }
 
 func newPoolMetrics(meter metric.Meter, client *redisclient.Client) (*poolMetrics, error) {
-	connections, err := meter.Int64ObservableGauge("fixthe.redis.pool.connections",
+	connections, err := meter.Int64ObservableGauge("mendry.redis.pool.connections",
 		metric.WithUnit("{connection}"),
 		metric.WithDescription("Current Redis pool connections by state"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create Redis pool connections metric: %w", err)
 	}
-	pending, err := meter.Int64ObservableGauge("fixthe.redis.pool.pending_requests",
+	pending, err := meter.Int64ObservableGauge("mendry.redis.pool.pending_requests",
 		metric.WithUnit("{request}"),
 		metric.WithDescription("Current Redis requests waiting for a connection"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create Redis pending requests metric: %w", err)
 	}
-	waits, err := meter.Int64ObservableCounter("fixthe.redis.pool.waits",
+	waits, err := meter.Int64ObservableCounter("mendry.redis.pool.waits",
 		metric.WithUnit("{wait}"),
 		metric.WithDescription("Cumulative Redis connection pool waits"),
 	)

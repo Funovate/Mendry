@@ -5,11 +5,11 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BIN_DIR ?= bin
 
-LDFLAGS := -X fixthe/backend/internal/platform/buildinfo.Version=$(VERSION) \
-	-X fixthe/backend/internal/platform/buildinfo.Commit=$(COMMIT) \
-	-X fixthe/backend/internal/platform/buildinfo.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X mendry/backend/internal/platform/buildinfo.Version=$(VERSION) \
+	-X mendry/backend/internal/platform/buildinfo.Commit=$(COMMIT) \
+	-X mendry/backend/internal/platform/buildinfo.BuildDate=$(BUILD_DATE)
 
-.PHONY: fmt vet test test-race build build-check check generate generate-check run-api run-migrate bootstrap-admin seed
+.PHONY: fmt vet test test-race build build-agentcore-local build-mcp-workspace build-check check generate generate-check run-api run-migrate bootstrap-admin seed
 
 fmt:
 	$(GO) fmt ./...
@@ -29,6 +29,16 @@ build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/migrate ./cmd/migrate
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/bootstrap-admin ./cmd/bootstrap-admin
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/seed ./cmd/seed
+	$(GO) build -o $(BIN_DIR)/agentcore-local ./cmd/agentcore-local
+	$(GO) build -o $(BIN_DIR)/mcp-workspace ./examples/mcp-workspace
+
+build-agentcore-local:
+	mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BIN_DIR)/agentcore-local ./cmd/agentcore-local
+
+build-mcp-workspace:
+	mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BIN_DIR)/mcp-workspace ./examples/mcp-workspace
 
 build-check:
 	$(GO) build ./cmd/...

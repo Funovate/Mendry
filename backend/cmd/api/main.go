@@ -1,4 +1,4 @@
-// Command fixthe-api 启动对外提供 HTTP 服务的 API 进程。
+// Command mendry-api 启动对外提供 HTTP 服务的 API 进程。
 package main
 
 import (
@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"fixthe/backend/internal/bootstrap"
-	"fixthe/backend/internal/platform/buildinfo"
-	"fixthe/backend/internal/platform/config"
+	"mendry/backend/internal/bootstrap"
+	"mendry/backend/internal/platform/buildinfo"
+	"mendry/backend/internal/platform/config"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	lookup, err := config.WithOptionalDotEnv(os.LookupEnv, ".env")
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "fixthe-api: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "mendry-api: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -31,7 +31,7 @@ func main() {
 		Build:  buildinfo.Current(),
 	})
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "fixthe-api: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "mendry-api: %v\n", err)
 		os.Exit(1)
 	}
 }

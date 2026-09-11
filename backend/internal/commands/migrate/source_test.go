@@ -46,8 +46,13 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 18 || migrations[0].Version != 1 || migrations[1].Version != 2 || migrations[2].Version != 3 || migrations[3].Version != 4 || migrations[4].Version != 5 || migrations[5].Version != 6 || migrations[6].Version != 7 || migrations[7].Version != 8 || migrations[8].Version != 9 || migrations[9].Version != 10 || migrations[10].Version != 11 || migrations[11].Version != 12 || migrations[12].Version != 13 || migrations[13].Version != 14 || migrations[14].Version != 15 || migrations[15].Version != 16 || migrations[16].Version != 17 || migrations[17].Version != 18 {
-		t.Fatalf("migrations = %#v", migrations)
+	if len(migrations) != 19 {
+		t.Fatalf("migration count = %d, want 19", len(migrations))
+	}
+	for index, migration := range migrations {
+		if migration.Version != int64(index+1) {
+			t.Fatalf("migration[%d].Version = %d, want %d", index, migration.Version, index+1)
+		}
 	}
 	if migrations[1].Name != "create_mvp_data" {
 		t.Fatalf("migration 000002 name = %q", migrations[1].Name)
@@ -214,6 +219,9 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 		if !strings.Contains(migrations[17].SQL, fragment) {
 			t.Errorf("migration 000018 does not contain %q", fragment)
 		}
+	}
+	if migrations[18].Name != "remediation_analysis_only" || !strings.Contains(migrations[18].SQL, "ADD COLUMN analysis_only boolean NOT NULL DEFAULT false") {
+		t.Fatalf("migration 000019 is invalid: %#v", migrations[18])
 	}
 	requiredProjectSchema := []string{
 		"CREATE TABLE projects",

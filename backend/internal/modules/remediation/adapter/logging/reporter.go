@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	remediationapplication "fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/platform/errtrace"
-	"fixthe/backend/internal/platform/observability"
+	remediationapplication "mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/platform/errtrace"
+	"mendry/backend/internal/platform/observability"
 )
 
 const maximumErrorCauses = 32

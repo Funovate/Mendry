@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // hardRejectedCodeFixableEnvelope 返回一个会被 evidence gate 硬拒绝的

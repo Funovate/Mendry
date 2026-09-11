@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	authhttp "fixthe/backend/internal/modules/auth/adapter/http"
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	"fixthe/backend/internal/modules/projects/application"
-	"fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/platform/httpserver"
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	"mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/platform/httpserver"
 )
 
 type service interface {

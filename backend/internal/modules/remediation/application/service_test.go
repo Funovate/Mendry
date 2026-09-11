@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	authdomain "fixthe/backend/internal/modules/auth/domain"
-	projectapplication "fixthe/backend/internal/modules/projects/application"
-	projectdomain "fixthe/backend/internal/modules/projects/domain"
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 const testProjectID = "019ff544-405c-7d21-9f10-cb3fc579605c"

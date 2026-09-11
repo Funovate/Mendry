@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 // maxRuntimeEvidenceBytes 是 canonical runtime evidence payload 的上限，与模型
@@ -242,7 +242,7 @@ var runtimeCredentialAssignmentPattern = regexp.MustCompile(`(?i)(["']?[A-Za-z0-
 
 // sanitizeRuntimeOutput 应用与模型边界相同的结构化/文本凭据脱敏，并额外移除
 // 复合 credential key（如 AWS_SECRET_ACCESS_KEY）、PEM private-key 块与
-// fixthe-ssh* 临时 key 路径。persistence 与 model context 都消费同一
+// mendry-ssh* 临时 key 路径。persistence 与 model context 都消费同一
 // projection，原始 adapter stdout/stderr 不得越过此边界。
 func sanitizeRuntimeOutput(value string) string {
 	value = redactConversationText(value)

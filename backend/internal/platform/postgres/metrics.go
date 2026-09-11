@@ -14,21 +14,21 @@ type poolMetrics struct {
 }
 
 func newPoolMetrics(meter metric.Meter, pool *pgxpool.Pool) (*poolMetrics, error) {
-	connections, err := meter.Int64ObservableGauge("fixthe.postgres.pool.connections",
+	connections, err := meter.Int64ObservableGauge("mendry.postgres.pool.connections",
 		metric.WithUnit("{connection}"),
 		metric.WithDescription("Current PostgreSQL pool connections by state"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create PostgreSQL pool connections metric: %w", err)
 	}
-	maximum, err := meter.Int64ObservableGauge("fixthe.postgres.pool.max_connections",
+	maximum, err := meter.Int64ObservableGauge("mendry.postgres.pool.max_connections",
 		metric.WithUnit("{connection}"),
 		metric.WithDescription("Configured PostgreSQL pool connection limit"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create PostgreSQL pool limit metric: %w", err)
 	}
-	waiters, err := meter.Int64ObservableGauge("fixthe.postgres.pool.wait_count",
+	waiters, err := meter.Int64ObservableGauge("mendry.postgres.pool.wait_count",
 		metric.WithUnit("{acquire}"),
 		metric.WithDescription("Cumulative PostgreSQL acquires that waited for capacity"),
 	)

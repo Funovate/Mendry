@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"fixthe/backend/internal/modules/remediation/application"
-	"fixthe/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
 )
 
 type catalogRuntime struct {
@@ -160,6 +160,69 @@ func TestAnalysisOnlyCatalogSkipsDynamicRuntimeAndEvidenceTools(t *testing.T) {
 	}
 	if runtime.discoverCalls != 0 || len(runtime.calls) != 0 || runtime.closeCalls != 0 {
 		t.Fatalf("analysis-only runtime calls = discover:%d call:%d close:%d", runtime.discoverCalls, len(runtime.calls), runtime.closeCalls)
+	}
+}
+
+func TestCoordinatorUsesPersistedAnalysisOnlyCatalogForAutomaticRoot(t *testing.T) {
+	store := newFakeRunStore()
+	runtime := &catalogRuntime{discovered: mcpDiscovery("query_logs")}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, nil, model, nil, nil, store, store, nil,
+		staticSourceCaps{snapshot: mcpSource()}, runtime, &catalogPolicy{snapshot: mcpPolicy("query_logs")},
+	)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+		TriggerReason: application.TriggerReasonAutomatic, AnalysisOnly: true,
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if runtime.discoverCalls != 0 || len(runtime.calls) != 0 || runtime.closeCalls != 0 {
+		t.Fatalf("analysis-only runtime calls = discover:%d call:%d close:%d", runtime.discoverCalls, len(runtime.calls), runtime.closeCalls)
+	}
+	if len(model.turns) == 0 {
+		t.Fatal("analysis-only root did not reach the model")
+	}
+	for _, definition := range model.turns[0].Tools {
+		if !strings.HasPrefix(definition.Name, "repository.") {
+			t.Fatalf("analysis-only root exposed %q", definition.Name)
+		}
+	}
+}
+
+func TestCoordinatorResumeKeepsPersistedAnalysisOnlyCatalog(t *testing.T) {
+	store := newFakeRunStore()
+	store.mode = domain.AgentLoopModeResilientV1
+	run, err := store.CreateSeriesAndRun(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+		TriggerReason: application.TriggerReasonAutomatic, AnalysisOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.state = domain.RunStateDiagnosing
+	store.created.State = domain.RunStateDiagnosing
+
+	runtime := &catalogRuntime{discovered: mcpDiscovery("query_logs")}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, nil, model, nil, nil, store, store, nil,
+		staticSourceCaps{snapshot: mcpSource()}, runtime, &catalogPolicy{snapshot: mcpPolicy("query_logs")},
+	)
+	coord.SetCheckpointStore(&fakeCheckpointStore{runStore: store})
+	if _, err := coord.Resume(context.Background(), run.RunID); err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if runtime.discoverCalls != 0 || len(runtime.calls) != 0 || runtime.closeCalls != 0 {
+		t.Fatalf("resumed analysis-only runtime calls = discover:%d call:%d close:%d", runtime.discoverCalls, len(runtime.calls), runtime.closeCalls)
+	}
+	if len(model.turns) == 0 {
+		t.Fatal("resumed analysis-only run did not reach the model")
+	}
+	for _, definition := range model.turns[0].Tools {
+		if !strings.HasPrefix(definition.Name, "repository.") {
+			t.Fatalf("resumed analysis-only run exposed %q", definition.Name)
+		}
 	}
 }
 
