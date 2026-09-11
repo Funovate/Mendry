@@ -190,7 +190,7 @@ html:has(.home) footer.sl-flex {
 .home-brand-scene {
   width: 100%;
   max-width: 31rem;
-  justify-self: center;
+  justify-self: end;
 }
 .home-brand-scene > svg {
   display: block;
@@ -895,6 +895,7 @@ html:has(.home) footer.sl-flex {
   }
   .home-brand-scene {
     max-width: 18rem;
+    justify-self: center;
   }
   .home-section-top {
     display: block;
