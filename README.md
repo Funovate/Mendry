@@ -12,11 +12,11 @@
 </p>
 
 <p align="center">
-  <a href="./docs/src/content/docs/docs/index.mdx">Documentation</a> &middot;
-  <a href="./docs/src/content/docs/docs/get-started.mdx">Get started</a> &middot;
-  <a href="./docs/src/content/docs/docs/concepts/architecture.mdx">Architecture</a> &middot;
-  <a href="./docs/src/content/docs/docs/project/status.mdx">Project status</a> &middot;
-  <a href="./docs/src/content/docs/zh-cn/docs/index.mdx">Chinese docs</a>
+  <a href="https://www.mendry.net/docs/">Documentation</a> &middot;
+  <a href="https://www.mendry.net/docs/get-started/">Get started</a> &middot;
+  <a href="https://www.mendry.net/docs/concepts/architecture/">Architecture</a> &middot;
+  <a href="https://www.mendry.net/docs/project/status/">Project status</a> &middot;
+  <a href="https://www.mendry.net/zh-cn/docs/">Chinese docs</a>
 </p>
 
 ---
@@ -69,7 +69,7 @@ Underneath it, the neutral Agent Harness owns the reusable execution contract:
 - unknown write outcomes stop for resolution instead of being replayed blindly;
 - artifacts distinguish model-authored, observed, and independently verified claims.
 
-Read [Agent Harness concepts](./docs/src/content/docs/docs/concepts/agent-harness.mdx)
+Read [Agent Harness concepts](https://www.mendry.net/docs/concepts/agent-harness/)
 for the complete execution and extension boundaries.
 
 ## Project status
@@ -85,7 +85,7 @@ not product ambition.
 | Generic run service and UI      | **Planned**       | Generic event, run, call, and artifact product surfaces are not yet available.                  |
 | Production distribution         | **Planned**       | No supported image, Compose bundle, upgrade path, or rollback package is published.             |
 
-See the [detailed capability matrix](./docs/src/content/docs/docs/project/status.mdx)
+See the [detailed capability matrix](https://www.mendry.net/docs/project/status/)
 before evaluating an integration. PostgreSQL, Redis, accounts, and projects are
 requirements of the existing incident application, not of the neutral Harness
 core.
@@ -141,7 +141,7 @@ npm run dev
 ```
 
 The Vite development server proxies `/api` to `127.0.0.1:8080`. Continue with
-the [source-evaluation guide](./docs/src/content/docs/docs/get-started/bootstrap.mdx)
+the [source-evaluation guide](https://www.mendry.net/docs/get-started/bootstrap/)
 to create a project and configure an incident signal.
 
 ## Repository
