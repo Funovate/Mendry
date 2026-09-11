@@ -28,7 +28,7 @@ dependency audit, a preview build, Playwright browser checks, and the reserved
 public-build contract.
 
 The public contract builds canonical metadata and a sitemap for the approved
-`https://mendry.net` origin. This is a static contract test only; it does not
+`https://www.mendry.net` origin. This is a static contract test only; it does not
 deploy or attach a custom domain.
 
 ## Pages project settings
@@ -49,7 +49,7 @@ until those inputs are supplied:
 | Build output directory | `dist`                               |
 | Node version           | `22.19.0` from `.node-version`       |
 
-The `mendry.net` build contract is not a deployment authorization. A Pages
+The `www.mendry.net` build contract is not a deployment authorization. A Pages
 production build must still use the approved environment variables and release
 checklist below.
 
@@ -70,12 +70,12 @@ Cloudflare's current references for these settings are:
 
 Set variables by Pages environment, not in committed provider configuration:
 
-| Environment                       | `DOCS_PUBLIC_RELEASE` | `PUBLIC_SITE_ORIGIN` |
-| --------------------------------- | --------------------- | -------------------- |
-| Local preview                     | absent or not `true`  | absent               |
-| Pages preview                     | absent or not `true`  | absent               |
-| Pages production, before approval | absent or not `true`  | absent               |
-| Pages production, after approval  | `true`                | `https://mendry.net` |
+| Environment                       | `DOCS_PUBLIC_RELEASE` | `PUBLIC_SITE_ORIGIN`     |
+| --------------------------------- | --------------------- | ------------------------ |
+| Local preview                     | absent or not `true`  | absent                   |
+| Pages preview                     | absent or not `true`  | absent                   |
+| Pages production, before approval | absent or not `true`  | absent                   |
+| Pages production, after approval  | `true`                | `https://www.mendry.net` |
 
 `PUBLIC_SITE_ORIGIN` must be the approved HTTPS custom origin, without a port,
 path, query, or fragment. A `pages.dev` hostname is never an acceptable
@@ -122,7 +122,7 @@ has passed from a clean install on Node `22.19.0`.
    `dist`.
 2. Confirm the production environment alone has
    `DOCS_PUBLIC_RELEASE=true` and the approved
-   `PUBLIC_SITE_ORIGIN=https://mendry.net`.
+   `PUBLIC_SITE_ORIGIN=https://www.mendry.net`.
 3. Build the candidate from the approved commit and inspect the Pages build log
    for a zero exit status and the expected `dist` output.
 4. Attach the approved custom domain in the Workers & Pages dashboard under
@@ -139,7 +139,7 @@ project through the dashboard first.
 
 ## Production smoke checks
 
-Run the same route and asset checks against `https://mendry.net`. The public
+Run the same route and asset checks against `https://www.mendry.net`. The public
 build contract is a local static-output test; it does not prove that the domain
 is attached to the intended Pages deployment:
 
@@ -148,7 +148,7 @@ is attached to the intended Pages deployment:
 - Canonical URLs use the approved origin exactly; `en`, `zh-CN`, and `x-default`
   alternates point to the reciprocal routes.
 - `robots.txt` allows crawling and references
-  `https://mendry.net/sitemap-index.xml`; the sitemap index and its
+  `https://www.mendry.net/sitemap-index.xml`; the sitemap index and its
   child sitemap contain only the approved origin.
 - The response is indexable only after the explicit release gate is approved;
   `X-Robots-Tag: noindex` must remain on `pages.dev` preview responses.
@@ -181,7 +181,7 @@ and are not changed by rollback.
 Do not set `DOCS_PUBLIC_RELEASE=true`, attach a custom domain, submit the site
 to search engines, or publish installation commands until every item is checked:
 
-- [x] The approved static-build origin is recorded as `https://mendry.net`;
+- [x] The approved static-build origin is recorded as `https://www.mendry.net`;
       domain ownership and Pages attachment remain separate unchecked inputs.
 - [ ] Cloudflare account ownership and operator access are recorded as
       `<CLOUDFLARE_ACCOUNT>` and `<PAGES_PROJECT>`.

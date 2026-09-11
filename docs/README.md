@@ -39,7 +39,7 @@ emit `noindex, nofollow`, disallow crawlers in `robots.txt`, and do not emit a
 sitemap.
 
 The public contract is deliberately separate and uses the reserved
-`https://mendry.net` origin:
+`https://www.mendry.net` origin:
 
 ```bash
 npm run build:public

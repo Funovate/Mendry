@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **fixthe** (12820 symbols, 49143 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Mendry** (12964 symbols, 49957 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -25,10 +25,10 @@ This project is indexed by GitNexus as **fixthe** (12820 symbols, 49143 relation
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/fixthe/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/fixthe/clusters` | All functional areas |
-| `gitnexus://repo/fixthe/processes` | All execution flows |
-| `gitnexus://repo/fixthe/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/Mendry/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/Mendry/clusters` | All functional areas |
+| `gitnexus://repo/Mendry/processes` | All execution flows |
+| `gitnexus://repo/Mendry/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

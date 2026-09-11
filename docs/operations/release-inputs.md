@@ -8,7 +8,7 @@ It is not deployment, DNS, domain-ownership, indexing, or package-release
 authorization.
 
 The approved active brand is `Mendry`. The formal documentation origin
-for the static public contract is `https://mendry.net`; documentation routes
+for the static public contract is `https://www.mendry.net`; documentation routes
 remain `/docs/` and `/zh-cn/docs/`.
 
 The owner-supplied canonical source repository is
@@ -24,7 +24,7 @@ remote configuration is separate from this supplied repository URL.
 | Node line                        | `docs/.node-version`                                                                                     | `22.19.0`                                                                                                                                          |
 | Pages build                      | `docs/README.md`, `docs/operations/publication.md`                                                       | Root `docs`, command `npm run build`, output `dist`                                                                                                |
 | Preview behavior                 | `docs/astro.config.mjs`, `docs/scripts/verify.mjs`                                                       | Non-indexable preview with no canonical or sitemap; `robots.txt` disallows `/`                                                                     |
-| Public contract                  | `docs/scripts/build-public.mjs`, `docs/scripts/public-origin.mjs`                                        | Static contract uses `DOCS_PUBLIC_RELEASE=true` and `PUBLIC_SITE_ORIGIN=https://mendry.net`                                                        |
+| Public contract                  | `docs/scripts/build-public.mjs`, `docs/scripts/public-origin.mjs`                                        | Static contract uses `DOCS_PUBLIC_RELEASE=true` and `PUBLIC_SITE_ORIGIN=https://www.mendry.net`                                                    |
 | Backend/frontend version markers | `frontend/package.json`, `backend/go.mod`                                                                | Frontend package `mendry` version `0.1.0`; Go module `mendry/backend`                                                                              |
 | Product installation status      | Paired `docs/src/content/docs/**/get-started/install.mdx` pages                                          | `planned`; no customer installation artifact is claimed                                                                                            |
 | Security boundary                | `docs/src/content/docs/docs/concepts/security.mdx` and backend sources                                   | Product security/authority behavior is documented; this is not a substitute for an approved public security policy or support process              |
@@ -42,7 +42,7 @@ longer part of the production docs surface; historical prototype files were arch
 
 | Input                                 | What must be supplied or decided                                                                                                                                      | Why it blocks publication                                                                                      |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Domain ownership and Pages attachment | Confirm control of `mendry.net`, attach it to the approved Pages project, and record the production HTTP smoke result. No DNS or Pages action was performed here.     | A build origin is not evidence that the domain resolves to the intended deployment.                            |
+| Domain ownership and Pages attachment | Confirm control of `www.mendry.net`, attach it to the approved Pages project, and record the production HTTP smoke result. No DNS or Pages action was performed here. | A build origin is not evidence that the domain resolves to the intended deployment.                            |
 | Cloudflare project and access         | Record the Cloudflare account, Pages project, operator access, connected repository, and production branch.                                                           | The repository contains no provider account/project configuration; the source repository URL is now supplied.  |
 | Production source selection           | Confirm the production branch in `https://github.com/Funovate/Mendry`, then record the candidate commit.                                                              | The canonical repository is supplied, but the production branch and candidate commit are not yet recorded.     |
 | License and attribution               | Approve a repository license and any attribution obligations, including treatment of bundled/vendor media.                                                            | No repository license or legal publication decision is present.                                                |
@@ -59,7 +59,7 @@ Until the inputs above are recorded and approved:
 
 - Keep `DOCS_PUBLIC_RELEASE` absent or not `true` for previews.
 - Keep preview responses `noindex, nofollow`, with no canonical or sitemap.
-- Use `npm run build:public` only as the static `https://mendry.net` contract
+- Use `npm run build:public` only as the static `https://www.mendry.net` contract
   test; it does not deploy, attach the domain, or enable indexing.
 - Keep the installation page `planned` and do not add unsupported image, package,
   Compose, or shell instructions.
@@ -80,7 +80,7 @@ Result: passed
 - Production dependency audit: 0 vulnerabilities
 - Preview build: 40 routes and 41 generated pages; preview metadata verified
 - Browser tests: 52 passed, 2 intentional mobile Pagefind skips
-- Public build: canonical/locale/sitemap contract passed for https://mendry.net
+- Public build: canonical/locale/sitemap contract passed for https://www.mendry.net
 - Final restoration: preview output restored; no canonical or sitemap remained
 ```
 
