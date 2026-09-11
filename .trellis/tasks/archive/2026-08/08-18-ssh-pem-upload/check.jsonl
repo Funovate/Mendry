@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "No third credential editor; secret plaintext only in the active write form."}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Name-only updates omit value; incomplete replacement must not send empty value."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "E2E must record secrets POST/PATCH bodies and assert key text is gone."}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Inspection helper stays in configuration.ts; no API schema change."}
-{"file": ".trellis/tasks/08-18-ssh-pem-upload/prd.md", "reason": "Acceptance criteria AC1-AC7 and out-of-scope boundaries."}
-{"file": ".trellis/tasks/08-18-ssh-pem-upload/design.md", "reason": "Shared inspect helper, kind-gated UI, no backend contract change."}

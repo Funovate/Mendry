@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "SSH/Docker adapter contracts, credential injection, process execution rules for the filtered remote command"}
-{"file": ".trellis/spec/backend/remediation-evidence-guidelines.md", "reason": "Evidence projection and bounded-read rules the docker tool summary must follow"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "RejectArguments error shape and safe error mapping conventions"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Observer/payload logging rules for the new summary fields"}

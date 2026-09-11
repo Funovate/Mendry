@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality checklist entry point"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review visual, interaction, and accessibility conventions"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Review full build and browser validation gate"}
-{"file": ".trellis/tasks/09-06-project-docs-starlight/research/starlight-baseline.md", "reason": "Check implementation against researched platform constraints"}

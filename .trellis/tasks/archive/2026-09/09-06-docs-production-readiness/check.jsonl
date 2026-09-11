@@ -1,2 +1,0 @@
-{"file":".trellis/spec/docs/index.md","reason":"Scopes final review to the documentation package and its supported interfaces."}
-{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Supplies the exact build, release-gate, browser, security, and static-hosting checks."}

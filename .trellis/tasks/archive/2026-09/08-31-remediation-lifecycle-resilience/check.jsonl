@@ -1,8 +1,0 @@
-{"file":".trellis/spec/backend/remediation-adapter-guidelines.md","reason":"Verify tool, provider, credential, and authority boundaries."}
-{"file":".trellis/spec/backend/remediation-evidence-guidelines.md","reason":"Verify evidence authenticity, rehydration, and disclosure behavior."}
-{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify transactional checkpoint and migration correctness."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify backend tests, race checks, vet, and build gates."}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify incident review UI behavior and frontend quality gates."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify additive API schema handling and legacy compatibility."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check recovery contracts are shared rather than duplicated by phase."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check checkpoint/recovery data flow from database through UI."}

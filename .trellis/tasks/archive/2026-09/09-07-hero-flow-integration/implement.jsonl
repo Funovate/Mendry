@@ -1,6 +1,0 @@
-{"file":".trellis/spec/docs/index.md","reason":"Docs package scope and pre-development checklist"}
-{"file":".trellis/spec/docs/quality-guidelines.md","reason":"Static build, media, accessibility, locale, and browser contracts"}
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Shared component, styling, media, and accessibility conventions"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Browser and build validation expectations"}
-{"file":".trellis/tasks/09-06-project-docs-starlight/research/hero-flow-design.md","reason":"Approved composition, motion lifecycle, fallback, and limitations"}
-{"file":".trellis/tasks/09-06-project-docs-starlight/research/hero-flow-concept.html","reason":"Reviewed prototype markup and visual reference"}

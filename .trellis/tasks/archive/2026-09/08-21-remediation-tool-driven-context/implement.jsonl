@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/backend/remediation-adapter-guidelines.md", "reason": "Frozen Git/SSH/OpenAI ports, SSH exec options, credential isolation, and composition-root wiring."}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Chinese comments, package doc.go, testing gates, and forbidden global state."}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "SSH evidence completion fields, bounded diagnostics, and tool observation logging."}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Safe error wrapping and diagnostic boundaries between adapter and model."}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Composition-root wiring for new inspect port without leaking adapter types upward."}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Inspect command crosses gateway parse, SSH adapter exec, conversation payload, and operator logs."}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing sshlog exec/auth rather than a second SSH client."}

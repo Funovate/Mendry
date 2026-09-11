@@ -21,4 +21,10 @@ backend/*.out
 .idea/
 .vscode/
 *.swp
+
+# Local agent tooling and root-level test output
+.pi/
+test-results/
+.claude/settings.local.json
+
 backend/api
