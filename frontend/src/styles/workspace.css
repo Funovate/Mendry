@@ -1,0 +1,253 @@
+/* Workspace presentation: quiet surfaces, clear hierarchy, useful information. */
+.app-shell,
+.project-directory {
+  --color-canvas: #faf9f5;
+  --color-surface: #fffefa;
+  --color-surface-muted: #f3f0e7;
+  --color-border: #dedfd5;
+  --color-border-soft: #e9e8df;
+  --color-accent-soft: #edf1e8;
+  --color-heading: #17281f;
+  --color-ink: #17281f;
+  --color-text: #34483d;
+  --color-muted: #45594d;
+  --color-subtle: #526357;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.6;
+  --sidebar-width: 232px;
+  background: var(--color-canvas);
+}
+.app-shell { --topbar-height: 0px; }
+.app-shell .sidebar {
+  padding: 32px 18px 24px;
+  background: var(--color-surface-muted);
+  border-color: var(--color-border-soft);
+}
+.app-shell .brand { padding: 4px 10px 38px; }
+.app-shell .brand-logo { width: 146px; height: auto; }
+.app-shell .project-switcher-row,
+.app-shell .project-switcher-edit {
+  min-height: 46px;
+  padding-left: 12px;
+  background: transparent;
+  border-color: var(--color-border);
+  border-radius: 8px;
+}
+.app-shell .project-switcher strong { display: block; font-size: 14px; font-weight: 600; }
+.app-shell .sidebar nav { gap: 6px; margin-top: 30px; }
+.app-shell .sidebar nav a { min-height: 44px; padding-inline: 12px; font-weight: 600; }
+.app-shell .sidebar nav a.nav-active {
+  color: #f3f0e7;
+  background: #17281f;
+  box-shadow: none;
+}
+.app-shell .sidebar nav a.nav-active svg { color: #d5aa6e; }
+.app-shell .sidebar-foot { display: flex; align-items: center; gap: 12px; border-top: 0; padding: 24px 10px 0; }
+.app-shell .sidebar-foot .user-card { flex: 1; }
+.app-shell .sidebar-foot > .icon-button { width: 40px; height: 40px; background: transparent; border-color: transparent; }
+.app-shell .sidebar-foot > .icon-button:hover { color: var(--color-accent); background: var(--color-accent-soft); }
+.app-shell .user-card { margin-top: 0; gap: 11px; min-width: 0; }
+.app-shell .user-card > div:last-child { min-width: 0; }
+.app-shell .user-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.app-shell .user-card small { margin-top: 4px; text-transform: capitalize; }
+.app-shell .avatar { width: 34px; height: 34px; flex-shrink: 0; background: #e8e2d3; color: #17281f; font-weight: 600; }
+.app-shell .topbar { display: none; padding-inline: 36px; background: transparent; border-bottom-color: var(--color-border-soft); }
+.app-shell .breadcrumbs { font-size: 14px; }
+.app-shell .topbar .icon-button { background: transparent; border-color: transparent; }
+.app-shell .settings-view { max-width: 1280px; margin-inline: auto; padding: 0 36px 40px; }
+.app-shell .view-header { min-height: 120px; padding-block: 36px 28px; }
+.app-shell .view-header h1,
+.app-shell .setup-header h1,
+.project-directory h1 { margin: 0; font-size: 32px; font-weight: 600; letter-spacing: -0.045em; }
+.app-shell .primary-button,
+.project-directory .primary-button { color: #f3f0e7; background: #17281f; border-color: #17281f; }
+.app-shell .primary-button:hover:not(:disabled),
+.project-directory .primary-button:hover:not(:disabled) { background: #294536; border-color: #294536; }
+.app-shell .secondary-button,
+.project-directory .secondary-button { background: transparent; }
+.app-shell :is(.primary-button, .secondary-button),
+.project-directory :is(.primary-button, .secondary-button) { min-height: 40px; font-weight: 600; }
+.app-shell :is(.primary-button, .secondary-button, .icon-button, .sidebar nav a, .incident-row),
+.project-directory :is(.primary-button, .secondary-button, .project-row, .create-project-row) {
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.app-shell .table-wrap,
+.app-shell .event-list { border-inline: 0; border-radius: 0; background: transparent; }
+.app-shell .table-wrap th { padding: 15px 18px; background: transparent; font-size: 13px; font-weight: 600; }
+.app-shell .table-wrap td { padding: 20px 18px; font-size: 15px; }
+.app-shell .table-wrap tbody tr:hover { background: var(--color-surface-muted); }
+.app-shell .table-wrap td:first-child { color: var(--color-ink); }
+.app-shell .table-action { min-height: 32px; padding-inline: 10px; margin-left: 12px; font-size: 14px; font-weight: 600; border-radius: 6px; }
+.app-shell .table-action:hover { background: var(--color-danger-soft); }
+.app-shell .member-form { padding: 0 0 28px; margin-bottom: 0; gap: 16px; border: 0; background: transparent; }
+.app-shell .member-form label { gap: 8px; font-weight: 600; }
+.app-shell .member-form :is(input, select) { min-height: 44px; background: var(--color-surface); }
+.app-shell .member-form .primary-button { min-height: 44px; }
+.app-shell .setup-summary { flex-wrap: wrap; gap: 24px 48px; padding: 0 0 28px; margin: 0; background: transparent; border: 0; border-radius: 0; }
+.app-shell .setup-summary > div { min-width: 0; align-items: flex-start; }
+.app-shell .setup-summary > div > span { min-width: 0; }
+.app-shell .setup-summary strong { font-size: 14px; font-weight: 600; }
+.app-shell .setup-summary small { margin-top: 7px; font-size: 14px; overflow-wrap: anywhere; }
+.app-shell .setup-summary svg { width: 16px; color: var(--color-subtle); }
+.app-shell .event-list article { padding: 22px 18px; gap: 18px; }
+.app-shell .event-list code { font-size: 14px; white-space: normal; overflow-wrap: anywhere; line-height: 1.7; }
+.app-shell .event-list time { display: block; margin-bottom: 4px; font-size: 13px; }
+.app-shell .event-list article > span:last-child { overflow-wrap: anywhere; }
+.app-shell .incidents-layout { grid-template-columns: minmax(280px, 350px) minmax(0, 1fr); }
+.app-shell .incident-list-pane { background: var(--color-canvas); }
+.app-shell .list-header { padding: 32px 24px 24px; }
+.app-shell .list-header h1 { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.045em; }
+.app-shell .list-header h1 span { font-size: 15px; letter-spacing: 0; }
+.app-shell .filter-row { padding: 0 24px 24px; }
+.app-shell .filter-row select { min-width: 120px; height: 36px; background: transparent; }
+.app-shell .incident-row { padding: 22px 24px; }
+.app-shell .incident-row > strong { margin-block: 12px; font-size: 16px; font-weight: 600; }
+.app-shell .incident-id { font-family: var(--font-mono); font-weight: 400; font-size: 13px; }
+.app-shell .row-meta { gap: 8px; }
+.app-shell .incident-row.selected { background: #edf1e8; box-shadow: inset 2px 0 #176d52; }
+.app-shell .status-pill { padding: 4px 8px; font-size: 13px; font-weight: 600; }
+.app-shell .empty-detail { background: var(--color-canvas); }
+.app-shell .empty-detail > svg { width: 36px; height: 36px; stroke-width: 1; color: #839184; margin-bottom: 20px; }
+.app-shell .empty-detail h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.025em; color: var(--color-muted); }
+.app-shell .detail { background: var(--color-surface); }
+.app-shell .detail-header { padding: 32px 28px 26px; }
+.app-shell .detail-header > .icon-button { background: transparent; border-color: transparent; }
+.app-shell .detail-heading h1 { margin-block: 12px 18px; font-size: 24px; font-weight: 600; letter-spacing: -0.035em; }
+.app-shell .detail-heading .eyebrow { font-family: var(--font-mono); font-size: 13px; letter-spacing: 0; overflow-wrap: anywhere; }
+.app-shell .detail-meta { gap: 10px; }
+.app-shell .real-detail-grid { grid-template-columns: minmax(0, 1fr); }
+.app-shell .real-detail-grid > section:first-child { border-right: 0; }
+.app-shell .content-section { padding: 28px; }
+.app-shell .incident-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; border: 0; border-radius: 0; background: transparent; }
+.app-shell .incident-facts > div { padding: 4px 0; background: transparent; }
+.app-shell .incident-facts dt { font-size: 13px; }
+.app-shell .incident-facts dd { margin-top: 8px; color: var(--color-ink); font-size: 15px; }
+.app-shell .panel-heading { margin-bottom: 16px; }
+.app-shell .remediation-panel-heading { padding-bottom: 0; border-bottom: 0; }
+.app-shell .remediation-overview,
+.app-shell .remediation-block { border-inline: 0; border-radius: 0; }
+.app-shell .remediation-overview-header,
+.app-shell .remediation-block-heading { background: transparent; border-bottom-color: var(--color-border-soft); }
+.app-shell .remediation-primary-facts,
+.app-shell .remediation-technical-facts { gap: 12px; background: transparent; }
+.app-shell .remediation-primary-facts > div,
+.app-shell .remediation-technical-facts > div { background: transparent; }
+.app-shell .remediation-overview-header h3,
+.app-shell .remediation-block-heading h3 { font-weight: 600; }
+.app-shell .setup-view { padding: 36px; background: var(--color-canvas); }
+.app-shell .setup-header { margin-bottom: 32px; }
+.app-shell .real-config-form > section { padding: 28px; border-color: var(--color-border-soft); }
+.app-shell .wizard-step-tab { border-color: transparent; background: transparent; border-radius: 0; border-bottom: 2px solid transparent; }
+.app-shell .wizard-step-tab.active { border-color: transparent; border-bottom-color: #17281f; color: #17281f; background: transparent; }
+.app-shell .wizard-step-tab:hover { border-bottom-color: var(--color-border); }
+.app-shell .real-config-form label { font-weight: 600; }
+.app-shell .readonly-note { padding: 8px 10px; background: transparent; }
+.project-directory { padding-top: clamp(32px, 6vw, 80px); }
+.project-directory .directory-logo { width: 156px; height: auto; margin-bottom: 64px; }
+.project-directory > header { margin-bottom: 32px; }
+.project-directory .project-list { border: 0; border-radius: 0; background: transparent; }
+.project-directory :is(.project-row, .create-project-row) { padding: 26px 12px; gap: 18px; background: transparent; }
+.project-directory .project-row:first-child { border-top: 1px solid var(--color-border-soft); }
+.project-directory :is(.project-row, .create-project-row):hover { background: var(--color-surface-muted); }
+.project-directory :is(.project-row, .create-project-row) strong { font-size: 16px; font-weight: 600; }
+.project-directory .project-initial { width: 34px; height: 34px; background: #e8e2d3; color: #17281f; font-weight: 600; }
+.project-directory .project-row small { font-size: 14px; margin-top: 6px; }
+.project-directory .create-project-form { max-width: none; padding: 30px; gap: 22px; border-color: var(--color-border-soft); }
+.project-directory .create-project-form label { gap: 8px; font-weight: 600; }
+.project-directory .create-project-form .field-hint { font-weight: 400; }
+.project-directory .empty-projects { padding: 56px 24px; background: transparent; }
+/* Shared reading sizes also cover feature rules with fixed pixel sizes. */
+.app-shell :is(.sidebar nav a, .primary-button, .secondary-button, .text-button, .back-link, .wizard-step-tab),
+.project-directory :is(.primary-button, .secondary-button, .text-button, .back-link) {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.app-shell :is(.member-form, .real-config-form) label,
+.project-directory .create-project-form label {
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.app-shell :is(.member-form, .real-config-form) :is(input:not([type="checkbox"]), select, textarea),
+.project-directory .create-project-form :is(input, textarea) {
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.app-shell :is(input, textarea)::placeholder,
+.project-directory :is(input, textarea)::placeholder {
+  color: var(--color-subtle);
+  opacity: 1;
+}
+.app-shell :is(.view-header p, .setup-header p, .setup-card-title p, .panel-heading p, .empty-detail p, .remediation-prose),
+.project-directory :is(header p, .empty-projects p) {
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.app-shell :is(.project-switcher small, .user-card small, .row-meta, .time, .detail-meta, .field-hint, .metadata-note, .readonly-note, .remediation-primary-facts dt, .remediation-technical-facts dt, .remediation-block-heading span, .remediation-overview-header p, .attempt-label span, .attempt-details, .remediation-attempts li time, .diagnosis-summary span, .remediation-reference),
+.app-shell .event-list article > span:last-child,
+.project-directory :is(.field-hint, .create-project-row small) {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.app-shell :is(.remediation-primary-facts dd, .remediation-technical-facts dd, .remediation-reference code) {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.app-shell .status-pill { line-height: 1.4; }
+.app-shell .table-wrap th { color: var(--color-muted); }
+.app-shell .table-wrap td { color: var(--color-text); }
+.app-shell .row-meta,
+.app-shell .detail-meta { flex-wrap: wrap; }
+.app-shell .detail-header { flex-wrap: wrap; }
+.app-shell .detail-heading { min-width: 0; overflow-wrap: anywhere; }
+.app-shell .filter-row select { font-size: 14px; }
+.app-shell .sidebar { overflow-y: auto; }
+
+@media (min-width: 1500px) {
+  .app-shell .incidents-layout { grid-template-columns: 380px minmax(0, 1fr); }
+  .app-shell .detail-header, .app-shell .content-section { padding-inline: 40px; }
+}
+@media (max-width: 1100px) {
+  .app-shell .incident-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-shell .member-form { grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); }
+  .app-shell .member-form .primary-button { grid-column: 1 / -1; justify-self: start; }
+}
+@media (max-width: 960px) and (min-width: 721px) {
+  .app-shell .incidents-layout { grid-template-columns: 260px minmax(0, 1fr); }
+  .app-shell .detail-header, .app-shell .content-section { padding: 22px 18px; }
+  .app-shell .incident-row, .app-shell .list-header { padding-inline: 18px; }
+}
+@media (max-width: 720px) {
+  .app-shell { --topbar-height: 56px; }
+  .app-shell .topbar { display: flex; }
+  .app-shell .sidebar { padding-top: 24px; }
+  .app-shell .topbar { padding-inline: 18px; }
+  .app-shell .settings-view { padding: 0 20px 28px; }
+  .app-shell .view-header { min-height: auto; padding-block: 28px 24px; align-items: center; gap: 16px; }
+  .app-shell .view-header h1, .app-shell .setup-header h1, .project-directory h1 { font-size: 28px; }
+  .app-shell .member-form { grid-template-columns: minmax(0, 1fr); }
+  .app-shell .member-form .primary-button { justify-self: stretch; }
+  .app-shell .event-list article { padding-inline: 12px; gap: 12px; }
+  .app-shell .list-header { padding-top: 28px; }
+  .app-shell .incident-placeholder { display: none; }
+  .app-shell .detail-header { padding: 24px 18px; }
+  .app-shell .detail-heading h1 { font-size: 22px; }
+  .app-shell .content-section { padding: 24px 20px; }
+  .app-shell .setup-view { padding: 28px 20px; }
+  .app-shell .real-config-form > section { padding: 22px 16px; }
+  .project-directory .directory-logo { margin-bottom: 44px; }
+  .project-directory .create-project-form { padding: 22px 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell :is(.primary-button, .secondary-button, .icon-button, .sidebar nav a, .incident-row),
+  .project-directory :is(.primary-button, .secondary-button, .project-row, .create-project-row) { transition: none; }
+}

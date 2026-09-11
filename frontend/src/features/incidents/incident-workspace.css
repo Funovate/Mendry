@@ -1,0 +1,131 @@
+/* Keep the reading column and operational context visible without disclosures. */
+.app-shell .incident-workspace { container-type: inline-size; --incident-gutter: clamp(20px, 3vw, 40px); }
+.app-shell .incident-workspace .detail-header { position: relative; gap: 20px; padding: 24px var(--incident-gutter); }
+.app-shell .incident-workspace .detail-header > .icon-button { position: absolute; top: 20px; left: 4px; width: 28px; }
+.app-shell .incident-workspace .detail-heading h1 { margin: 6px 0 14px; font-size: 26px; line-height: 1.3; }
+.app-shell .incident-workspace .detail-meta { gap: 8px 14px; }
+.incident-timestamps { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 12px 0 0; color: var(--color-muted); font-size: 12px; }
+.incident-lifecycle { display: grid; gap: 6px; align-content: start; }
+.incident-lifecycle label { color: var(--color-muted); font-size: 12px; }
+.incident-lifecycle select { min-height: 40px; max-width: 100%; padding: 8px 32px 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-heading); font: inherit; font-size: 13px; }
+.app-shell .incident-lifecycle .readonly-note { max-width: 180px; margin: 0; padding: 0; }
+.incident-reading-area { padding: 0 var(--incident-gutter) 40px; }
+.app-shell .incident-workspace .remediation-focused { padding: 0; border: 0; }
+.app-shell .remediation-focused .remediation-review { display: block; }
+.remediation-summary-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; min-height: 76px; padding: 16px 0; }
+.app-shell .remediation-focused .remediation-summary-bar h2 { margin: 0; color: var(--color-heading); font-size: 16px; font-weight: 600; }
+.remediation-state-label { padding: 3px 9px; border: 1px solid var(--color-border-soft); border-radius: 5px; color: var(--color-muted); font-size: 12px; text-transform: capitalize; }
+.remediation-summary-bar .remediation-actions { margin-left: auto; }
+.remediation-columns { display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 36px; }
+.remediation-main { display: grid; gap: 28px; min-width: 0; }
+.app-shell .remediation-focused .remediation-body { display: block; }
+.app-shell .remediation-focused .remediation-diagnosis { border: 0; overflow: visible; }
+.app-shell .remediation-focused .remediation-block-heading { padding: 0; margin-bottom: 12px; border: 0; }
+.app-shell .remediation-focused .remediation-block-heading > div { display: flex; align-items: baseline; gap: 10px; }
+.app-shell .remediation-focused .remediation-block-heading h3 { font-size: 18px; }
+.app-shell .remediation-focused .remediation-block-heading span { margin: 0; font-size: 12px; }
+.app-shell .remediation-focused .diagnosis-summary { margin: 0 0 16px; gap: 10px; }
+.app-shell .remediation-focused .diagnosis-summary strong { color: var(--color-heading); font-size: 13px; font-weight: 600; text-transform: capitalize; }
+.app-shell .remediation-focused .diagnosis-summary span { font-size: 12px; }
+.app-shell .remediation-focused .remediation-diagnosis > .remediation-prose { max-width: none; margin: 18px 0 0; font-size: 14px; line-height: 1.8; white-space: pre-line; }
+.app-shell .remediation-focused .remediation-next-step { max-width: none; margin: 0; padding: 16px 18px; border: 0; border-left: 3px solid var(--color-accent); border-radius: 0 6px 6px 0; background: var(--color-accent-soft); color: var(--color-text); font-size: 14px; line-height: 1.75; }
+.remediation-next-step h4 { margin: 0 0 6px; color: var(--color-heading); font-size: 13px; font-weight: 600; }
+.remediation-next-step p { margin: 0; white-space: pre-line; }
+.app-shell .remediation-focused .remediation-plans,
+.app-shell .remediation-focused .remediation-diff-block { padding-top: 22px; border: 0; border-top: 1px solid var(--color-border-soft); }
+.app-shell .remediation-focused .remediation-plan-heading { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.app-shell .remediation-focused .remediation-plan-meta { justify-content: flex-start; }
+.app-shell .remediation-focused .remediation-plan-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.app-shell .remediation-focused .remediation-plan-details { grid-template-columns: minmax(0, 1fr); padding: 0; border: 0; }
+.app-shell .remediation-focused .remediation-plan-title strong { font-size: 14px; }
+.app-shell .remediation-focused .remediation-plan-body .remediation-prose { font-size: 14px; }
+.remediation-context { display: grid; min-width: 0; gap: 24px; padding-left: 24px; border-left: 1px solid var(--color-border-soft); }
+.remediation-context section { min-width: 0; }
+.app-shell .remediation-context h3,
+.app-shell .incident-properties h3 { margin: 0 0 12px; color: var(--color-heading); font-size: 13px; font-weight: 600; }
+.remediation-context h3 span { margin-left: 6px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
+.run-version { margin: -6px 0 12px; color: var(--color-muted); font-size: 11px; }
+.app-shell .remediation-context .remediation-primary-facts,
+.app-shell .remediation-context .remediation-technical-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; border: 0; background: transparent; }
+.app-shell .remediation-context .remediation-technical-facts { margin-top: 8px; }
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; padding: 0; background: transparent; }
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dt { font-size: 12px; line-height: 1.6; }
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dd { margin: 0; font-size: 12px; line-height: 1.6; }
+.app-shell .remediation-context .remediation-loop-fact { grid-column: auto; }
+.remediation-context code { font-size: 11px; overflow-wrap: anywhere; }
+.run-context-note { margin: 14px 0 0; padding: 10px 12px; background: var(--color-surface-muted); color: var(--color-muted); font-size: 12px; line-height: 1.6; border-radius: 5px; }
+.app-shell .remediation-context .readonly-note { margin: 10px 0 0; padding: 0; font-size: 12px; }
+.app-shell .remediation-context .remediation-attempts ol { max-height: none; overflow: visible; padding: 0 0 0 14px; border-left: 1px solid var(--color-border); }
+.app-shell .remediation-context .remediation-attempts li { padding: 0 0 14px; margin-bottom: 14px; }
+.app-shell .remediation-context .remediation-attempts li:last-child { margin: 0; padding-bottom: 0; }
+.app-shell .remediation-context .attempt-details,
+.app-shell .remediation-context .attempt-label span,
+.app-shell .remediation-context .remediation-attempts li time { font-size: 11px; }
+.diagnosis-evidence ol { display: grid; gap: 8px; margin: 0; padding-left: 18px; color: var(--color-muted); font-size: 11px; }
+.app-shell .incident-properties .incident-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.app-shell .incident-properties .incident-facts > div { padding: 0; }
+.app-shell .incident-properties .incident-facts dt { font-size: 12px; }
+.app-shell .incident-properties .incident-facts dd { margin-top: 4px; font-size: 12px; }
+.incident-properties code { overflow-wrap: anywhere; font-size: 11px; }
+@container (max-width: 900px) {
+  .remediation-columns { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .remediation-context { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--color-border-soft); }
+}
+@container (max-width: 540px) {
+  .app-shell .incident-workspace .detail-header { padding-top: 48px; }
+  .app-shell .incident-workspace .detail-header > .icon-button { left: 14px; top: 10px; }
+  .app-shell .incident-workspace .detail-heading { flex-basis: 100%; }
+  .app-shell .incident-workspace .detail-heading h1 { font-size: 22px; }
+  .incident-lifecycle { width: 100%; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  .incident-lifecycle select { justify-self: end; }
+  .remediation-context { grid-template-columns: minmax(0, 1fr); }
+  .remediation-summary-bar { padding-block: 18px; }
+  .remediation-summary-bar .remediation-actions { margin-left: 0; }
+}
+/* Visual anchors pair each graphic with the data it describes. */
+.app-shell .incident-workspace .detail-meta > span,
+.app-shell .remediation-focused :is(h2, h3, h4),
+.app-shell .remediation-plan-meta .recommended,
+.app-shell .remediation-plan-files > span,
+.app-shell .remediation-plan-rollback > span,
+.plan-number { display: flex; align-items: center; gap: 8px; }
+.incident-timestamps { align-items: center; }
+.app-shell .incident-workspace :is(h2, h3, h4) > svg { flex-shrink: 0; color: var(--color-accent); }
+.app-shell .remediation-focused .remediation-diagnosis { padding: 22px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: linear-gradient(135deg, #f5f7ef 0%, var(--color-surface) 48%); }
+.diagnosis-visual-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 8px 0 22px; }
+.diagnosis-confidence { position: relative; width: 66px; height: 66px; flex-shrink: 0; }
+.confidence-ring { width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 4; }
+.confidence-track { stroke: #dfe7d8; }
+.confidence-value { stroke: var(--color-accent); stroke-linecap: round; }
+.confidence-number { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-heading); font-size: 16px; font-weight: 700; }
+.app-shell .remediation-focused .diagnosis-summary { display: grid; gap: 5px; margin: 0; flex: 0 1 auto; min-width: 130px; }
+.app-shell .remediation-focused .diagnosis-summary strong { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+.diagnosis-metric { display: grid; grid-template-columns: 20px auto; gap: 3px 8px; min-width: 112px; padding-left: 18px; border-left: 1px solid var(--color-border); }
+.diagnosis-metric svg { color: var(--color-accent); align-self: center; }
+.diagnosis-metric strong { color: var(--color-heading); font-size: 22px; line-height: 1.4; }
+.diagnosis-metric span { grid-column: 1 / -1; color: var(--color-muted); font-size: 11px; }
+.app-shell .remediation-focused .remediation-next-step { border-radius: 8px; background: #eaf0e1; }
+.app-shell .remediation-focused .remediation-plans { padding-top: 0; border: 0; }
+.app-shell .remediation-focused .remediation-plans > ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.app-shell .remediation-focused .remediation-plans > ol > li { padding: 20px; border: 1px solid var(--color-border-soft); border-radius: 10px; background: var(--color-surface); }
+.app-shell .remediation-focused .remediation-plans > ol > li:only-child { grid-column: 1 / -1; }
+.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended { border-color: #cbdac1; background: #f4f7ee; box-shadow: inset 0 3px var(--color-accent); }
+.app-shell .remediation-focused .plan-number { width: fit-content; margin-bottom: 8px; padding: 5px 8px; border-radius: 5px; background: var(--color-surface-muted); color: var(--color-muted); font-size: 12px; }
+.app-shell .remediation-focused .remediation-plan-details { padding-top: 12px; border-top: 1px solid var(--color-border-soft); }
+.remediation-context { padding: 0; border: 0; gap: 16px; }
+.remediation-context > section { padding: 18px; background: #f5f4ee; border: 1px solid var(--color-border-soft); border-radius: 10px; }
+.app-shell .remediation-context h3 { margin-bottom: 16px; }
+.app-shell .remediation-context .remediation-attempts ol { margin-left: 9px; padding-left: 19px; }
+.app-shell .remediation-context .remediation-attempts li { position: relative; }
+.attempt-node { position: absolute; top: 0; left: -29px; display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #cbdac1; border-radius: 50%; background: #eaf0e1; color: var(--color-accent); }
+.app-shell .remediation-context .run-context-note { background: #ebe8df; }
+@container (max-width: 1200px) {
+  .app-shell .remediation-focused .remediation-plans > ol { grid-template-columns: minmax(0, 1fr); }
+  .diagnosis-metric { min-width: 90px; padding-left: 10px; }
+}
+@container (max-width: 540px) {
+  .app-shell .remediation-focused .remediation-diagnosis { padding: 16px; }
+  .diagnosis-visual-summary { gap: 12px; }
+  .diagnosis-metric { flex: 1; border-left: 0; padding: 10px; border-radius: 6px; background: var(--color-surface-muted); }
+  .app-shell .remediation-focused .diagnosis-summary { min-width: 140px; }
+}

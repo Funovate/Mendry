@@ -513,16 +513,29 @@ test("loads project-owned configuration, events, incidents, members, and audit r
   await expect(page.getByText("Project configuration updated.", { exact: true })).toBeVisible();
 });
 
-test("keeps incident detail heading levels visually consistent", async ({ page }) => {
+test("shows diagnosis and operational context without expanding sections", async ({ page }) => {
   await mockApi(page, { role: "admin" });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
-  const sectionHeadings = ["Occurrence summary", "Lifecycle", "Remediation review"];
-  const subsectionHeadings = ["Run overview", "Diagnosis", "Attempts", "Plans", "Suggested diff"];
-  const fontSizes = async (names: string[]) => Promise.all(names.map((name) => page.getByRole("heading", { name }).evaluate((element) => getComputedStyle(element).fontSize)));
+  const diagnosis = page.getByRole("heading", { name: "Diagnosis", exact: true });
+  await expect(diagnosis).toBeInViewport();
+  await expect(page.getByRole("heading", { name: "Recommended next step" })).toBeInViewport();
+  await expect(page.getByText("observation-id", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Primary remediation run facts")).toBeVisible();
+  await expect(page.locator(".incident-workspace details")).toHaveCount(0);
+  await expect(page.getByLabel("Incident status", { exact: true })).toHaveValue("Open");
+  await page.screenshot({ path: "test-results/incident-workspace-desktop.png", fullPage: true });
 
-  expect(new Set(await fontSizes(sectionHeadings))).toEqual(new Set(["16px"]));
-  expect(new Set(await fontSizes(subsectionHeadings))).toEqual(new Set(["15px"]));
+  await expect(page.getByLabel("Primary remediation run facts")).toBeVisible();
+  await expect(page.getByText("Fingerprint", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(diagnosis).toBeVisible();
+  await expect(page.getByLabel("Incident status", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/incident-workspace-mobile.png", fullPage: true });
 });
 
 test("renders remediation diagnostics in the selected incident detail", async ({ page }) => {
@@ -530,9 +543,9 @@ test("renders remediation diagnostics in the selected incident detail", async ({
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await expect(page.getByRole("heading", { name: "Remediation review" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Diagnosis" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Diagnosis", exact: true })).toBeVisible();
   await expect(page.getByText("The locale reaches validator lookup before the configured fallback is applied.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Evidence observation-id", { exact: true })).toBeVisible();
+  await expect(page.getByText("observation-id", { exact: true })).toBeVisible();
   await expect(page.getByText("Apply the locale fallback before validator lookup", { exact: true })).toBeVisible();
   await expect(page.getByText("diff --git a/backend/http_encoder.go b/backend/http_encoder.go", { exact: true })).toBeVisible();
 });
@@ -612,8 +625,8 @@ test("administrator persists credentials, configuration, members, and incident l
   await page.goto("/");
 
   await page.getByText("Validator locale fr is not registered", { exact: true }).click();
-  await page.getByRole("button", { name: "Recovered", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Recovered", exact: true })).toBeDisabled();
+  await page.getByLabel("Incident status", { exact: true }).selectOption("Recovered");
+  await expect(page.getByLabel("Incident status", { exact: true })).toHaveValue("Recovered");
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await page.getByRole("button", { name: "Edit configuration" }).click();
@@ -851,7 +864,7 @@ test("administrator renames a project and refreshes a derived environment name",
   expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
 
   await page.getByRole("link", { name: "Configuration" }).click();
-  await expect(page.getByText("Property Platform / Property Platform")).toBeVisible();
+  await expect(page.locator(".topbar")).toContainText("Property Platform");
   await expect(page.getByRole("cell", { name: "Property Platform" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Project identity" })).toHaveCount(0);
   await expect(page.getByLabel("Project key")).toHaveCount(0);
@@ -864,7 +877,7 @@ test("administrator preserves a distinct environment name when renaming a projec
   await page.getByRole("textbox", { name: "Project name" }).fill("Property Platform");
   await page.getByRole("button", { name: "Save project name" }).click();
   await expect(page.getByRole("button", { name: "Project Property Platform" })).toBeVisible();
-  await expect(page.getByText("Property Platform / Production")).toBeVisible();
+  await expect(page.locator(".topbar")).toContainText("Property Platform");
   await expect(page.getByRole("cell", { name: "Production", exact: true })).toBeVisible();
   expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
 });
@@ -951,10 +964,10 @@ test("administrator discovers a Docker container through the bounded source prob
 test("viewer receives the permission matrix without mutation controls", async ({ page }) => {
   const state = await mockApi(page, { role: "viewer", systemRole: "viewer" });
   await page.goto("/");
-  await expect(page.getByText("viewer · local user", { exact: true })).toBeVisible();
+  await expect(page.locator(".user-card small")).toHaveText("viewer");
   await page.getByText("Validator locale fr is not registered", { exact: true }).click();
   await expect(page.getByText("Viewer access is read-only.", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Recovered" })).toBeDisabled();
+  await expect(page.getByLabel("Incident status", { exact: true })).toBeDisabled();
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByRole("button", { name: "Edit configuration" })).toHaveCount(0);
@@ -1040,14 +1053,14 @@ test.describe("mobile", () => {
     await mockApi(page, { role: "admin" });
     await page.goto("/projects/real-estate/incidents/INC-2048");
 
-    const diagnosis = page.getByRole("heading", { name: "Diagnosis" });
-    const attempts = page.getByRole("heading", { name: "Attempts" });
+    const diagnosis = page.getByRole("heading", { name: "Diagnosis", exact: true });
+    const attempts = page.getByRole("heading", { name: /Attempt history/ });
     const plans = page.getByRole("heading", { name: "Plans" });
     await expect(diagnosis).toBeVisible();
     await expect(attempts).toBeVisible();
     await expect(plans).toBeVisible();
 
-    const positions = await Promise.all([diagnosis, attempts, plans].map(async (heading) => (await heading.boundingBox())?.y ?? 0));
+    const positions = await Promise.all([diagnosis, plans, attempts].map(async (heading) => (await heading.boundingBox())?.y ?? 0));
     expect(positions[0]).toBeLessThan(positions[1]);
     expect(positions[1]).toBeLessThan(positions[2]);
     await plans.scrollIntoViewIfNeeded();

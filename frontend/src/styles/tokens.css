@@ -1,24 +1,28 @@
 :root {
-  --color-ink: #17212b;
-  --color-heading: #293f4b;
-  --color-text: #405260;
-  --color-muted: #6d7d8a;
-  --color-subtle: #7a8995;
-  --color-canvas: #f4f6f8;
+  /* Shared with docs/src/styles/starlight.css and the Mendry brand guide. */
+  --color-ink: #182a26;
+  --color-heading: #182a26;
+  --color-text: #52625c;
+  --color-muted: #52625c;
+  --color-subtle: #637269;
+  --color-canvas: #fafbf8;
   --color-surface: #ffffff;
-  --color-surface-muted: #f7f9fa;
-  --color-border: #dce4e8;
-  --color-border-soft: #e2e8eb;
-  --color-accent: #17786a;
-  --color-accent-hover: #10665a;
-  --color-accent-soft: #e6f2ef;
+  --color-surface-muted: #eff3ed;
+  --color-border: #d6ded4;
+  --color-border-soft: #e4e9e0;
+  --color-accent: #176d52;
+  --color-accent-hover: #10543f;
+  --color-accent-soft: #e7efe3;
   --color-danger: #91454b;
   --color-danger-soft: #fff2f2;
-  --color-warning: #806c3c;
-  --sidebar-width: 238px;
-  --topbar-height: 58px;
-  --radius-control: 5px;
-  --radius-panel: 6px;
+  --color-warning: #8a5b23;
+  --color-warning-soft: #f5ede0;
+  --color-brand: #17281f;
+  --color-amber: #c1893e;
+  --sidebar-width: 244px;
+  --topbar-height: 64px;
+  --radius-control: 8px;
+  --radius-panel: 10px;
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }

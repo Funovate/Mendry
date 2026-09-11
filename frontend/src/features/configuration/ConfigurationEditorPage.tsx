@@ -230,9 +230,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   return <section className="setup-view">
     <div className="setup-header">
       <button type="button" className="back-link" onClick={onCancel}><ChevronLeft size={17} />Configuration</button>
-      <div className="eyebrow">{project.name}</div>
       <h1>Project configuration</h1>
-      <p>Environment, Git baseline, one collection source, one trigger, and one optional LLM provider.</p>
     </div>
     <div className="wizard-steps" role="tablist">
       {STEPS.map((step) => <button

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, CircleHelp, Copy, Eye, GitBranch, Plus, Settings2 } from "lucide-react";
+import { Check, Copy, Eye, GitBranch, Plus, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, messageFromError, type ProjectConfiguration } from "../../api";
@@ -21,7 +21,7 @@ export function ConfigurationPage() {
   if (!configuration.data) {
     return <section className="settings-view">
       <div className="view-header">
-        <div><div className="eyebrow">{project.name}</div><h1>Configuration</h1><p>This project exists, but its environment, repository, source, and trigger have not been configured.</p></div>
+        <div><h1>Configuration</h1></div>
         {project.capabilities.manageConfiguration && <button className="primary-button" type="button" onClick={edit}><Plus size={16} />Configure project</button>}
       </div>
       <section className="empty-projects compact"><Settings2 size={24} /><h2>Configuration required</h2><p>Events and incidents need an environment, Git baseline, collection source, and trigger.</p></section>
@@ -31,7 +31,7 @@ export function ConfigurationPage() {
   const value = configuration.data;
   return <section className="settings-view">
     <div className="view-header">
-      <div><div className="eyebrow">{project.name} / {value.environment.name}</div><h1>Configuration</h1><p>Persistent project collection and production context.</p></div>
+      <div><h1>Configuration</h1></div>
       {project.capabilities.manageConfiguration ? <button className="primary-button" type="button" onClick={edit}><Settings2 size={16} />Edit configuration</button> : <span className="readonly-note">{project.role} access</span>}
     </div>
     <div className="setup-summary">
@@ -51,7 +51,6 @@ export function ConfigurationPage() {
       </tr>}
       <tr><td>LLM provider</td><td>{value.llm?.provider || "Not configured"}</td><td>{value.llm ? <code>{value.llm.model}</code> : "Base URL and model are required to run remediation"}</td><td>{value.llm?.credentialSecretId ? "Credential linked" : "No credential"}</td></tr>
     </tbody></table></div>
-    <section className="metadata-note"><CircleHelp size={17} /><p>Credential values are write-only. This page receives only stable secret references and never plaintext, ciphertext, or nonce values.</p></section>
   </section>;
 }
 

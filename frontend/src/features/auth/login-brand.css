@@ -1,0 +1,86 @@
+/* Login is a dedicated brand surface, scoped away from workspace forms. */
+.login-view {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  place-items: stretch;
+  padding: 12px;
+  background: #f3f0e7;
+}
+.login-story {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 56px;
+  overflow: hidden;
+  min-height: 680px;
+  padding: 42px clamp(32px, 5vw, 76px) 28px;
+  color: #f3f0e7;
+  background: radial-gradient(ellipse at 80% 25%, #304436 0, transparent 58%), #12211a;
+  border-radius: 12px;
+}
+.login-art { position: relative; display: grid; place-items: center; height: 270px; margin: 0 -20px; flex-shrink: 0; }
+.login-orbit { position: absolute; border: 1px solid rgb(243 240 231 / 12%); border-radius: 50%; transform: rotate(-24deg); }
+.login-orbit-outer { width: 340px; height: 210px; }
+.login-orbit-inner { width: 260px; height: 260px; }
+.login-orbit-outer::after { content: ""; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #c1893e; top: 52px; right: 15px; box-shadow: 0 0 24px rgb(193 137 62 / 40%); }
+.login-mark { display: grid; place-items: center; width: 132px; height: 132px; border: 1px solid rgb(243 240 231 / 18%); border-radius: 30px; background: linear-gradient(145deg, #364b3c, #17281f); box-shadow: 0 24px 60px #0b191a66, inset 0 1px rgb(255 255 255 / 8%); transform: rotate(-8deg); }
+.login-mark img { width: 82px; height: 82px; transform: rotate(8deg); }
+.login-story-copy { position: relative; margin-block: 0; max-width: 430px; }
+.login-story h2 { margin: 0; font-size: clamp(40px, 4.4vw, 66px); line-height: 1.08; font-weight: 450; letter-spacing: -0.055em; }
+.login-story h2 em { color: #dfb579; font-family: Georgia, serif; font-weight: 400; }
+.login-entry { display: grid; grid-template-rows: auto 1fr; min-width: 0; padding: 38px clamp(30px, 5vw, 80px) 20px; }
+.login-entry-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.login-entry-top .brand-logo { width: 156px; height: auto; }
+.login-entry .login-panel { width: min(100%, 380px); align-self: center; justify-self: center; margin: 64px 0; padding: 0; gap: 32px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.login-entry .login-panel h1 { margin: 0; font-size: clamp(32px, 3vw, 44px); font-weight: 500; letter-spacing: -0.055em; }
+.login-entry .login-panel form { gap: 22px; }
+.login-entry .login-panel input { height: 50px; padding-inline: 14px; font-size: 14px; background: #faf9f5; border-color: #d2d5c9; border-radius: 7px; }
+.login-entry .login-panel input::placeholder { color: #69746c; }
+.login-entry .login-panel input:focus-visible { border-color: #176d52; outline: 2px solid #176d52; outline-offset: 2px; }
+.login-entry .primary-button {
+  min-height: 50px;
+  margin-top: 6px;
+  justify-content: center;
+  gap: 12px;
+  background: #17281f;
+  color: #f3f0e7;
+  border-radius: 7px;
+  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+.login-submit-arrow { transition: transform 220ms ease; }
+.login-entry .primary-button:focus-visible:not(:disabled) {
+  background: #294536;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgb(23 40 31 / 16%);
+}
+.login-entry .primary-button:focus-visible:not(:disabled) .login-submit-arrow { transform: translateX(5px); }
+@media (hover: hover) {
+  .login-entry .primary-button:hover:not(:disabled) {
+    background: #294536;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgb(23 40 31 / 16%);
+  }
+  .login-entry .primary-button:hover:not(:disabled) .login-submit-arrow { transform: translateX(5px); }
+}
+.login-entry .primary-button:active:not(:disabled) { transform: translateY(0) scale(0.985); box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .login-entry .primary-button,
+  .login-entry .primary-button .login-submit-arrow { transition: none; }
+  .login-entry .primary-button:is(:hover, :focus-visible, :active):not(:disabled),
+  .login-entry .primary-button:is(:hover, :focus-visible, :active):not(:disabled) .login-submit-arrow { transform: none; }
+}
+.login-access-note { display: flex; align-items: flex-start; gap: 10px; padding-top: 24px; border-top: 1px solid #d6d9cf; color: #52625c; }
+.login-access-note svg { flex-shrink: 0; margin-top: 3px; }
+.login-entry .login-access-note p { font-size: 11px; line-height: 1.8; }
+@media (min-width: 1600px) { .login-story { padding-inline: 100px; } .login-art { height: 340px; } }
+@media (max-width: 1000px) { .login-story { padding-inline: 30px; gap: 40px; } }
+@media (max-width: 720px) {
+  .login-view { grid-template-columns: minmax(0, 1fr); padding: 0; }
+  .login-story { display: none; }
+  .login-entry { min-height: 100svh; padding: 30px 24px 22px; }
+  .login-entry-top .brand-logo { width: 140px; }
+  .login-entry .login-panel { margin-block: 64px; }
+}

@@ -71,8 +71,8 @@ export function ProjectSwitcher() {
   }
 
   return <div className="project-switcher-row">
-    <button type="button" className="project-switcher" onClick={() => navigate("/projects")}>
-      <span><small>Project</small><strong>{project.name}</strong></span>
+    <button type="button" className="project-switcher" aria-label={`Project ${project.name}`} onClick={() => navigate("/projects")}>
+      <span><strong>{project.name}</strong></span>
       <ChevronsUpDown size={16} />
     </button>
     {canManage && <IconButton label="Edit project name" onClick={startEdit}><Pencil size={15} /></IconButton>}

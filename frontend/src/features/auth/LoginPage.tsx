@@ -1,5 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Gauge, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ArrowRight, LoaderCircle, LockKeyhole } from "lucide-react";
+import brandMark from "../../assets/mendry-mark-reversed.svg";
+import brandLogo from "../../assets/mendry-logo-horizontal.svg";
 import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api, messageFromError } from "../../api";
@@ -37,5 +39,35 @@ export function LoginPage() {
     }
   };
 
-  return <main className="login-view"><section className="login-panel"><div className="login-brand"><span><Gauge size={23} /></span><strong>Mendry</strong></div><div><div className="eyebrow">Incident operations</div><h1>Sign in</h1><p>Projects, collection settings, events, and incident actions are scoped to your account.</p></div><form onSubmit={submit}><label>Username<input aria-label="Username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} autoFocus /></label><label>Password<input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <ErrorNotice message={error} />}<button className="primary-button" type="submit" disabled={submitting || !username.trim() || !password}>{submitting ? <LoaderCircle className="spin" size={16} /> : <LockKeyhole size={16} />}Sign in</button></form></section></main>;
+  return (
+    <main className="login-view">
+      <aside className="login-story" aria-label="About Mendry">
+        <div className="login-art" aria-hidden="true">
+          <div className="login-orbit login-orbit-outer" />
+          <div className="login-orbit login-orbit-inner" />
+          <div className="login-mark"><img src={brandMark} alt="" /></div>
+        </div>
+        <div className="login-story-copy">
+          <h2>From incident.<br />To insight.<br /><em>To resolution.</em></h2>
+        </div>
+      </aside>
+      <section className="login-entry" aria-labelledby="login-title">
+        <div className="login-entry-top"><img className="brand-logo" src={brandLogo} alt="Mendry" width={156} height={39} /></div>
+        <div className="login-panel">
+          <div>
+            <h1 id="login-title">Sign in</h1>
+          </div>
+          <form onSubmit={submit} aria-busy={submitting}>
+            <input id="login-username" aria-label="Username" autoComplete="username" placeholder="Enter your username" value={username} onChange={(event) => setUsername(event.target.value)} required />
+            <input id="login-password" aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            {error && <ErrorNotice message={error} />}
+            <button className="primary-button" type="submit" disabled={submitting || !username.trim() || !password}>
+              {submitting ? <><LoaderCircle className="spin" size={17} />Signing in…</> : <>Sign in<ArrowRight className="login-submit-arrow" size={17} aria-hidden="true" /></>}
+            </button>
+          </form>
+          <div className="login-access-note"><LockKeyhole size={15} /><p>Access is managed by your administrator.<br />Use your Mendry account to continue.</p></div>
+        </div>
+      </section>
+    </main>
+  );
 }
