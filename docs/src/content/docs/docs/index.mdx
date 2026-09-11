@@ -1,34 +1,46 @@
 ---
-title: FixThe operator documentation
-description: Evaluate current FixThe behavior, follow the source-based operator journey, and understand production release gates.
+title: AI incident investigation documentation
+description: Learn how Mendry connects production alerts, logs, and code for self-hosted incident response, root cause investigation, and reviewable repair proposals.
 availability: available
 translationKey: docs
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
   - backend/README.md
-  - .trellis/tasks/09-06-project-docs-starlight/prd.md
 ---
 
 **Availability: available**
 
-This documentation separates current executable behavior from release plans.
-FixThe is customer-managed incident investigation and controlled remediation
-software. It collects project-owned evidence, produces reviewable diagnoses and
-candidate plans, and leaves merge and deployment decisions with people.
+Mendry is a self-hosted AI incident investigation system for teams that need to
+connect production signals with logs and deployed code. It supports an
+incident-response workflow from evidence collection and root cause analysis to
+a reviewable repair proposal, while merge and deployment decisions remain with
+people.
 
-## Choose a path
+Start with the source-evaluation workflow below. Check [product status](/docs/project/status/)
+for supported capabilities, installation readiness, and work still in progress.
 
-- [Get started](/docs/get-started/) with the source-based evaluation journey.
-- Review [architecture](/docs/concepts/architecture/) and [security boundaries](/docs/concepts/security/).
-- Configure [signed webhooks](/docs/guides/signed-webhooks/) or review [Tencent CLS](/docs/guides/tencent-cls/).
-- Check [product status](/docs/project/status/) before relying on a capability.
+## Investigate your first production issue
+
+- Follow the [getting-started workflow](/docs/get-started/) to prepare the environment and configure a project.
+- Connect a supported monitoring signal through [signed webhooks](/docs/guides/signed-webhooks/) or review [Tencent CLS](/docs/guides/tencent-cls/).
+- Inspect the [first incident](/docs/get-started/first-incident/), its evidence, diagnosis, and proposed next steps.
+
+## Understand the architecture
+
+The Agent Harness is the underlying execution architecture. Its extension
+contracts support development of the investigation system; they are not the
+product's primary operator journey. The shared foundation is implemented and
+focused-tested, while full migration of the incident loop remains staged work.
+
+- Read [architecture](/docs/concepts/architecture/), [lifecycle](/docs/concepts/lifecycle/), and [security boundaries](/docs/concepts/security/).
+- Read [Agent Harness](/docs/concepts/agent-harness/) and [Extend the Harness](/docs/guides/extending-harness/) for execution and extension contracts.
+- Check [Local walkthrough status](/docs/get-started/local-harness/) for the separate development path. Its prerequisites and readiness differ from the incident application.
 
 ## Documentation policy
 
 Commands appear only when current code, tests, or a tested release artifact
-supports them. The production installation page remains blocked until a customer
-installation artifact and support boundary are verified.
-
-## Verified against
-
-- `backend/README.md`
-- `.trellis/tasks/09-06-project-docs-starlight/prd.md`
+supports them. The Local source tree is not treated as a validated onboarding
+release, and the production installation page remains blocked until its artifact
+and support boundary are verified.

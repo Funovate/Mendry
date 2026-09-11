@@ -1,0 +1,107 @@
+---
+title: Agent Harness for bounded AI execution
+description: Understand the implemented shared Runner, extension contracts, artifact truth, and staged delivery boundaries.
+availability: preview
+translationKey: agent-harness
+sources:
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/agentcore/application/registry.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/internal/modules/agentcore/application/completion.go
+  - backend/internal/modules/agentcore/application/history.go
+  - backend/internal/modules/remediation/application/agentcore_bridge.go
+---
+
+**Availability: preview — implemented and focused-tested source foundation**
+
+Mendry's Agent Harness coordinates bounded model and tool execution, preserves
+inspectable state, and evaluates completion against a versioned task contract.
+Inputs, tool sets, artifact types, policy, and completion evaluators are extension
+points. Incident investigation and code remediation are the default application
+scenario, not core type requirements.
+
+The foundation is implemented under `backend/internal/modules/agentcore` and its
+focused Go tests passed according to the implementation report. `preview` here
+means the shared source boundary is available for continued integration, not that
+a supported Local release, generic HTTP service, generic UI, or complete incident
+migration has shipped.
+
+## What the foundation owns
+
+`agentcore/domain` defines neutral Event, Run, Tool, Invocation, Artifact, Profile,
+model provider, executor, and storage contracts. `agentcore/application` implements
+the bounded Runner, accepted model stepping, paired history, tool and Profile
+registries, replaceable policy, and completion evaluators.
+
+The Runner follows one shared order:
+
+1. load durable run, invocation, artifact, and paired-message state;
+2. prepare a Profile turn and policy-filtered catalog;
+3. execute and validate one model turn;
+4. authorize each requested tool again before dispatch;
+5. persist invocation intent before the external effect;
+6. execute calls sequentially and atomically persist result plus artifacts;
+7. append observations and evaluate the Profile's completion contract.
+
+Cancellation and elapsed, model-call, tool-call, and output limits remain
+independent. Core imports no incident, project, account, HTTP, PostgreSQL, Redis,
+or provider-specific business package.
+
+## Tool and policy extension
+
+Trusted composition registers each tool's namespaced name, `vN` version, closed
+parameter schema, declared `read` or `write` effect, and executor. The registry
+rejects collisions and invalid definitions before advertisement. Model arguments
+are validated against that trusted schema.
+
+Policy is evaluated both for advertisement and dispatch. `AllowAllPolicy` permits
+trusted registered capabilities; it does not remove budgets, cancellation,
+credential handling, intent persistence, or audit records. `RestrictionPolicy`
+can constrain tools, effects, and configured path fields. Read the practical
+[source extension guide](/docs/guides/extending-harness/).
+
+## Artifacts and completion
+
+Artifacts carry a free-form type, string schema version, bounded data or reference,
+and explicit provenance.
+
+| Provenance | Meaning                                    | Completion boundary                                                      |
+| ---------- | ------------------------------------------ | ------------------------------------------------------------------------ |
+| `model`    | Model-authored proposal or interpretation  | May satisfy solution delivery; cannot prove an external effect           |
+| `observed` | Result reported by a trusted tool adapter  | Records an observed action or external object                            |
+| `verified` | Verification reported by a trusted adapter | Links to its subject and reports an explicit passed or failed conclusion |
+
+A versioned Profile prepares turns and interprets non-tool output. Its trusted
+completion contract selects a registered evaluator. The foundation includes
+`solution_delivered`, `action_with_verification`, `observed_remote_branch`, and
+`pipeline_verification` at `v1`; these evaluators do not supply provider, SCM,
+pipeline, or deployment adapters.
+
+## Recovery boundary
+
+`RunStore` requires durable invocation intent before execution and atomic
+result/artifact persistence. A pending or unknown write becomes `waiting` with
+`unknown_write_outcome` and is never blindly replayed. A connector-specific
+lookup or an operator must resolve the external outcome. A pending read is
+recorded as interrupted and may later be requested as a new ordered call.
+
+The interface defines what storage adapters must preserve. It is not evidence
+that the Local file path or production PostgreSQL service path has completed
+release validation.
+
+## Incident compatibility
+
+The existing remediation application uses the shared `ModelStep` acceptance
+boundary and shared paired-history mechanics. Its coordinator still owns incident
+states, evidence gates, tool routing, checkpoints, budgets, and lifecycle behavior.
+Therefore the current work is partial migration to shared mechanics, not a claim
+that the full incident runner now delegates to the generic Runner.
+
+## Delivery paths
+
+- [Local walkthrough status](/docs/get-started/local-harness/): source in progress; no validated runnable tutorial yet.
+- Service: generic event acceptance, durable generic runs, and run APIs are planned.
+- Product: generic run, call, and artifact views are planned.
+- [Incident application journey](/docs/get-started/): existing source-evaluation path with PostgreSQL, Redis, account, and project prerequisites.

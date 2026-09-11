@@ -6,8 +6,6 @@ translationKey: troubleshooting
 sources:
   - backend/README.md
   - backend/.env.example
-  - .trellis/spec/backend/logging-guidelines.md
-  - .trellis/spec/backend/error-handling.md
 ---
 
 **可用性：available**
@@ -16,7 +14,7 @@ sources:
 
 ## API 未 ready
 
-先检查 `/livez`，再检查 `/readyz`。API 启动需要可访问的 PostgreSQL、Redis 与有效 `FIXTHE_ENCRYPTION_KEY`。启动依赖新 schema 的 binary 前需显式执行迁移，API 不会修复 migration history。
+先检查 `/livez`，再检查 `/readyz`。API 启动需要可访问的 PostgreSQL、Redis 与有效 `MENDRY_ENCRYPTION_KEY`。启动依赖新 schema 的 binary 前需显式执行迁移，API 不会修复 migration history。
 
 ## 无法登录
 
@@ -46,5 +44,3 @@ sources:
 
 - `backend/README.md`
 - `backend/.env.example`
-- `.trellis/spec/backend/logging-guidelines.md`
-- `.trellis/spec/backend/error-handling.md`

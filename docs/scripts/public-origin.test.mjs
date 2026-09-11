@@ -79,12 +79,12 @@ test("Playwright config rejects non-canonical or unsafe ports", () => {
 
 test("the reserved custom origin is accepted", () => {
   assert.equal(
-    validatePublicOrigin("https://docs.fixthe.invalid"),
-    "https://docs.fixthe.invalid",
+    validatePublicOrigin("https://mendry.invalid"),
+    "https://mendry.invalid",
   );
   assert.equal(
-    validatePublicOrigin("https://docs.fixthe.invalid/"),
-    "https://docs.fixthe.invalid",
+    validatePublicOrigin("https://mendry.invalid/"),
+    "https://mendry.invalid",
   );
 });
 
@@ -93,19 +93,19 @@ test("invalid public origins are rejected by the shared policy", () => {
     undefined,
     "",
     "not a URL",
-    "http://docs.fixthe.invalid",
+    "http://mendry.invalid",
     "https://pages.dev",
     "https://pages.dev.",
     "https://project.pages.dev",
     "https://project.pages.dev.",
-    "https://docs.fixthe.invalid.",
-    "https://docs.fixthe.invalid/docs",
-    "https://docs.fixthe.invalid?release=true",
-    "https://docs.fixthe.invalid#release",
-    "https://user:password@docs.fixthe.invalid",
-    "https://@docs.fixthe.invalid",
-    "https://docs.fixthe.invalid:443",
-    "https://docs.fixthe.invalid:8443",
+    "https://mendry.invalid.",
+    "https://mendry.invalid/docs",
+    "https://mendry.invalid?release=true",
+    "https://mendry.invalid#release",
+    "https://user:password@mendry.invalid",
+    "https://@mendry.invalid",
+    "https://mendry.invalid:443",
+    "https://mendry.invalid:8443",
   ];
 
   for (const origin of invalidOrigins) {
@@ -119,12 +119,12 @@ test("invalid public origins are rejected by the shared policy", () => {
 
 test("invalid public origins fail before Astro writes output", () => {
   const outputDirectory = mkdtempSync(
-    path.join(os.tmpdir(), "fixthe-docs-public-origin-"),
+    path.join(os.tmpdir(), "mendry-docs-public-origin-"),
   );
   const env = {
     ...process.env,
     DOCS_PUBLIC_RELEASE: "true",
-    PUBLIC_SITE_ORIGIN: "http://docs.fixthe.invalid",
+    PUBLIC_SITE_ORIGIN: "http://mendry.invalid",
   };
 
   try {

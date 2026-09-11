@@ -4,6 +4,8 @@ import {
   collectFiles,
   counterpart,
   expectedRoutes,
+  indexableRoutes,
+  nonIndexableRoutes,
   readHtml,
 } from "./site-contract.mjs";
 import { validatePublicOrigin } from "./public-origin.mjs";
@@ -26,7 +28,8 @@ function tags(html, tagName) {
 function findMeta(html, name, value) {
   return tags(html, "meta").find(
     (tag) =>
-      attribute(tag, "name") === name && attribute(tag, "content") === value,
+      attribute(tag, "name") === name &&
+      (value === undefined || attribute(tag, "content") === value),
   );
 }
 
@@ -59,7 +62,12 @@ const routes = expectedRoutes;
 
 for (const route of routes) {
   const html = await readHtml(route);
-  const robots = publicRelease ? "index, follow" : "noindex, nofollow";
+  const indexable = !nonIndexableRoutes.includes(route);
+  const robots = publicRelease
+    ? indexable
+      ? "index, follow"
+      : "noindex, follow"
+    : "noindex, nofollow";
   requireMatch(
     findMeta(html, "robots", robots),
     `${route} is missing robots metadata: ${robots}`,
@@ -113,18 +121,31 @@ for (const route of routes) {
 
   if (publicRelease) {
     const image = findPropertyMeta(html, "og:image");
-    if (image) {
-      let imageUrl;
-      try {
-        imageUrl = new URL(attribute(image, "content"));
-      } catch {
-        fail(`${route} has a non-absolute Open Graph image URL`);
-      }
+    requireMatch(image, `${route} is missing its Open Graph image`);
+    let imageUrl;
+    try {
+      imageUrl = new URL(attribute(image, "content"));
+    } catch {
+      fail(`${route} has a non-absolute Open Graph image URL`);
+    }
+    requireMatch(
+      imageUrl.origin === origin,
+      `${route} has an Open Graph image outside ${origin}`,
+    );
+    for (const name of [
+      "twitter:title",
+      "twitter:description",
+      "twitter:image",
+    ]) {
       requireMatch(
-        imageUrl.origin === origin,
-        `${route} has an Open Graph image outside ${origin}`,
+        findMeta(html, name),
+        `${route} is missing ${name} metadata`,
       );
     }
+    requireMatch(
+      html.includes('type="application/ld+json"') === indexable,
+      `${route} must ${indexable ? "emit" : "omit"} structured data`,
+    );
   }
 }
 
@@ -176,10 +197,16 @@ if (publicRelease) {
   }
 
   const sitemap = await readFile("dist/sitemap-0.xml", "utf8");
-  for (const route of routes) {
+  for (const route of indexableRoutes) {
     requireMatch(
       sitemap.includes(`<loc>${origin}${route}</loc>`),
       `sitemap is missing ${origin}${route}`,
+    );
+  }
+  for (const route of nonIndexableRoutes) {
+    requireMatch(
+      !sitemap.includes(`<loc>${origin}${route}</loc>`),
+      `sitemap must exclude non-indexable route ${origin}${route}`,
     );
   }
 } else {

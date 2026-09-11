@@ -1,46 +1,43 @@
 ---
 title: 安全与权限边界
-description: 审阅数据本地性、凭据存储、Session、LLM 出站、可信工具和强制人工控制。
+description: 审阅可信 composition、模型与工具权限、artifact 真实性、凭据处理与事故应用安全兼容行为。
 availability: available
 translationKey: security
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/agentcore/application/policy.go
   - backend/README.md
-  - .trellis/spec/backend/authentication-guidelines.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
-  - .trellis/spec/backend/logging-guidelines.md
 ---
 
 **可用性：available**
 
-FixThe 由客户管理，其安全模型依赖项目隔离、只写凭据、有界证据适配器和明确的人工权限。
+Harness 把不可信任务/模型数据与可信操作员 composition 分开。可扩展性不允许 event 或模型扩大自身权限。
 
-## 数据与凭据
+## Harness 信任边界
 
-- PostgreSQL 保存业务数据；Redis 只保存可撤销 Session。
-- 连接器凭据使用 AES-256-GCM 加密，读取只返回 metadata，不返回明文、密文或 nonce。
-- 每个数据库的 `FIXTHE_ENCRYPTION_KEY` 必须始终保持私密和稳定。
-- 入站 Webhook token 是凭据。日志记录路由 pattern，不记录原始 token 路径。
-- 请求体严格解码，默认上限为 1 MiB。
+- Composition 选择 Profile、精确版本、completion evaluator、policy、model binding、tool definition、executor binding 与 credential source。
+- Event payload/context 提供任务输入，不能安装代码、替换 policy、选择任意凭据/endpoint 或更改可信 tool effect。
+- 模型输出是建议数据；tool name、version 与 argument 必须匹配可信 registry 和闭合 schema。
+- Policy 在展示时执行一次，在 dispatch 前再次执行；dispatch 前消失或被拒绝的能力不会运行。
+- Invocation intent 在外部 effect 前持久化；invocation audit 通过 digest 表示原始 argument。
+- 即使显式使用 `AllowAllPolicy`，预算、取消、持久化与 artifact provenance 仍然生效。
 
-## 认证与授权
+`AllowAllPolicy` 表示全部可信注册能力都可参与，不是 authentication bypass，也不会创建未组装的工具。`RestrictionPolicy` 是内置实现；操作员可提供其他 `Policy`，无需改变 Runner 顺序。
 
-密码以 bcrypt hash 保存。浏览器只在 `fixthe_session` Cookie 中接收原始 Session token；Cookie 带 `HttpOnly` 与 `SameSite=Lax`，staging 和 production 还带 `Secure`。系统管理员与项目成员资格是不同授权维度。客户端使用服务端返回的 capabilities，不在本地虚构权限。
+## Artifact 与完成权限
 
-## LLM 与工具权限
+Profile 只能创建 model-authored artifact；可信 executor 创建 observed 或 verified artifact。Verification 必须标识 subject 并报告明确状态，避免生成摘要伪装成已观察并验证的 branch、pipeline、deployment 或其他外部 effect。
 
-配置的模型调用失败时，确定性 Webhook fallback 与证据门禁仍然工作。可选 OpenAI-compatible 分析使用项目配置和有界 client。提供方输入输出没有权限：模型选择的工具调用必须通过服务端工具目录、scope、budget 和 evidence 检查。
+Unknown write outcome 会停在 `waiting`，且不会自动 retry。Idempotency key 或 core interface 都不意味着 exactly-once execution。
 
-不得将模型文本作为凭据、URL 权威、shell 命令、证据证明、合并批准、部署批准或恢复状态。
+## 凭据与 adapter
 
-## 人工边界
+Core 契约携带 opaque model binding identity 与 tool definition，不携带 secret loader。具体 adapter 与 composition 解析凭据、校验 transport、限制 I/O 并清洗诊断。计划中的 Local 路径通过显式命名环境变量提供凭据，并隔离 stdio MCP environment；这些细节尚不是通过验证的 release 路径。
 
-FixThe 可以展示证据、诊断和候选变更。人负责审阅，并控制合并、部署、回滚与恢复。当前文档不会声明自主生产操作能力。
+## 事故应用兼容
 
-## 核验依据
+现有事故 Service 还有应用层安全控制：PostgreSQL 业务记录、Redis 登录 Session、bcrypt password、加密项目凭据、项目 membership、签名 Webhook token、有界 evidence adapter 与人工审阅。这些控制仅属于事故应用；账号与 membership 不是 Harness core 要求。
 
-- `backend/README.md`
-- `.trellis/spec/backend/authentication-guidelines.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
-- `.trellis/spec/backend/logging-guidelines.md`
+可选 OpenAI-compatible 事故分析使用项目配置与有界 adapter。Provider 内容不能成为 credential、URL、shell、evidence、merge、deployment 或 recovery authority。当前事故 workflow 继续由人控制 merge、deployment、rollback 与生产 recovery 决策。

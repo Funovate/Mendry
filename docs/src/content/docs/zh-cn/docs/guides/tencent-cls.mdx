@@ -4,9 +4,7 @@ description: 配置腾讯云 CLS 告警回调，并了解确定性分组与可�
 availability: preview
 translationKey: tencent-cls
 sources:
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/remediation-evidence-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - backend/internal/modules/hooks/adapter/tencentcls/client.go
 ---
 
 **可用性：preview**
@@ -15,13 +13,13 @@ sources:
 
 ## 配置 trigger
 
-以项目管理员身份保存 `signed_webhook` trigger，并在版本化 trigger 配置中选择 provider `tencent_cls`。配置 `FIXTHE_PUBLIC_URL` 后，将生成的入站 URL 填入 CLS 告警 callback 地址。请始终保护 URL token。
+以项目管理员身份保存 `signed_webhook` trigger，并在版本化 trigger 配置中选择 provider `tencent_cls`。配置 `MENDRY_PUBLIC_URL` 后，将生成的入站 URL 填入 CLS 告警 callback 地址。请始终保护 URL token。
 
 Callback 必须使用受支持的 media type 和有效腾讯回调结构。未知、禁用、不完整或格式错误的 token 配置都返回相同的 not-found 边界。
 
 ## 摄取与分组
 
-FixThe 在返回 `202` 前验证 callback envelope。腾讯告警使用经过验证的 provider fields 生成确定性 fingerprint；模型输出、账号 metadata、topic ID 和 callback URL 都不会成为分组权威。保存的 Observation 保留已接受正文，归一化告警证据只保存有界 projection 与 provenance。
+Mendry 在返回 `202` 前验证 callback envelope。腾讯告警使用经过验证的 provider fields 生成确定性 fingerprint；模型输出、账号 metadata、topic ID 和 callback URL 都不会成为分组权威。保存的 Observation 保留已接受正文，归一化告警证据只保存有界 projection 与 provenance。
 
 ## 可信详情证据
 
@@ -33,6 +31,4 @@ Remediation run 只能通过可信 adapter 访问获批的腾讯详情 URL。Ada
 
 ## 核验依据
 
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/remediation-evidence-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+- `backend/internal/modules/hooks/adapter/tencentcls/client.go`

@@ -1,13 +1,14 @@
 ---
-title: Product status
-summary: Check which FixThe capabilities are available, preview-only, planned, or blocked by publication dependencies.
-description: Check which FixThe capabilities are available, preview-only, planned, or blocked by publication dependencies.
+title: Mendry incident response product status
+summary: Check which Agent Harness foundation, Local, Service, Product, and incident-application capabilities are evidenced today.
+description: Check which Agent Harness foundation, Local, Service, Product, and incident-application capabilities are evidenced today.
 availability: available
 translationKey: status
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
   - backend/README.md
-  - .trellis/tasks/09-06-project-docs-starlight/prd.md
-  - .trellis/tasks/08-10-production-incident-mvp/prd.md
 ---
 
 **Availability: available**
@@ -15,32 +16,45 @@ sources:
 Status labels describe evidence, not ambition.
 
 - `available`: implemented and verified in current code or a tested release.
-- `preview`: implemented behavior suitable for source evaluation but not yet a supported customer release path.
-- `planned`: roadmap or release-gated behavior; never an executable step.
+- `preview`: implemented behavior or source contracts suitable for continued evaluation, without a supported customer release claim.
+- `planned`: incomplete or release-gated behavior; never an executable step.
 
-## Current capability matrix
+## Agent Harness delivery boundaries
 
-| Capability                                                | Status    | Boundary                                                |
-| --------------------------------------------------------- | --------- | ------------------------------------------------------- |
-| Explicit migrations and administrator bootstrap           | available | Source command; production package still absent         |
-| Local login sessions and project roles                    | available | Redis sessions, PostgreSQL users/memberships            |
-| Component project configuration and encrypted credentials | available | One row per component per project                       |
-| Public signed webhook ingress                             | available | Token-based, asynchronous background processing         |
-| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific path; not a general polling connector |
-| Incident lifecycle and evidence-backed remediation review | preview   | Human review remains mandatory                          |
-| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project config, policy, budget, and evidence scoped     |
-| Supported customer installation, upgrade, and rollback    | planned   | Blocked on tested release artifact                      |
-| Automatic merge, deployment, rollback, or recovery        | planned   | Outside current authority boundary                      |
-| Outbound notifications and general durable worker queue   | planned   | Not part of current API runtime                         |
+| Stage                                               | Status  | Evidence and boundary                                                                                                                                                |
+| --------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foundation shared execution and extension contracts | preview | Implemented and focused-tested: neutral domain ports, Runner, model step, paired history, registries, policy, completion, budgets, recovery, and artifact provenance |
+| Full incident Runner migration                      | planned | Remediation uses shared model/history boundaries, while its coordinator still owns the domain loop, evidence gates, checkpoints, and tool routing                    |
+| Local input, file durability, and examples          | planned | Source is in progress; no database-free walkthrough or command smoke path has been validated for this site                                                           |
+| Service generic events and durable runs             | planned | No generic event/run service contract is currently published; the incident webhook is not a generic task endpoint                                                    |
+| Product generic run and artifact views              | planned | Existing incident review screens are not generic run/call/artifact views                                                                                             |
+
+Foundation `preview` is a positive implementation status with a bounded claim:
+its report records focused tests and published APIs. It does not promote Local,
+Service, Product, or end-to-end migration to available. See [Agent Harness](/docs/concepts/agent-harness/).
+
+## Existing incident application
+
+The following matrix describes the current incident application. Its database,
+session, project, and account dependencies do not apply to the neutral core. Its
+human-review restrictions are compatibility behavior, not a permanent
+prohibition on write-capable Harness extensions.
+
+| Capability                                                | Status    | Boundary                                                           |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------------------ |
+| Explicit migrations and administrator bootstrap           | available | Source command; supported production package still absent          |
+| Local login sessions and project roles                    | available | Redis sessions and PostgreSQL users/memberships; incident app only |
+| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                |
+| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed     |
+| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input         |
+| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory        |
+| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped             |
+| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                               |
+| Automatic merge, deployment, rollback, or recovery        | planned   | No current production-action availability claim                    |
+| Outbound notifications and general durable worker queue   | planned   | Not part of the current API runtime                                |
 
 ## Publication blockers
 
-The public production documentation promotion remains blocked on an authorized
-brand package, custom canonical domain, tested installation artifact, explicit
-support/security statement, and validated rollback path.
-
-## Verified against
-
-- `backend/README.md`
-- `.trellis/tasks/09-06-project-docs-starlight/prd.md`
-- `.trellis/tasks/08-10-production-incident-mvp/prd.md`
+Public production documentation remains blocked on an authorized brand package,
+custom canonical domain, tested installation artifact, explicit support/security
+statement, and validated rollback path.

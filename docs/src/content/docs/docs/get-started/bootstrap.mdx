@@ -7,7 +7,6 @@ journeyOrder: 4
 sources:
   - backend/README.md
   - backend/cmd/bootstrap-admin/main.go
-  - .trellis/spec/backend/authentication-guidelines.md
 ---
 
 **Availability: preview**
@@ -19,10 +18,10 @@ Redis instances.
 
 ```bash
 cp .env.example .env
-export FIXTHE_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+export MENDRY_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 
-Set `FIXTHE_POSTGRES_URL` and `FIXTHE_REDIS_URL` in the environment or private
+Set `MENDRY_POSTGRES_URL` and `MENDRY_REDIS_URL` in the environment or private
 `.env`. Keep the encryption key stable for this database.
 
 ## 2. Apply migrations
@@ -36,7 +35,7 @@ Only the migration command changes schema. The API never migrates automatically.
 ## 3. Create the first administrator
 
 ```bash
-FIXTHE_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
+MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
 make bootstrap-admin USERNAME=admin
 ```
 
@@ -61,4 +60,3 @@ Continue to [your first project](/docs/get-started/first-project/).
 
 - `backend/README.md`
 - `backend/cmd/bootstrap-admin/main.go`
-- `.trellis/spec/backend/authentication-guidelines.md`

@@ -1,17 +1,23 @@
 ---
 title: 角色与能力
-description: 区分系统管理权限与项目 admin、operator、viewer 能力。
+description: 区分现有事故应用角色与 Agent Harness 执行策略。
 availability: available
 translationKey: roles
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
   - backend/README.md
-  - .trellis/spec/backend/authentication-guidelines.md
-  - .trellis/spec/backend/project-guidelines.md
 ---
 
 **可用性：available**
 
+## 范围：现有事故应用
+
+以下角色用于授权当前事故 Web 应用，不授权通用 Harness 工具，也不是中立 core 的依赖。Harness 执行权限来自可信 tool registration 与 `Policy`；计划中的单操作员 Service 入口保护属于另一 adapter 边界。
+
 系统角色与项目角色相互独立。系统管理员可创建本地用户和项目；项目 membership 控制单个项目内的访问。
+
+单人自托管方向不意味着现有服务认证已移除。
 
 ## 系统角色
 
@@ -39,5 +45,3 @@ sources:
 ## 核验依据
 
 - `backend/README.md`
-- `.trellis/spec/backend/authentication-guidelines.md`
-- `.trellis/spec/backend/project-guidelines.md`

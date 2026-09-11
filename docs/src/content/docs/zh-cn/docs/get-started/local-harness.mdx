@@ -1,0 +1,30 @@
+---
+title: 本地 Harness 流程状态
+description: 了解无数据库 Local Harness 的目标边界，以及为何当前尚未发布可运行命令。
+availability: planned
+translationKey: local-harness
+sources:
+  - backend/cmd/agentcore-local/main.go
+  - backend/internal/modules/agentcore/command/local.go
+  - backend/internal/modules/agentcore/adapter/file/store.go
+---
+
+**可用性：planned — walkthrough 等待验证**
+
+Local 交付目标是让一个有界 JSON event 通过共享 Harness 执行，并在可检查的 run 目录中保留调用、产物、预算、状态和完成原因。该路径明确不要求 PostgreSQL、Redis、项目 membership 或账号 onboarding。
+
+当前源码已出现在 `backend/cmd/agentcore-local` 与 `backend/internal/modules/agentcore`，包含仍在推进的 composition、file store、provider 与 MCP 工作。文件存在并不等于达到发布门禁。只有完整 walkthrough 通过任务要求的聚焦测试、race 检查与临时目录 smoke 验证后，本页才会发布命令、配置与 event shape、检查与 resume 流程，以及可逆 MCP 示例。
+
+## 目标信任边界
+
+- 可信启动配置选择 Profile、完成契约、有限预算、策略、provider binding 与 MCP binding。
+- Event 数据只提供 goal 与 context，不选择命令、endpoint、凭据、effect 或 policy。
+- 凭据在 composition 阶段通过显式命名的环境变量解析。
+- Stdio MCP 只接收已配置环境项，不继承完整父进程环境。
+- Effectful 调用在 timeout、断连或结果未知后不会自动重试。
+
+## 目标示例
+
+验证范围预计包括非代码结构化报告、带独立验证的可逆 workspace 写入、限制策略拒绝，以及显式 allow-all 执行。Fixture 目录限制只属于示例工具，不代表 Harness 的能力边界。
+
+在验证记录完成前，请通过[源码扩展指南](/zh-cn/docs/guides/extending-harness/)了解已实现契约，并使用[事故应用流程](/zh-cn/docs/get-started/)评估现有可运行源码路径。

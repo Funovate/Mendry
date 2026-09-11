@@ -1,14 +1,11 @@
 ---
-title: Git repository and baseline
+title: Git repository and deployed code baseline
 summary: Configure repository access and understand the immutable deployed-commit baseline captured for each incident generation.
 description: Configure repository access and understand the immutable deployed-commit baseline captured for each incident generation.
 availability: preview
 translationKey: git-baseline
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/incident-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
 **Availability: preview**
@@ -28,7 +25,7 @@ incident baseline.
 
 ## Baseline capture
 
-When an incident generation starts, FixThe captures the project's configured
+When an incident generation starts, Mendry captures the project's configured
 deployed commit. Reopening a recovered incident creates a new generation and
 reads the current configured commit again. Existing generation evidence and
 reviews keep their original baseline.
@@ -47,6 +44,3 @@ and rollback.
 ## Verified against
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/incident-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`

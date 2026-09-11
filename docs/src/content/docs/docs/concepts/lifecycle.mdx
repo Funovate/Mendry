@@ -1,49 +1,74 @@
 ---
-title: Incident and remediation lifecycle
-description: Understand incident status, deduplication, generations, automatic remediation eligibility, and review states.
+title: AI agent run lifecycle and recovery
+description: Understand the generic Run state machine, bounded execution, unknown write handling, and incident lifecycle compatibility.
 availability: available
 translationKey: lifecycle
 sources:
-  - .trellis/spec/backend/incident-guidelines.md
-  - .trellis/spec/backend/remediation-evidence-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
 ---
 
 **Availability: available**
 
-An Incident and a remediation run are related but distinct. The Incident tracks
-an operational condition; a remediation run records one bounded investigation
-for a specific incident lifecycle generation.
+A generic Run is one bounded execution of a versioned Profile against a frozen
+goal, policy reference, configuration identity, and budget. Success means the
+configured completion contract was satisfied; it does not universally mean an
+incident was resolved or a deployment succeeded.
 
-## Incident behavior
+## Generic Run states
 
-- New manual or webhook incidents begin `Open`.
-- Matching webhook fingerprints update the current open incident occurrence.
-- A recovered incident can be reopened explicitly; that creates a new lifecycle generation and captures the latest configured deployed commit.
-- Webhook ingestion does not reopen `Recovered` or `Closed` incidents.
-- Project `admin` and `operator` members can write incident status; `viewer` cannot.
+| State       | Meaning                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `queued`    | Accepted but not yet driven                                                             |
+| `running`   | Runner may perform another bounded model or tool step                                   |
+| `waiting`   | Operator/reconciliation input or missing completion evidence is required                |
+| `succeeded` | The Profile's registered completion evaluator accepted durable artifacts                |
+| `failed`    | A stable reason records model, policy, persistence, validation, step, or budget failure |
+| `cancelled` | Context cancellation was persisted before another step could continue                   |
 
-## Remediation behavior
+The Runner restores durable calls and counters before continuing. It checks
+elapsed, model-call, tool-call, and output budgets independently. A terminal run
+is returned without reopening it.
 
-Eligible incidents can start remediation automatically after the incident write
-commits. Manual starts are also bounded by project access and incident state.
-The coordinator gathers evidence through a policy-limited tool catalog, records
-provenance, and refuses a successful diagnosis when mandatory evidence is
-missing.
+## One step at a time
 
-A review may show a diagnosis, insufficient evidence, non-code diagnosis, or a
-candidate plan. These are review outputs, not permission to merge or deploy.
+Each cycle prepares a Profile turn, filters tools through policy, accepts one
+model result, and either interprets a final response or executes requested tools
+sequentially. Accepted model usage is persisted before accepted history. A tool
+intent is persisted before its adapter executes. Result and artifact persistence
+forms one storage operation.
 
-## Failure boundary
+Policy rejection becomes an ordered tool observation without running the adapter.
+Cancellation or elapsed exhaustion uses an uncancelled persistence context for
+the final state so the durable run does not remain falsely active.
 
-A webhook can be accepted before asynchronous processing finishes. Background
-failures are emitted through safe structured logs without the inbound token or
-raw provider secrets. Operators should inspect readiness, configuration, and
-`webhook.ingest.failed` diagnostics when an accepted signal does not create an
-incident.
+## Interrupted and unknown effects
 
-## Verified against
+An unresolved trusted read is recorded as `interrupted`. A future model turn may
+request a new read, which receives a new invocation sequence and budget charge.
 
-- `.trellis/spec/backend/incident-guidelines.md`
-- `.trellis/spec/backend/remediation-evidence-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+An unresolved write is different. The external effect may have happened even if
+the response or process was lost. The Run enters `waiting` with
+`unknown_write_outcome`; the old invocation is not dispatched again. An operator
+or connector-specific reconciliation must establish the outcome before a later
+action is authorized.
+
+## Completion is evidence-specific
+
+A solution-delivery Profile may complete from a model-authored solution artifact.
+An action-with-verification Profile requires an observed action plus a verified
+artifact linked to that action. Pipeline dispatch alone is not pipeline success,
+and a remote branch observation alone is not deployment verification.
+
+## Incident lifecycle compatibility
+
+Incident state remains a separate application lifecycle. New incidents start
+Open; matching webhook fingerprints update the current open occurrence; explicitly
+reopening a recovered incident creates a new generation. The remediation
+coordinator owns automatic eligibility, evidence gates, diagnosis/planning states,
+checkpoint recovery, and review projection.
+
+The incident application uses selected shared foundation mechanics but does not
+currently map all of those states to the generic Run state machine. Its review
+outputs do not grant merge, deployment, rollback, or recovery authority.

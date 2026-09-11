@@ -3,6 +3,7 @@ import {
   collectFiles,
   expectedRoutes,
   localLinks,
+  nonIndexableRoutes,
   readHtml,
   routeToFile,
 } from "./site-contract.mjs";
@@ -12,7 +13,12 @@ const publicRelease = process.env.DOCS_PUBLIC_RELEASE === "true";
 for (const route of expectedRoutes) {
   await access(routeToFile(route));
   const html = await readHtml(route);
-  const robots = publicRelease ? "index, follow" : "noindex, nofollow";
+  const indexable = !nonIndexableRoutes.includes(route);
+  const robots = publicRelease
+    ? indexable
+      ? "index, follow"
+      : "noindex, follow"
+    : "noindex, nofollow";
   if (!html.includes(`content="${robots}"`)) {
     throw new Error(`${route} is missing robots metadata: ${robots}`);
   }
@@ -37,29 +43,22 @@ for (const page of generatedPages) {
 
 for (const route of ["/", "/zh-cn/"]) {
   const html = await readHtml(route);
-  if (!html.includes('src="/media/hero-flow/scene-fallback.png"')) {
-    throw new Error(`${route} is missing the hero flow fallback image`);
+  if (!html.includes("data-execution-model")) {
+    throw new Error(`${route} is missing the semantic execution model`);
   }
-  if (html.includes('src="/media/remediation-review.webp"')) {
-    throw new Error(`${route} still renders the retired hero screenshot`);
+  if (/<canvas\b/i.test(html)) {
+    throw new Error(`${route} still renders a canvas-based homepage visual`);
+  }
+  if (html.includes("/media/hero-flow/") || html.includes("scene-fallback")) {
+    throw new Error(`${route} still references the retired 3D hero scene`);
+  }
+  if (!html.includes("incident-sequence")) {
+    throw new Error(`${route} is missing the semantic incident sequence`);
   }
 }
 
 await access("dist/media/remediation-review.webp");
-await access("dist/media/hero-flow/scene.mjs");
-await access("dist/media/hero-flow/scene-fallback.png");
-await access("dist/media/hero-flow/vendor/three.module.min.js");
-await access("dist/media/hero-flow/vendor/three.core.min.js");
-await access("dist/media/hero-flow/vendor/LICENSE");
-const heroFlowScene = await readFile("dist/media/hero-flow/scene.mjs", "utf8");
-if (!heroFlowScene.includes('"./vendor/three.module.min.js"')) {
-  throw new Error(
-    "Hero flow scene must use its relative vendored Three.js import",
-  );
-}
-if (/https?:\/\//.test(heroFlowScene)) {
-  throw new Error("Hero flow scene must not make external runtime requests");
-}
+await access("dist/media/execution-model.png");
 await access("dist/_headers");
 await access("dist/_redirects");
 

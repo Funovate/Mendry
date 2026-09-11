@@ -1,12 +1,14 @@
 ---
 title: 产品状态
-description: 确认 FixThe 能力属于 available、preview、planned，或仍受发布依赖阻塞。
+summary: 确认 Agent Harness Foundation、Local、Service、Product 与事故应用能力当前有哪些真实依据。
+description: 确认 Agent Harness Foundation、Local、Service、Product 与事故应用能力当前有哪些真实依据。
 availability: available
 translationKey: status
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
   - backend/README.md
-  - .trellis/tasks/09-06-project-docs-starlight/prd.md
-  - .trellis/tasks/08-10-production-incident-mvp/prd.md
 ---
 
 **可用性：available**
@@ -14,30 +16,38 @@ sources:
 状态标签描述证据，而不是愿景。
 
 - `available`：当前代码或经过测试的 release 中已实现并验证。
-- `preview`：已实现且可用于源码评估，但尚未形成受支持的客户发布路径。
-- `planned`：路线图或受发布门禁限制的行为，绝不作为可执行步骤。
+- `preview`：已实现的行为或源码契约可继续评估，但不承诺受支持的客户 release。
+- `planned`：未完成或受 release gate 限制，绝不作为可执行步骤。
 
-## 当前能力矩阵
+## Agent Harness 交付边界
 
-| 能力                                       | 状态      | 边界                                            |
-| ------------------------------------------ | --------- | ----------------------------------------------- |
-| 显式迁移与管理员 bootstrap                 | available | 源码命令；仍缺生产 package                      |
-| 本地登录 Session 与项目角色                | available | Redis Session、PostgreSQL 用户/membership       |
-| 组件化项目配置与加密凭据                   | available | 每个项目每种组件一条记录                        |
-| 公开签名 Webhook 摄取                      | available | 基于 token，后台异步处理                        |
-| 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 路径，不是通用轮询 connector  |
-| 事故生命周期与基于证据的修复审阅           | preview   | 必须人工审阅                                    |
-| Git/SSH/MCP/OpenAI-compatible 修复 adapter | preview   | 受项目配置、策略、budget 与 evidence scope 约束 |
-| 受支持客户安装、升级与回滚                 | planned   | 等待经过验证的 release artifact                 |
-| 自动合并、部署、回滚或恢复                 | planned   | 超出当前权限边界                                |
-| 出站通知与通用持久 worker queue            | planned   | 不属于当前 API runtime                          |
+| 阶段                               | 状态    | 当前依据与边界                                                                                                                                  |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foundation 共享执行与扩展契约      | preview | 已实现并通过聚焦测试：中立 domain port、Runner、model step、配对 history、registry、policy、completion、budget、recovery 与 artifact provenance |
+| 完整事故 Runner 迁移               | planned | Remediation 已使用共享 model/history 边界，但 coordinator 仍负责领域循环、证据门禁、checkpoint 与工具路由                                       |
+| Local 输入、file durability 与示例 | planned | 源码进行中；本站尚未验证无数据库 walkthrough 或命令 smoke 路径                                                                                  |
+| Service 通用 event 与 durable run  | planned | 当前未发布通用 event/run Service 契约；事故 Webhook 不是通用任务入口                                                                            |
+| Product 通用 run 与 artifact 视图  | planned | 现有事故审阅页面不是通用 run/call/artifact 视图                                                                                                 |
+
+Foundation 的 `preview` 是有边界的正向实现状态：implementation report 记录了聚焦测试与已发布 API，但这不会把 Local、Service、Product 或端到端迁移提升为 available。详见 [Agent Harness](/zh-cn/docs/concepts/agent-harness/)。
+
+## 现有事故应用
+
+下表描述当前事故应用。其数据库、Session、项目与账号依赖不适用于中立核心；人工审阅限制属于兼容行为，不表示 Harness 扩展永久禁止写能力。
+
+| 能力                                       | 状态      | 边界                                                    |
+| ------------------------------------------ | --------- | ------------------------------------------------------- |
+| 显式迁移与管理员 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                      |
+| 本地登录 Session 与项目角色                | available | Redis Session 与 PostgreSQL 用户/membership；仅事故应用 |
+| 组件化项目配置与加密凭据                   | available | 项目范围的应用行为                                      |
+| 公开签名 Webhook 摄取                      | available | 事故信号路径；基于 token 并异步处理                     |
+| 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 事故路径，不是通用 Harness 输入       |
+| 事故生命周期与基于证据的修复审阅           | preview   | Domain-specific coordinator；必须人工审阅               |
+| Git/SSH/MCP/OpenAI-compatible 修复 adapter | preview   | 受项目、事故、policy、budget 与 evidence scope 约束     |
+| 受支持客户安装、升级与回滚                 | planned   | 等待经过验证的 release artifact                         |
+| 自动合并、部署、回滚或恢复                 | planned   | 当前没有生产动作可用性声明                              |
+| 出站通知与通用持久 worker queue            | planned   | 不属于当前 API runtime                                  |
 
 ## 发布阻塞项
 
-公开生产文档发布仍依赖已授权品牌资源、自定义 canonical domain、经过验证的安装制品、明确支持/安全声明和有效回滚路径。
-
-## 核验依据
-
-- `backend/README.md`
-- `.trellis/tasks/09-06-project-docs-starlight/prd.md`
-- `.trellis/tasks/08-10-production-incident-mvp/prd.md`
+公开生产文档仍依赖已授权品牌资源、自定义 canonical domain、经过验证的安装制品、明确支持/安全声明和有效回滚路径。

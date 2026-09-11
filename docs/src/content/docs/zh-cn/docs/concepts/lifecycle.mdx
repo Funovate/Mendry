@@ -1,38 +1,49 @@
 ---
-title: 事故与修复生命周期
-description: 了解事故状态、去重、generation、自动修复资格与审阅状态。
+title: Run 生命周期与恢复
+description: 了解通用 Run 状态机、有界执行、unknown write 处理与事故 lifecycle 兼容行为。
 availability: available
 translationKey: lifecycle
 sources:
-  - .trellis/spec/backend/incident-guidelines.md
-  - .trellis/spec/backend/remediation-evidence-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
 ---
 
 **可用性：available**
 
-Incident 与 remediation run 相关但并不相同。Incident 跟踪操作条件，remediation run 记录针对特定事故 lifecycle generation 的一次有界调查。
+通用 Run 是版本化 Profile 针对冻结 goal、policy reference、configuration identity 与 budget 的一次有界执行。成功表示配置的完成契约已满足，并不统一表示事故已解决或部署已成功。
 
-## 事故行为
+## 通用 Run 状态
 
-- 手工创建或 Webhook 新建的事故初始为 `Open`。
-- fingerprint 相同的 Webhook 会更新当前 Open 事故的 occurrence。
-- 可显式重新打开 Recovered 事故；此时创建新的 lifecycle generation，并捕获最新 configured deployed commit。
-- Webhook 摄取不会重新打开 `Recovered` 或 `Closed` 事故。
-- 项目 `admin` 与 `operator` 可写事故状态；`viewer` 不可写。
+| 状态        | 含义                                                                          |
+| ----------- | ----------------------------------------------------------------------------- |
+| `queued`    | 已接受，但尚未 drive                                                          |
+| `running`   | Runner 可以继续下一次有界模型或工具步骤                                       |
+| `waiting`   | 需要操作员/reconciliation 输入，或缺少完成证据                                |
+| `succeeded` | Profile 的已注册 completion evaluator 接受了 durable artifact                 |
+| `failed`    | 稳定 reason 记录模型、policy、persistence、validation、step 或 budget failure |
+| `cancelled` | 在继续下一步骤前已持久化 context cancellation                                 |
 
-## 修复行为
+Runner 在继续前恢复 durable call 与 counter，并分别检查 elapsed、model-call、tool-call 与 output budget。Terminal run 不会被重新打开。
 
-符合条件的事故可在事故写入提交后自动启动修复。手工启动同样受项目权限与事故状态约束。协调器通过策略限制的工具目录收集证据、记录 provenance，并在缺少强制证据时拒绝成功诊断。
+## 一次一个步骤
 
-审阅结果可能是诊断、证据不足、非代码问题或候选方案。这些都是审阅输出，不是合并或部署许可。
+每个循环由 Profile 准备轮次，policy 筛选工具，接受一个模型结果，然后解释 final response 或顺序执行请求的工具。Accepted model usage 先于 accepted history 持久化。Tool intent 先于 adapter 执行持久化。Result 与 artifact 通过一次存储操作写入。
 
-## 失败边界
+Policy 拒绝会成为有序 tool observation，adapter 不会执行。Cancellation 或 elapsed exhaustion 使用未取消的 persistence context 保存最终状态，避免 durable run 错误地保持 active。
 
-Webhook 可能在异步处理完成前返回 accepted。后台失败通过安全结构化日志报告，不包含入站 token 或原始提供方密钥。如果信号被接收但未创建事故，请检查 readiness、配置和 `webhook.ingest.failed` 诊断。
+## Interrupted 与 unknown effect
 
-## 核验依据
+未解决的可信 read 记录为 `interrupted`。未来模型轮次可请求新的 read，它会获得新的 invocation sequence 并再次计入 budget。
 
-- `.trellis/spec/backend/incident-guidelines.md`
-- `.trellis/spec/backend/remediation-evidence-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+未解决 write 不同：即使响应或进程丢失，外部 effect 也可能已经发生。Run 会进入 `waiting`，reason 为 `unknown_write_outcome`；旧 invocation 不会再次 dispatch。必须先由操作员或 connector-specific reconciliation 确认结果，之后才能授权其他动作。
+
+## 完成条件依赖证据
+
+Solution-delivery Profile 可以由模型生成的 solution artifact 完成。Action-with-verification Profile 要求 observed action 和关联该动作的 verified artifact。Pipeline dispatch 不等于 pipeline success，观察到 remote branch 也不等于 deployment verification。
+
+## 事故 lifecycle 兼容
+
+Incident state 仍是独立的应用 lifecycle。新事故从 Open 开始；相同 webhook fingerprint 更新当前 open occurrence；显式重新打开 recovered incident 会创建新 generation。Remediation coordinator 负责自动 eligibility、证据门禁、diagnosis/planning state、checkpoint recovery 与 review projection。
+
+事故应用使用部分共享 Foundation 机制，但目前没有把全部状态映射到通用 Run 状态机。它的 review output 不授予 merge、deployment、rollback 或 recovery 权限。

@@ -1,5 +1,5 @@
 ---
-title: Troubleshooting
+title: Incident investigation troubleshooting
 summary: Diagnose startup, authentication, project configuration, webhook ingestion, and remediation evidence failures safely.
 description: Diagnose startup, authentication, project configuration, webhook ingestion, and remediation evidence failures safely.
 availability: available
@@ -7,8 +7,6 @@ translationKey: troubleshooting
 sources:
   - backend/README.md
   - backend/.env.example
-  - .trellis/spec/backend/logging-guidelines.md
-  - .trellis/spec/backend/error-handling.md
 ---
 
 **Availability: available**
@@ -19,7 +17,7 @@ credentials merely to obtain more detail.
 ## API is not ready
 
 Check `/livez`, then `/readyz`. API startup requires reachable PostgreSQL and
-Redis plus a valid `FIXTHE_ENCRYPTION_KEY`. Apply migrations explicitly before
+Redis plus a valid `MENDRY_ENCRYPTION_KEY`. Apply migrations explicitly before
 starting a binary that needs them. The API never repairs schema history.
 
 ## Login fails
@@ -66,5 +64,3 @@ customer evidence into an issue.
 
 - `backend/README.md`
 - `backend/.env.example`
-- `.trellis/spec/backend/logging-guidelines.md`
-- `.trellis/spec/backend/error-handling.md`

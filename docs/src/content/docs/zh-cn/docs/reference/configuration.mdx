@@ -1,30 +1,33 @@
 ---
 title: 配置参考
-description: 查阅当前进程环境变量与项目内配置边界。
+description: 查阅现有事故应用配置，并将其与 Agent Harness composition 区分开。
 availability: available
 translationKey: configuration
 sources:
   - backend/.env.example
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
 ---
 
 **可用性：available**
 
-配置分为进程环境与项目运行配置两个 scope。不要随意在两者之间移动 secret。
+## 范围：现有事故应用
+
+本页记录当前 API 与项目配置，用于事故 Web 应用。其中 PostgreSQL、Redis、账号、membership、项目凭据与 `MENDRY_*` 设置都不是中立 Agent Harness core 的前提。Local 与 Service Harness composition 会在对应阶段交付后提供独立的已验证配置契约。
+
+事故应用配置分为进程环境与项目运行配置两个 scope。不要随意在两者之间移动 secret。
 
 ## 进程环境
 
 | 范围       | Key 示例                                                      | 说明                                                   |
 | ---------- | ------------------------------------------------------------- | ------------------------------------------------------ |
-| Runtime    | `FIXTHE_ENVIRONMENT`、`FIXTHE_HTTP_ADDR`、`FIXTHE_PUBLIC_URL` | Public URL 用于生成 Webhook URL；只使用一个绝对 origin |
-| Data       | `FIXTHE_POSTGRES_URL`、`FIXTHE_REDIS_URL`                     | PostgreSQL 持久保存；Redis 只保存 Session              |
-| Encryption | `FIXTHE_ENCRYPTION_KEY`                                       | 32 字节的 base64；每个数据库保持稳定                   |
-| Auth       | `FIXTHE_AUTH_SESSION_TTL`                                     | 默认 24 小时                                           |
-| HTTP       | `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit            | CORS 只接受一个精确 console origin                     |
-| Logging    | `FIXTHE_LOG_FORMAT`、`FIXTHE_LOG_LEVEL`、`FIXTHE_LOG_FILE`    | production 默认 JSON；本地文件需由外部轮换             |
+| Runtime    | `MENDRY_ENVIRONMENT`、`MENDRY_HTTP_ADDR`、`MENDRY_PUBLIC_URL` | Public URL 用于生成 Webhook URL；只使用一个绝对 origin |
+| Data       | `MENDRY_POSTGRES_URL`、`MENDRY_REDIS_URL`                     | PostgreSQL 持久保存；Redis 只保存 Session              |
+| Encryption | `MENDRY_ENCRYPTION_KEY`                                       | 32 字节的 base64；每个数据库保持稳定                   |
+| Auth       | `MENDRY_AUTH_SESSION_TTL`                                     | 默认 24 小时                                           |
+| HTTP       | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit            | CORS 只接受一个精确 console origin                     |
+| Logging    | `MENDRY_LOG_FORMAT`、`MENDRY_LOG_LEVEL`、`MENDRY_LOG_FILE`    | production 默认 JSON；本地文件需由外部轮换             |
 
-`backend/.env.example` 是当前完整 key/default 参考。Shell 中已导出的环境变量优先于 `.env`。
+`backend/.env.example` 是当前完整 key/default 参考。`MENDRY_*` 是首选命名；迁移期间每个运行时 key 都接受对应的 `FIXTHE_*` 旧名，二者同时存在时优先使用 `MENDRY_*`，即使其值显式为空。Shell 中已导出的任一命名空间环境变量优先于 `.env`。
 
 ## 项目配置
 
@@ -38,4 +41,3 @@ Credential 是独立项目记录，通过 ID 引用。读取响应从不返回�
 
 - `backend/.env.example`
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`

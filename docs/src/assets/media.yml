@@ -12,12 +12,12 @@ remediation-review:
     obsoletePrototypeBehavior: none
   availability: current
 
-hero-flow:
-  output: public/media/hero-flow/scene-fallback.png
-  source: .trellis/tasks/09-06-project-docs-starlight/research/hero-flow-concept.html and local Three.js scene
-  captured: 2026-09-07
-  dimensions: 1240x815
-  data: synthetic generated workflow illustration; no production or customer data
+execution-model:
+  output: public/media/execution-model.png
+  source: docs/src/components/Introduction.astro static incident investigation example
+  captured: 2026-09-10
+  dimensions: 1200x630
+  data: synthetic checkout incident, log evidence, and proposed code change; no production or customer data
   synthetic: true
   generated: true
   review:
@@ -26,5 +26,5 @@ hero-flow:
     privateEndpoints: none
     customerOrPersonalData: none
     obsoletePrototypeBehavior: none
-    staleness: reviewed against the approved prototype on 2026-09-07
+    staleness: reviewed against the homepage incident investigation example on 2026-09-10
   availability: current

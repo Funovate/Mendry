@@ -1,5 +1,5 @@
 {
-  "name": "@fixthe/docs",
+  "name": "@mendry/docs",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -21,6 +21,7 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
+    "@astrojs/sitemap": "3.7.4",
     "@astrojs/starlight": "0.42.0",
     "astro": "7.3.1"
   },

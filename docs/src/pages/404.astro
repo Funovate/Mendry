@@ -2,66 +2,371 @@
 import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
 
 Astro.response.status = 404;
+const locales = [
+  {
+    lang: "en",
+    title: "Page not found",
+    description:
+      "This link leads to a missing page. Let’s get you back to where things connect.",
+    home: "Back to homepage",
+    docs: "Browse documentation",
+    hint: "You can also search for what you need above.",
+    prefix: "",
+  },
+  {
+    lang: "zh-CN",
+    title: "页面不存在",
+    description: "这个链接没有通往任何页面。换条路，从这里重新连接。",
+    home: "返回首页",
+    docs: "浏览文档",
+    hint: "也可以通过顶部搜索，找到你需要的内容。",
+    prefix: "/zh-cn",
+  },
+];
 ---
 
 <StarlightPage
   frontmatter={{
-    title: "Page not found | 页面不存在",
-    description: "The requested FixThe documentation page does not exist.",
+    title: "Page not found",
+    description: "The requested Mendry documentation page does not exist.",
     availability: "available",
     sources: ["docs/src/pages/404.astro"],
     translationKey: "not-found",
+    template: "splash",
+    tableOfContents: false,
     pagefind: false,
   }}
   hasSidebar={false}
 >
-  <section class="not-found" data-locale="en">
-    <p>404 / FixThe</p>
-    <h2>Page not found</h2>
-    <p>The requested page is not part of this documentation preview.</p>
-    <a href="/">Return to FixThe</a>
-  </section>
-  <section class="not-found" data-locale="zh-CN" hidden>
-    <p>404 / FixThe</p>
-    <h2>页面不存在</h2>
-    <p>请求的页面不在当前文档预览中。</p>
-    <a href="/zh-cn/">返回 FixThe</a>
-  </section>
+  <div class="not-found-shell">
+    <div class="not-found-layout">
+      <div class="not-found-copy">
+        <div class="error-code" role="img" aria-label="404">
+          <svg viewBox="0 0 182 76" fill="none" aria-hidden="true">
+            <g
+              stroke="currentColor"
+              stroke-width="7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M34 8 8 47h39M34 30v38"></path>
+              <rect x="65" y="8" width="43" height="60" rx="21.5"></rect>
+              <path d="m155 8-26 39h39m-13-17v38"></path>
+            </g>
+            <circle cx="86.5" cy="38" r="5" class="stitch"></circle>
+          </svg>
+        </div>
+        {
+          locales.map((locale) => (
+            <section
+              class="not-found"
+              data-locale={locale.lang}
+              hidden={locale.lang !== "en"}
+            >
+              <h1>{locale.title}</h1>
+              <p class="description">{locale.description}</p>
+              <div class="actions">
+                <a class="primary" href={`${locale.prefix}/`}>
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="18"
+                    height="18"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    aria-hidden="true"
+                  >
+                    <path d="m12 5-7 7 7 7M5 12h14" />
+                  </svg>
+                  {locale.home}
+                </a>
+                <a class="secondary" href={`${locale.prefix}/docs/`}>
+                  {locale.docs}
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="18"
+                    height="18"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    aria-hidden="true"
+                  >
+                    <path d="M5 12h14m-7-7 7 7-7 7" />
+                  </svg>
+                </a>
+              </div>
+              <p class="hint">{locale.hint}</p>
+            </section>
+          ))
+        }
+      </div>
+      <div class="brand-illustration" aria-hidden="true">
+        <svg viewBox="0 0 480 480" fill="none">
+          <defs>
+            <radialGradient id="not-found-glow">
+              <stop stop-color="var(--error-amber)" stop-opacity="0.12"></stop>
+              <stop offset="1" stop-color="var(--error-amber)" stop-opacity="0"
+              ></stop>
+            </radialGradient>
+          </defs>
+          <circle cx="240" cy="240" r="238" fill="url(#not-found-glow)"
+          ></circle>
+          <g class="construction" stroke-width="1">
+            <circle cx="240" cy="240" r="196" stroke-dasharray="2 8"></circle>
+            <path d="M44 136h392M44 346h392M132 44v392M348 44v392"></path>
+            <path
+              d="M232 44h16M240 36v16M232 436h16M240 428v16M36 240h16M44 232v16M428 240h16M436 232v16"
+            ></path>
+          </g>
+          <!-- The mark uses the original logo's 36:40 diagonals and round terminals.
+               Its amber joining point becomes the destination of the interrupted line. -->
+          <path
+            class="mark-shadow"
+            d="M132 346V136l108 120 108-120v210"
+            stroke-width="48"
+            stroke-linecap="round"
+            stroke-linejoin="round"></path>
+          <path
+            class="mark"
+            d="M132 346V136l108 120 108-120v210"
+            stroke-width="42"
+            stroke-linecap="round"
+            stroke-linejoin="round"></path>
+          <circle cx="240" cy="256" r="35" class="stitch-halo"></circle>
+          <circle cx="240" cy="256" r="24" class="stitch"></circle>
+          <path
+            class="loose-thread"
+            d="M240 294v40c0 35 32 35 32 65 0 20-14 31-32 31"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-dasharray="4 7"></path>
+          <circle cx="240" cy="430" r="5" class="thread-end" stroke-width="2"
+          ></circle>
+        </svg>
+      </div>
+    </div>
+  </div>
 </StarlightPage>
 
 <script is:inline>
-  const chinese = window.location.pathname.startsWith("/zh-cn/");
+  const chinese = /^\/zh-cn(?:\/|$)/.test(window.location.pathname);
   document.documentElement.lang = chinese ? "zh-CN" : "en";
-  document.querySelectorAll("[data-locale]").forEach((element) => {
+  document.title = chinese ? "页面不存在 | Mendry" : "Page not found | Mendry";
+  const languageSelect = document.querySelector("starlight-lang-select select");
+  if (languageSelect) {
+    languageSelect.value = chinese ? "/zh-cn/404/" : "/404/";
+  }
+  document.querySelectorAll(".not-found[data-locale]").forEach((element) => {
     element.hidden =
       element.getAttribute("data-locale") !== (chinese ? "zh-CN" : "en");
   });
 </script>
 
 <style>
-  .not-found {
-    max-width: 42rem;
-    margin: 10vh auto;
+  :global(html:has(.not-found-shell)) {
+    --error-amber: #c1893e;
+    --error-mark: #17281f;
   }
 
-  .not-found > p:first-child {
-    color: var(--fx-accent);
-    font-family: var(--sl-font-mono);
-    font-size: 0.75rem;
-    font-weight: 700;
+  :global(html[data-theme="dark"]:has(.not-found-shell)) {
+    --error-amber: #dbab69;
+    --error-mark: #e5eee3;
   }
 
-  .not-found h2 {
-    margin: 1rem 0;
+  :global(html:has(.not-found-shell) main > .content-panel:first-child),
+  :global(html:has(.not-found-shell) footer) {
+    display: none;
+  }
+
+  :global(html:has(.not-found-shell) .content-panel > .sl-container) {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+  }
+
+  .not-found-shell {
+    box-sizing: border-box;
+    display: grid;
+    align-items: center;
+    min-height: calc(100svh - var(--sl-nav-height));
+    padding: 3rem 2rem 6rem;
+  }
+
+  .not-found-layout {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    align-items: center;
+    gap: clamp(2rem, 5vw, 5rem);
+    width: min(100%, 68rem);
+    margin-inline: auto;
+  }
+
+  .not-found-copy {
+    min-width: 0;
+  }
+
+  .error-code {
+    width: 8.5rem;
+    margin-bottom: 2.25rem;
+    color: var(--error-mark);
+  }
+
+  .error-code svg,
+  .brand-illustration svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .stitch {
+    fill: var(--error-amber);
+  }
+
+  .not-found[hidden] {
+    display: none;
+  }
+
+  .not-found h1 {
+    margin: 0;
     color: var(--fx-heading);
-    font-size: 2rem;
-    letter-spacing: 0;
+    font-size: clamp(2rem, 3.6vw, 3rem);
+    font-weight: 650;
+    line-height: 1.18;
+    letter-spacing: -0.04em;
   }
 
-  .not-found a {
-    display: inline-block;
-    margin-top: 1rem;
-    color: var(--fx-accent);
-    font-weight: 700;
+  .description {
+    max-width: 26rem;
+    margin: 1.25rem 0 0;
+    color: var(--fx-text);
+    font-size: 1rem;
+    line-height: 1.85;
+    text-wrap: pretty;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    min-height: 3rem;
+    padding: 0.65rem 1rem;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.5;
+    text-decoration: none;
+    transition:
+      background-color 150ms,
+      border-color 150ms;
+  }
+
+  .primary {
+    color: var(--fx-canvas);
+    background: var(--error-mark);
+  }
+
+  .primary:hover {
+    background: color-mix(in srgb, var(--error-mark) 85%, var(--error-amber));
+  }
+
+  .actions .secondary {
+    border-color: var(--fx-border);
+    color: var(--fx-heading);
+  }
+
+  .secondary:hover {
+    background: var(--fx-accent-soft);
+    border-color: var(--fx-accent);
+  }
+
+  .actions a:focus-visible {
+    outline: 2px solid var(--error-amber);
+    outline-offset: 4px;
+  }
+
+  .hint {
+    margin: 1.5rem 0 0;
+    color: var(--fx-muted);
+    font-size: 0.8125rem;
+    line-height: 1.7;
+  }
+
+  .brand-illustration {
+    width: 100%;
+    max-width: 30rem;
+    justify-self: center;
+  }
+
+  .construction {
+    stroke: var(--fx-border);
+    opacity: 0.7;
+  }
+
+  .mark {
+    stroke: var(--error-mark);
+  }
+
+  .mark-shadow {
+    stroke: var(--error-mark);
+    opacity: 0.06;
+    transform: translateY(8px);
+  }
+
+  .stitch-halo {
+    fill: var(--fx-canvas);
+  }
+
+  .loose-thread,
+  .thread-end {
+    stroke: var(--error-amber);
+  }
+
+  .thread-end {
+    fill: var(--fx-canvas);
+  }
+
+  @media (max-width: 49.99rem) {
+    .not-found-shell {
+      padding: 2rem 1.5rem 3rem;
+    }
+
+    .not-found-layout {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      max-width: 30rem;
+    }
+
+    .brand-illustration {
+      grid-row: 1;
+      width: min(65%, 15rem);
+    }
+
+    .error-code {
+      width: 5.5rem;
+      margin-bottom: 1.25rem;
+    }
+  }
+
+  @media (max-width: 30rem) {
+    .actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .actions a {
+      transition: none;
+    }
   }
 </style>

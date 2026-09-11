@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   counterpart,
   expectedRoutes,
+  indexableRoutes,
   localLinks,
+  nonIndexableRoutes,
   routeEntries,
   routeToFile,
 } from "./site-contract.mjs";
@@ -14,12 +16,12 @@ test("every route has a reciprocal locale counterpart", () => {
 });
 
 test("the expected route count includes introductions and operator pages", () => {
-  assert.equal(routeEntries.length, 38);
-  assert.equal(expectedRoutes.length, 40);
+  assert.equal(routeEntries.length, 44);
+  assert.equal(expectedRoutes.length, 46);
 });
 
 test("operator entries have matching locale metadata", () => {
-  assert.equal(routeEntries.length, 38);
+  assert.equal(routeEntries.length, 44);
   for (const entry of routeEntries) {
     const pair = routeEntries.find(
       (candidate) => candidate.route === counterpart(entry.route),
@@ -38,6 +40,28 @@ test("installation remains a planned release-gate page", () => {
   assert.ok(
     installEntries.every(({ availability }) => availability === "planned"),
   );
+});
+
+test("local Harness walkthrough remains non-executable until validated", () => {
+  const localEntries = routeEntries.filter(
+    ({ translationKey }) => translationKey === "local-harness",
+  );
+  assert.equal(localEntries.length, 2);
+  assert.ok(
+    localEntries.every(({ availability }) => availability === "planned"),
+  );
+});
+
+test("planned pages are excluded from the indexable route set", () => {
+  assert.deepEqual(nonIndexableRoutes, [
+    "/docs/get-started/local-harness/",
+    "/zh-cn/docs/get-started/local-harness/",
+    "/docs/get-started/install/",
+    "/zh-cn/docs/get-started/install/",
+  ]);
+  assert.equal(indexableRoutes.length, expectedRoutes.length - 4);
+  for (const route of nonIndexableRoutes)
+    assert.ok(!indexableRoutes.includes(route));
 });
 
 test("routes map to static index files", () => {

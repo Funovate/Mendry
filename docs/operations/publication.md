@@ -5,6 +5,11 @@ release. It is not a deployment authorization and does not make the preview
 public. Until the release checklist is approved, keep previews non-indexable and
 keep the installation page `planned`.
 
+Track repository-verified facts and unresolved external inputs in the
+[publication release-input record](./release-inputs.md). That record is a
+release dependency log, not an approval to deploy, attach DNS, or enable
+indexing.
+
 ## Package gate
 
 Run the same platform-neutral gate locally and from any future CI provider:
@@ -22,26 +27,31 @@ formatting, Astro/content and route checks, Node contract tests, the production
 dependency audit, a preview build, Playwright browser checks, and the reserved
 public-build contract.
 
-The public contract uses `https://docs.fixthe.invalid`. This reserved origin is
-for static output tests only and must never be attached to a Pages project or
-used as a production canonical domain.
+The public contract builds canonical metadata and a sitemap for the approved
+`https://mendry.net` origin. This is a static contract test only; it does not
+deploy or attach a custom domain.
 
 ## Pages project settings
 
 Create or modify a Pages project only after the release checklist is approved.
-Use placeholders until the repository remote, account ownership, project name,
-and domain are actually approved:
+The source repository is [Funovate/Mendry](https://github.com/Funovate/Mendry).
+Keep placeholders for account ownership, project name, and production branch
+until those inputs are supplied:
 
-| Pages setting          | Value                          |
-| ---------------------- | ------------------------------ |
-| Account                | `<CLOUDFLARE_ACCOUNT>`         |
-| Project name           | `<PAGES_PROJECT>`              |
-| Connected repository   | `<REPOSITORY_REMOTE>`          |
-| Production branch      | `<PRODUCTION_BRANCH>`          |
-| Root directory         | `docs`                         |
-| Build command          | `npm run build`                |
-| Build output directory | `dist`                         |
-| Node version           | `22.19.0` from `.node-version` |
+| Pages setting          | Value                                |
+| ---------------------- | ------------------------------------ |
+| Account                | `<CLOUDFLARE_ACCOUNT>`               |
+| Project name           | `<PAGES_PROJECT>`                    |
+| Connected repository   | `https://github.com/Funovate/Mendry` |
+| Production branch      | `<PRODUCTION_BRANCH>`                |
+| Root directory         | `docs`                               |
+| Build command          | `npm run build`                      |
+| Build output directory | `dist`                               |
+| Node version           | `22.19.0` from `.node-version`       |
+
+The `mendry.net` build contract is not a deployment authorization. A Pages
+production build must still use the approved environment variables and release
+checklist below.
 
 The `docs` package is static Astro output. Do not add Pages Functions, an
 adapter, a runtime API dependency, or a hosted search service as part of
@@ -60,12 +70,12 @@ Cloudflare's current references for these settings are:
 
 Set variables by Pages environment, not in committed provider configuration:
 
-| Environment                       | `DOCS_PUBLIC_RELEASE` | `PUBLIC_SITE_ORIGIN`             |
-| --------------------------------- | --------------------- | -------------------------------- |
-| Local preview                     | absent or not `true`  | absent                           |
-| Pages preview                     | absent or not `true`  | absent                           |
-| Pages production, before approval | absent or not `true`  | absent                           |
-| Pages production, after approval  | `true`                | `https://<APPROVED_DOCS_DOMAIN>` |
+| Environment                       | `DOCS_PUBLIC_RELEASE` | `PUBLIC_SITE_ORIGIN` |
+| --------------------------------- | --------------------- | -------------------- |
+| Local preview                     | absent or not `true`  | absent               |
+| Pages preview                     | absent or not `true`  | absent               |
+| Pages production, before approval | absent or not `true`  | absent               |
+| Pages production, after approval  | `true`                | `https://mendry.net` |
 
 `PUBLIC_SITE_ORIGIN` must be the approved HTTPS custom origin, without a port,
 path, query, or fragment. A `pages.dev` hostname is never an acceptable
@@ -84,8 +94,8 @@ no canonical or sitemap claim.
 Every preview deployment must be treated as an evaluation surface. Check the
 Pages deployment URL before sharing it:
 
-- `/` and `/zh-cn/` return `200`, show the localized introduction, load the
-  local fallback media, and do not request an external runtime asset.
+- `/` and `/zh-cn/` return `200`, show the localized introduction, render the
+  semantic execution model, and do not request an external runtime asset.
 - `/docs/` and `/zh-cn/docs/` return `200`; representative concept, guide,
   reference, and get-started routes return `200` in both locales.
 - `/docs` and `/zh-cn/docs` follow the committed trailing-slash redirects.
@@ -97,7 +107,7 @@ Pages deployment URL before sharing it:
 - `Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, and
   `X-Frame-Options` are present on static responses.
 - Browser checks pass for accessibility, responsive layouts, theme and locale
-  controls, image loading, and no horizontal overflow.
+  controls, the semantic execution model, and no horizontal overflow.
 
 Record the deployment URL, commit, build result, and these HTTP checks in the
 release record. A failed preview is not a release candidate.
@@ -107,12 +117,12 @@ release record. A failed preview is not a release candidate.
 Only promote after the release checklist below is complete and `npm run verify`
 has passed from a clean install on Node `22.19.0`.
 
-1. Confirm the Pages project uses the approved `<REPOSITORY_REMOTE>`,
+1. Confirm the Pages project uses `https://github.com/Funovate/Mendry`,
    `<PRODUCTION_BRANCH>`, root `docs`, build command `npm run build`, and output
    `dist`.
 2. Confirm the production environment alone has
    `DOCS_PUBLIC_RELEASE=true` and the approved
-   `PUBLIC_SITE_ORIGIN=https://<APPROVED_DOCS_DOMAIN>`.
+   `PUBLIC_SITE_ORIGIN=https://mendry.net`.
 3. Build the candidate from the approved commit and inspect the Pages build log
    for a zero exit status and the expected `dist` output.
 4. Attach the approved custom domain in the Workers & Pages dashboard under
@@ -129,20 +139,21 @@ project through the dashboard first.
 
 ## Production smoke checks
 
-Run the same route and asset checks against `https://<APPROVED_DOCS_DOMAIN>`
-without substituting the `.invalid` contract origin:
+Run the same route and asset checks against `https://mendry.net`. The public
+build contract is a local static-output test; it does not prove that the domain
+is attached to the intended Pages deployment:
 
 - All 40 expected routes (38 operator pages plus 2 introduction pages) return
   `200`.
 - Canonical URLs use the approved origin exactly; `en`, `zh-CN`, and `x-default`
   alternates point to the reciprocal routes.
 - `robots.txt` allows crawling and references
-  `https://<APPROVED_DOCS_DOMAIN>/sitemap-index.xml`; the sitemap index and its
+  `https://mendry.net/sitemap-index.xml`; the sitemap index and its
   child sitemap contain only the approved origin.
 - The response is indexable only after the explicit release gate is approved;
   `X-Robots-Tag: noindex` must remain on `pages.dev` preview responses.
 - The 404 status, three committed redirects, Pagefind search, local media,
-  CSP and other security headers, and both locale/theme browser paths work.
+  semantic execution model, CSP and other security headers, and both locale/theme browser paths work.
 - No response contains an unexpected external script, font, image, or runtime
   service request.
 
@@ -170,12 +181,12 @@ and are not changed by rollback.
 Do not set `DOCS_PUBLIC_RELEASE=true`, attach a custom domain, submit the site
 to search engines, or publish installation commands until every item is checked:
 
-- [ ] Approved HTTPS custom documentation domain is recorded as
-      `<APPROVED_DOCS_DOMAIN>`.
+- [x] The approved static-build origin is recorded as `https://mendry.net`;
+      domain ownership and Pages attachment remain separate unchecked inputs.
 - [ ] Cloudflare account ownership and operator access are recorded as
       `<CLOUDFLARE_ACCOUNT>` and `<PAGES_PROJECT>`.
-- [ ] Repository remote and production branch are recorded as
-      `<REPOSITORY_REMOTE>` and `<PRODUCTION_BRANCH>`.
+- [x] The source repository is recorded as `https://github.com/Funovate/Mendry`.
+- [ ] The production branch is recorded as `<PRODUCTION_BRANCH>`.
 - [ ] Repository license, authorized brand assets, and attribution obligations
       are approved and recorded.
 - [ ] Version and tag policy, changelog ownership, and release commit policy are

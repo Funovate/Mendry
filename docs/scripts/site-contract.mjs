@@ -2,8 +2,18 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 const pages = [
+  [
+    "agent-harness",
+    "src/content/docs/docs/concepts/agent-harness.mdx",
+    "preview",
+  ],
   ["docs", "src/content/docs/docs/index.mdx", "available"],
   ["get-started", "src/content/docs/docs/get-started.mdx", "preview"],
+  [
+    "local-harness",
+    "src/content/docs/docs/get-started/local-harness.mdx",
+    "planned",
+  ],
   [
     "prerequisites",
     "src/content/docs/docs/get-started/prerequisites.mdx",
@@ -29,6 +39,11 @@ const pages = [
   ["data-model", "src/content/docs/docs/concepts/data-model.mdx", "available"],
   ["lifecycle", "src/content/docs/docs/concepts/lifecycle.mdx", "available"],
   ["security", "src/content/docs/docs/concepts/security.mdx", "available"],
+  [
+    "extending-harness",
+    "src/content/docs/docs/guides/extending-harness.mdx",
+    "preview",
+  ],
   ["tencent-cls", "src/content/docs/docs/guides/tencent-cls.mdx", "preview"],
   [
     "signed-webhooks",
@@ -87,6 +102,14 @@ export const expectedRoutes = [
   "/zh-cn/",
   ...routeEntries.map(({ route }) => route),
 ];
+
+export const nonIndexableRoutes = routeEntries
+  .filter(({ availability }) => availability === "planned")
+  .map(({ route }) => route);
+
+export const indexableRoutes = expectedRoutes.filter(
+  (route) => !nonIndexableRoutes.includes(route),
+);
 
 export function routeToFile(route, outputRoot = "dist") {
   return path.join(outputRoot, route.replace(/^\//, ""), "index.html");

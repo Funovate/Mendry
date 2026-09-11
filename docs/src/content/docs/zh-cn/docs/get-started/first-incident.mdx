@@ -6,8 +6,6 @@ translationKey: first-incident
 journeyOrder: 6
 sources:
   - backend/README.md
-  - .trellis/spec/backend/incident-guidelines.md
-  - .trellis/spec/backend/remediation-evidence-guidelines.md
 ---
 
 **可用性：preview**
@@ -28,7 +26,7 @@ curl -X POST \
 ## 2. 查找事故
 
 ```bash
-curl -b /tmp/fixthe-cookie.txt \
+curl -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents
 ```
 
@@ -39,7 +37,7 @@ curl -b /tmp/fixthe-cookie.txt \
 在控制台打开事故，或使用列表返回的公开事故标识读取 remediation review：
 
 ```bash
-curl -b /tmp/fixthe-cookie.txt \
+curl -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents/INC-REPLACE/remediation
 ```
 
@@ -50,5 +48,3 @@ curl -b /tmp/fixthe-cookie.txt \
 ## 核验依据
 
 - `backend/README.md`
-- `.trellis/spec/backend/incident-guidelines.md`
-- `.trellis/spec/backend/remediation-evidence-guidelines.md`

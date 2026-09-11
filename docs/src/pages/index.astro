@@ -13,7 +13,7 @@ const publicOrigin =
     title: content.title,
     description: content.description,
     availability: "preview",
-    sources: [".trellis/tasks/09-06-project-docs-starlight/prd.md"],
+    sources: ["backend/internal/modules/agentcore/application/runner.go"],
     translationKey: "introduction",
     template: "splash",
     pagefind: false,
@@ -23,8 +23,7 @@ const publicOrigin =
             tag: "meta",
             attrs: {
               property: "og:image",
-              content: new URL("/media/hero-flow/scene-fallback.png", publicOrigin)
-                .href,
+              content: new URL("/media/execution-model.png", publicOrigin).href,
             },
           },
         ]

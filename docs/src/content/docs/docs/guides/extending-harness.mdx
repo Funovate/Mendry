@@ -1,0 +1,151 @@
+---
+title: Extend the Agent Harness
+description: Follow the implemented Go contracts for tools, policy, Profiles, completion evaluators, artifacts, and durable RunStore adapters.
+availability: preview
+translationKey: extending-harness
+sources:
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/application/registry.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/internal/modules/agentcore/application/profile.go
+  - backend/internal/modules/agentcore/application/completion.go
+  - backend/internal/modules/agentcore/application/runner.go
+---
+
+**Availability: preview — implemented source contracts, not a public SDK**
+
+The current extension surface is the internal Go boundary under
+`backend/internal/modules/agentcore`. It is implemented and covered by focused
+foundation tests, but it is not a separately versioned public SDK. Extensions
+are registered by trusted backend composition; an event or model response cannot
+supply executable code, credentials, effects, or policy.
+
+## 1. Define and register a tool
+
+A tool combines a model-visible `ToolDefinition` with a composition-owned
+`ToolExecutor`. Names are lowercase namespaced identifiers, versions use `vN`,
+effects are trusted `read` or `write` declarations, and the root parameter
+schema must be a closed JSON object.
+
+```go title="Register a tool, executor, and policy"
+type reportExecutor struct{}
+
+func (reportExecutor) Execute(
+    ctx context.Context,
+    call domain.ToolCall,
+) (domain.ToolExecution, error) {
+    // The adapter validates its own external boundary and returns bounded data.
+    return domain.ToolExecution{Output: map[string]any{"status": "ready"}}, nil
+}
+
+func registerReportTool() (*application.ToolRegistry, application.Policy, error) {
+    schema := map[string]any{
+        "type":                 "object",
+        "properties":           map[string]any{},
+        "required":             []any{},
+        "additionalProperties": false,
+    }
+
+    definition := domain.ToolDefinition{
+        Name:        "report.generate",
+        Version:     "v1",
+        Description: "Generate an observed report",
+        Parameters:  schema,
+        Effect:      domain.ToolEffectRead,
+    }
+
+    registry := application.NewToolRegistry()
+    executor := reportExecutor{}
+    if err := registry.Register(definition, executor); err != nil {
+        return nil, nil, err
+    }
+
+    policy := application.NewRestrictionPolicy(application.RestrictionConfig{
+        AllowedTools:   []string{"report.generate"},
+        AllowedEffects: []domain.ToolEffect{domain.ToolEffectRead},
+    })
+    return registry, policy, nil
+}
+```
+
+`ToolRegistry.Register` rejects collisions, unsupported effects, malformed
+name/version pairs, oversized schemas, and schema shapes outside its supported
+subset. `Runner` validates model arguments against the registered schema before
+policy or execution. MCP discovery can feed an adapter, but MCP annotations must
+not replace the trusted name/version/effect mapping.
+
+## 2. Select execution policy
+
+Policy runs once for advertisement and again immediately before dispatch.
+`AllowAllPolicy` allows every trusted registered capability; it does not bypass
+schema validation, budgets, cancellation, durable intent recording, or credential
+handling.
+
+`RestrictionPolicy` can also constrain configured path fields to relative allowed
+roots. Those restrictions are one policy implementation, not hard-coded limits
+on all Harness tools. A custom policy implements `application.Policy` and should
+return stable decision codes suitable for durable audit.
+
+## 3. Add a Profile and completion evaluator
+
+A `domain.Profile` owns workflow-specific prompt preparation and interpretation
+of non-tool model output. The shared `Runner` still owns the model/tool sequence,
+history, authorization, invocation records, budgets, and completion check.
+Register an exact Profile name/version in `ProfileRegistry`; event payloads may
+reference only profiles already selected by trusted composition.
+
+For a text goal, `application.NewGoalProfile` is the existing general-purpose
+implementation. Its `CompletionContract` selects a registered mode/version. The
+default evaluator registry includes:
+
+- `solution_delivered/v1`
+- `action_with_verification/v1`
+- `observed_remote_branch/v1`
+- `pipeline_verification/v1`
+
+A custom evaluator implements `CompletionEvaluator` or uses
+`CompletionEvaluatorFunc`, then registers through `EvaluatorRegistry.Register`.
+Evaluator parameters come from the trusted Profile contract, not arbitrary code
+inside an event.
+
+## 4. Preserve artifact truth
+
+Every Artifact has a free-form `Type`, string `SchemaVersion`, bounded data or a
+reference, and provenance:
+
+- `model` is a model-authored proposal or summary. A Profile may create only this provenance.
+- `observed` is an effect or external object reported by a trusted executor.
+- `verified` is an independent check from a trusted executor and requires a `VerificationSubject` plus explicit `passed` or `failed` status.
+
+A model-written summary cannot mint an observed branch, deployment, or verified
+result. Action-plus-verification completion requires a verified artifact linked
+to the observed action by artifact ID or external ID.
+
+## 5. Implement `RunStore` conservatively
+
+A storage adapter implements every method in `domain.RunStore`. Important
+ordering contracts are behavioral, not optional conventions:
+
+1. `RecordInvocationIntent` becomes durable before `ToolExecutor.Execute`.
+2. `RecordInvocationResult` atomically writes the result and its artifact batch.
+3. Invocation sequence and complete message groups survive restart.
+4. Run Profile, policy reference, configuration digest, budget, state, result, and artifact provenance snapshots are preserved.
+
+A pending or unknown `write` is not replayed. `Runner` moves the run to `waiting`
+with `unknown_write_outcome`; an operator or connector-specific reconciliation
+must resolve what happened externally. A pending `read` is closed as
+`interrupted` and may be requested again as a new, separately recorded call.
+
+## 6. Compose, then verify the boundary
+
+Construct `Runner` with an instance-owned store, provider, tool registry, policy,
+and evaluator registry. Keep provider credentials and executor bindings outside
+model-visible definitions and event data. Focus extension tests on registration
+failure, policy denial without execution, intent-before-effect ordering,
+result/artifact atomicity, cancellation and independent budgets, restart, and
+unknown write outcomes.
+
+The [Local walkthrough](/docs/get-started/local-harness/) will document a complete
+composition and real MCP boundary after that delivery is validated. Service
+HTTP registration and generic run UI remain separate planned adapters.

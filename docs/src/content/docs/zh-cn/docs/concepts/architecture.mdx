@@ -1,41 +1,61 @@
 ---
 title: 架构
-description: 了解 FixThe 的包边界、运行依赖、证据流与操作控制点。
+description: 了解 Agent Harness 核心、adapter 边界、分阶段交付模式与现有事故兼容层。
 availability: available
 translationKey: architecture
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/remediation/application/agentcore_bridge.go
   - backend/README.md
-  - .trellis/spec/backend/directory-structure.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
 **可用性：available**
 
-FixThe 是单仓库项目，前端、后端与文档可独立构建。浏览器控制台调用 Go API；PostgreSQL 保存业务状态，Redis 只保存可撤销的登录 Session。
+Mendry 在同一个 Go backend 内维护中立 Agent Harness，而不是另建 workflow service 或业务专用的第二套循环。仓库仍包含可独立构建的 backend、frontend 与 documentation package。
 
-## 运行流程
+## Harness 分层
 
-1. 项目管理员保存项目配置和加密凭据引用。
-2. 签名 Webhook 或已认证连接器创建项目内 Observation。
-3. 事故摄取通过有界 fingerprint 对信号分组，并创建或更新 Incident。
-4. 修复协调器只能通过可信适配器读取项目与 run 范围内的证据。
-5. review projection 向操作员展示证据、诊断和候选方案。
-6. 合并、部署、回滚与恢复决定由人控制。
+| 层                      | 负责内容                                                                           | 明确排除                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `agentcore/domain`      | Event、Run、Tool、Invocation、Artifact、Profile、provider/executor/storage port    | 不依赖事故、项目、账号、HTTP、数据库、Redis 或 provider SDK                |
+| `agentcore/application` | 有界 Runner、模型 acceptance、配对 history、registry、policy、completion evaluator | 不负责凭据查询、传输、持久化实现或事故协议                                 |
+| Adapter 与 composition  | Provider 协议、MCP/tool client、凭据、持久化、event ingress、render/delivery       | 不允许 event/model 数据替换可信 binding、effect、policy 或 completion code |
+| 场景应用                | 事故证据门禁、lifecycle、checkpoint、review projection；未来非代码 workflow        | 不拥有通用模型/工具 stepping                                               |
 
-## 后端边界
+Foundation 层已经实现并通过聚焦测试。具体 Local、Service 与 Product 交付仍有各自门禁。
 
-命令负责组装进程依赖。HTTP adapter 调用 application service；application 和 domain 包不导入 HTTP、PostgreSQL、Redis 或提供方 client。每个 feature 包拥有自己的 SQL 与 adapter。
+## 共享执行流程
 
-当前 API 进程负责 Webhook 后台处理和修复协调。RabbitMQ、通用持久任务队列和远程 telemetry export 不属于当前运行时。
+1. Composition 选择可信 Profile、policy、provider、tools 与 `RunStore`。
+2. Runner 加载 durable run、配对 history、call 与 artifact。
+3. Profile 准备下一模型轮次；policy 筛选展示 catalog。
+4. 模型响应只有通过协议与工具校验后才会接受。
+5. 每次 dispatch 前再次执行 policy，并先持久化 invocation intent。
+6. 工具顺序执行，result 与 artifact batch 原子持久化。
+7. 工具 observation 返回配对 history，或执行 completion evaluation。
+8. Terminal、waiting、cancellation 与 budget reason 保持可检查。
+
+## 交付模式
+
+- **Foundation：** 已实现的源码契约与共享机制。
+- **Local：** 目标为 account-free composition 与 file durability；源码进行中，walkthrough 尚未验证。
+- **Service：** 计划中的通用 event acceptance、PostgreSQL run store、claim、cancel 与 API。
+- **Product：** 计划中的通用 run/call/artifact 视图。
+- **事故应用：** 现有项目/账号应用，逐步复用 Foundation 机制。
+
+这些模式共享边界，但并非都已发布。详见[产品状态](/zh-cn/docs/project/status/)。
+
+## 事故兼容
+
+浏览器 console 与当前 Go API 仍服务事故应用。PostgreSQL 保存该应用的业务状态，Redis 保存可撤销登录 Session。签名 Webhook 创建项目范围 Observation，事故摄取对信号分组，remediation coordinator 负责证据门禁和审阅状态。
+
+Remediation provider 调用已经经过共享 `ModelStep`，history 使用共享配对机制；但 coordinator 尚未由通用 Runner 替代。事故状态、工具路由、checkpoint、证据、预算与人工审阅语义仍归 remediation module 所有。该场景中的合并、部署、回滚与恢复结论继续由人控制。
 
 ## 相关页面
 
+- [Agent Harness](/zh-cn/docs/concepts/agent-harness/)
 - [数据模型](/zh-cn/docs/concepts/data-model/)
 - [生命周期](/zh-cn/docs/concepts/lifecycle/)
 - [安全边界](/zh-cn/docs/concepts/security/)
-
-## 核验依据
-
-- `backend/README.md`
-- `.trellis/spec/backend/directory-structure.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`

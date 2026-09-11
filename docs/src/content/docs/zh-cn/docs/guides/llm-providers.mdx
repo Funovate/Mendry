@@ -1,18 +1,19 @@
 ---
-title: LLM 提供方
-description: 配置可选 OpenAI-compatible 分析，同时不扩大模型权限或削弱确定性运行能力。
+title: 事故应用 LLM 提供方
+description: 配置可选 OpenAI-compatible 事故分析，同时不扩大模型权限或削弱确定性运行能力。
 availability: preview
 translationKey: llm-providers
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
-  - .trellis/spec/backend/logging-guidelines.md
 ---
 
 **可用性：preview**
 
-FixThe 支持项目范围内的 OpenAI-compatible provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
+## 范围：现有事故应用
+
+本页记录当前事故应用中的 project-scoped provider 行为，不是尚未完成的 Local Harness 或 planned 通用 Service binding 格式。中立 core 只依赖 `ModelProvider` 与 opaque turn binding；endpoint、model 与 credential 由具体 adapter 和可信 composition 解析。
+
+Mendry 支持项目范围内的 OpenAI-compatible provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
 
 ## 配置
 
@@ -38,6 +39,3 @@ API key 只写不读。Provider 读取返回配置 metadata，不返回 secret�
 ## 核验依据
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
-- `.trellis/spec/backend/logging-guidelines.md`

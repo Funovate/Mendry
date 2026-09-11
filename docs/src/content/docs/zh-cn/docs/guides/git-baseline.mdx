@@ -5,9 +5,6 @@ availability: preview
 translationKey: git-baseline
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/incident-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
 **可用性：preview**
@@ -22,7 +19,7 @@ Git 配置为调查和候选变更提供仓库上下文，不会授予自动合�
 
 ## 基线捕获
 
-事故 generation 开始时，FixThe 捕获项目配置的 deployed commit。重新打开 Recovered 事故会创建新 generation，并重新读取当前 configured commit。既有 generation 的证据和 review 保留原始基线。
+事故 generation 开始时，Mendry 捕获项目配置的 deployed commit。重新打开 Recovered 事故会创建新 generation，并重新读取当前 configured commit。既有 generation 的证据和 review 保留原始基线。
 
 ## 调查边界
 
@@ -33,6 +30,3 @@ Git 配置为调查和候选变更提供仓库上下文，不会授予自动合�
 ## 核验依据
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/incident-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`

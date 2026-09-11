@@ -6,12 +6,12 @@ const journeys = [
     locale: "en",
     prefix: "",
     headings: [
-      "Get started",
+      "Evaluate your first production incident",
       "Prerequisites",
       "Installation status",
       "Bootstrap the administrator",
-      "Create the first project",
-      "Review the first incident",
+      "Configure your first incident response project",
+      "Review your first production incident",
     ],
     paths: [
       "/docs/get-started/",
@@ -26,7 +26,7 @@ const journeys = [
     locale: "zh-CN",
     prefix: "/zh-cn",
     headings: [
-      "入门",
+      "评估第一个生产问题",
       "前提条件",
       "安装状态",
       "初始化管理员",
@@ -75,12 +75,30 @@ for (const journey of journeys) {
 const docsCases = [
   {
     locale: "en",
+    path: "/docs/guides/extending-harness/",
+    heading: "Extend the Agent Harness",
+    searchPath: "/docs/",
+    searchButton: "Search",
+    query: "Harness",
+    result: "Agent Harness for bounded AI execution",
+  },
+  {
+    locale: "zh-CN",
+    path: "/zh-cn/docs/guides/extending-harness/",
+    heading: "扩展 Agent Harness",
+    searchPath: "/zh-cn/docs/",
+    searchButton: "搜索",
+    query: "Harness",
+    result: "Agent Harness",
+  },
+  {
+    locale: "en",
     path: "/docs/guides/signed-webhooks/",
-    heading: "Signed webhooks",
+    heading: "Signed webhooks for incident ingestion",
     searchPath: "/docs/",
     searchButton: "Search",
     query: "webhook",
-    result: "Signed webhooks",
+    result: "Signed webhooks for incident ingestion",
   },
   {
     locale: "zh-CN",
@@ -95,7 +113,7 @@ const docsCases = [
 
 for (const pageCase of docsCases) {
   for (const theme of ["light", "dark"]) {
-    test(`${pageCase.locale} ${theme} operator page is accessible`, async ({
+    test(`${pageCase.locale} ${pageCase.heading} ${theme} operator page is accessible`, async ({
       page,
     }) => {
       await page.goto(pageCase.path);
@@ -112,7 +130,7 @@ for (const pageCase of docsCases) {
     });
   }
 
-  test(`${pageCase.locale} Pagefind returns a localized result`, async ({
+  test(`${pageCase.locale} ${pageCase.heading} Pagefind returns a localized result`, async ({
     page,
   }) => {
     test.skip(test.info().project.name !== "desktop", "search is covered once");

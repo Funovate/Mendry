@@ -1,32 +1,38 @@
 ---
-title: Configuration reference
-description: Review current process environment and project-owned configuration boundaries.
+title: Incident investigation configuration reference
+description: Review configuration for the existing incident application and distinguish it from Agent Harness composition.
 availability: available
 translationKey: configuration
 sources:
   - backend/.env.example
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
 ---
 
 **Availability: available**
 
-Configuration has two scopes: process environment and project-owned runtime
+## Scope: existing incident application
+
+This page documents the current API and project configuration used by the
+incident web application. Its PostgreSQL, Redis, accounts, memberships, project
+credentials, and `MENDRY_*` settings are not prerequisites of the neutral Agent
+Harness core. Local and Service Harness composition will have separate validated
+configuration contracts when those stages ship.
+
+Configuration in the incident application has two scopes: process environment and project-owned runtime
 configuration. Do not move secrets between them casually.
 
 ## Process environment
 
 | Area       | Key examples                                                  | Notes                                                           |
 | ---------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
-| Runtime    | `FIXTHE_ENVIRONMENT`, `FIXTHE_HTTP_ADDR`, `FIXTHE_PUBLIC_URL` | Public URL derives webhook URLs; use one absolute origin        |
-| Data       | `FIXTHE_POSTGRES_URL`, `FIXTHE_REDIS_URL`                     | PostgreSQL is durable; Redis holds sessions                     |
-| Encryption | `FIXTHE_ENCRYPTION_KEY`                                       | Base64 of 32 bytes; keep stable per database                    |
-| Auth       | `FIXTHE_AUTH_SESSION_TTL`                                     | Defaults to 24 hours                                            |
-| HTTP       | `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`, body/time limits           | CORS accepts one exact console origin                           |
-| Logging    | `FIXTHE_LOG_FORMAT`, `FIXTHE_LOG_LEVEL`, `FIXTHE_LOG_FILE`    | Production defaults to JSON; local file needs external rotation |
+| Runtime    | `MENDRY_ENVIRONMENT`, `MENDRY_HTTP_ADDR`, `MENDRY_PUBLIC_URL` | Public URL derives webhook URLs; use one absolute origin        |
+| Data       | `MENDRY_POSTGRES_URL`, `MENDRY_REDIS_URL`                     | PostgreSQL is durable; Redis holds sessions                     |
+| Encryption | `MENDRY_ENCRYPTION_KEY`                                       | Base64 of 32 bytes; keep stable per database                    |
+| Auth       | `MENDRY_AUTH_SESSION_TTL`                                     | Defaults to 24 hours                                            |
+| HTTP       | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`, body/time limits           | CORS accepts one exact console origin                           |
+| Logging    | `MENDRY_LOG_FORMAT`, `MENDRY_LOG_LEVEL`, `MENDRY_LOG_FILE`    | Production defaults to JSON; local file needs external rotation |
 
-`backend/.env.example` is the complete current key/default reference. Existing
-exported environment values override `.env` values.
+`backend/.env.example` is the complete current key/default reference. `MENDRY_*` is the preferred namespace; during the transition, every runtime key also accepts its `FIXTHE_*` predecessor, and `MENDRY_*` wins when both are present, including an explicitly empty value. An exported environment variable from either namespace overrides `.env` values.
 
 ## Project configuration
 
@@ -45,4 +51,3 @@ return plaintext values.
 
 - `backend/.env.example`
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`

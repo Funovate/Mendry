@@ -1,18 +1,27 @@
 ---
-title: Roles and capabilities
-description: Distinguish system administration from project admin, operator, and viewer capabilities.
+title: Incident response roles and capabilities
+description: Distinguish existing incident-application roles from the Agent Harness execution policy.
 availability: available
 translationKey: roles
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
   - backend/README.md
-  - .trellis/spec/backend/authentication-guidelines.md
-  - .trellis/spec/backend/project-guidelines.md
 ---
 
 **Availability: available**
 
+## Scope: existing incident application
+
+The roles below authorize the current incident web application. They do not
+authorize generic Harness tools, and they are not required by the neutral core.
+Harness execution authority comes from trusted tool registration and `Policy`;
+the planned single-operator Service entry protection is a separate adapter concern.
+
 System role and project role are separate. A system administrator can create
 local users and projects; project membership controls access inside one project.
+
+The single-user self-hosting direction does not mean authentication has been removed from the existing service.
 
 ## System role
 
@@ -44,5 +53,3 @@ This is intentional protection against project-key enumeration.
 ## Verified against
 
 - `backend/README.md`
-- `.trellis/spec/backend/authentication-guidelines.md`
-- `.trellis/spec/backend/project-guidelines.md`

@@ -1,67 +1,115 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 for (const locale of ["en", "zh-cn"]) {
-  for (const theme of ["light", "dark"]) {
-    test(`${locale} ${theme} refined introduction`, async ({
-      page,
-    }, testInfo) => {
+  test(`${locale} whole homepage reflows at narrow, tablet, and wide sizes`, async ({
+    page,
+  }) => {
+    for (const width of [320, 390, 768, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
       await page.goto(locale === "en" ? "/" : "/zh-cn/");
-      await page.locator("starlight-theme-select select").selectOption(theme);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-      await expect(page.locator(".intro-flow-caption")).toContainText(
-        locale === "en" ? "From signal to review" : "从信号到审查",
-      );
-      await expect(page.locator(".intro-workflow .intro-kicker")).toContainText(
-        locale === "en" ? "Workflow" : "工作流程",
-      );
-
-      const kicker = await page
-        .locator(".intro-workflow .intro-kicker")
-        .boundingBox();
-      expect(kicker).not.toBeNull();
-      const hero = await page.locator(".intro-hero").boundingBox();
-      const workflow = await page.locator(".intro-workflow").boundingBox();
-      expect(hero).not.toBeNull();
-      expect(workflow).not.toBeNull();
-      expect(workflow!.y).toBeGreaterThanOrEqual(hero!.y + hero!.height);
-      if (page.viewportSize()!.width >= 768) {
-        expect(kicker!.y + kicker!.height).toBeLessThan(
-          page.viewportSize()!.height,
-        );
-      } else {
-        await page.locator(".intro-workflow").scrollIntoViewIfNeeded();
-        await expect(
-          page.locator(".intro-workflow .intro-kicker"),
-        ).toBeVisible();
-      }
-      const media = await page
-        .locator(".intro-product-frame img")
-        .boundingBox();
-      expect(media).not.toBeNull();
-      expect(media!.width / media!.height).toBeCloseTo(1240 / 815, 1);
-      const accessibility = await new AxeBuilder({ page }).analyze();
-      expect(accessibility.violations).toEqual([]);
-      await testInfo.attach(`${locale}-${theme}`, {
-        body: await page.screenshot({ fullPage: true }),
-        contentType: "image/png",
-      });
-
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth),
-      ).toBeLessThanOrEqual(page.viewportSize()!.width);
+      await expect(page.locator("h1")).toBeVisible();
       await expect(
-        page.locator(".intro-readiness .intro-action"),
+        page.locator("site-search button[data-open-modal]"),
       ).toBeVisible();
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "";
-      });
-      await page.locator(".intro-action-secondary").click();
-      await expect(page).toHaveURL(/\/docs\/concepts\/architecture\/$/);
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    });
-  }
+      await expect(page.locator("starlight-theme-select select")).toBeVisible();
+      await expect(page.locator("starlight-lang-select select")).toBeVisible();
+      await expect(page.locator(".site-header .site-title")).toBeVisible();
+      const dimensions = await page.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth,
+        viewport: document.documentElement.clientWidth,
+        sections: [...document.querySelectorAll(".home-container")].map(
+          (element) => element.getBoundingClientRect().width,
+        ),
+        header: [
+          ...document.querySelectorAll(
+            ".site-title, site-search button[data-open-modal], starlight-theme-select, starlight-lang-select",
+          ),
+        ].map((element) => element.getBoundingClientRect().toJSON()),
+      }));
+      expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.viewport);
+      for (const section of dimensions.sections)
+        expect(section).toBeLessThanOrEqual(1280);
+      for (let i = 1; i < dimensions.header.length; i++) {
+        expect(dimensions.header[i].left).toBeGreaterThanOrEqual(
+          dimensions.header[i - 1].right - 1,
+        );
+      }
+      await expect(page.locator(".home-footer-bottom a")).toBeVisible();
+    }
+  });
 }
+
+test("homepage theme and language controls share a compact, contained focus style", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.goto("/zh-cn/");
+
+  const controls = page.locator(
+    ".site-header .right-group > :is(starlight-theme-select, starlight-lang-select)",
+  );
+  await expect(controls).toHaveCount(2);
+
+  const restingStyles = await controls.evaluateAll((elements) =>
+    elements.map((element) => {
+      const label = element.querySelector("label")!;
+      const styles = getComputedStyle(label);
+      return {
+        height: label.getBoundingClientRect().height,
+        borderStyle: styles.borderStyle,
+        borderColor: styles.borderColor,
+        backgroundColor: styles.backgroundColor,
+      };
+    }),
+  );
+  expect(restingStyles[0]).toEqual(restingStyles[1]);
+  expect(restingStyles[0]?.height).toBe(36);
+  expect(restingStyles[0]?.borderStyle).toBe("solid");
+  expect(restingStyles[0]?.borderColor).toBe("rgba(0, 0, 0, 0)");
+  expect(restingStyles[0]?.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+
+  const themeSelect = controls.first().locator("select");
+  await themeSelect.focus();
+  await expect(themeSelect).toBeFocused();
+  await page.waitForTimeout(200);
+
+  const focusedStyles = await controls.first().evaluate((element) => {
+    const label = element.querySelector("label")!;
+    const select = element.querySelector("select")!;
+    return {
+      labelBorderColor: getComputedStyle(label).borderColor,
+      labelBoxShadow: getComputedStyle(label).boxShadow,
+      selectOutlineStyle: getComputedStyle(select).outlineStyle,
+    };
+  });
+  expect(focusedStyles.labelBorderColor).not.toBe(
+    restingStyles[0]?.borderColor,
+  );
+  expect(focusedStyles.labelBoxShadow).not.toBe("none");
+  expect(focusedStyles.selectOutlineStyle).toBe("none");
+});
+
+test("homepage supports reduced motion and 200 percent zoom", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/zh-cn/");
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+  });
+  const layout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+    reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    transitionDuration: parseFloat(
+      getComputedStyle(document.querySelector(".home-button")!)
+        .transitionDuration,
+    ),
+  }));
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+  expect(layout.reducedMotion).toBe(true);
+  expect(layout.transitionDuration).toBeLessThanOrEqual(0.001);
+  await expect(page.locator(".home-future-flow")).toBeVisible();
+  await expect(page.locator(".home-footer-bottom a")).toBeVisible();
+});

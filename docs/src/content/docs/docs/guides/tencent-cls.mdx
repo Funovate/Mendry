@@ -1,12 +1,10 @@
 ---
-title: Tencent Cloud CLS alerts
+title: Tencent Cloud CLS incident alerts
 description: Configure Tencent CLS alert callbacks and understand deterministic grouping and trusted detail evidence.
 availability: preview
 translationKey: tencent-cls
 sources:
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/remediation-evidence-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
+  - backend/internal/modules/hooks/adapter/tencentcls/client.go
 ---
 
 **Availability: preview**
@@ -19,7 +17,7 @@ implemented callback path; it does not claim a general CLS polling connector.
 
 As a project administrator, save a `signed_webhook` trigger and choose provider
 `tencent_cls` in the versioned trigger configuration. Configure
-`FIXTHE_PUBLIC_URL`, then copy the generated inbound URL into the CLS alarm
+`MENDRY_PUBLIC_URL`, then copy the generated inbound URL into the CLS alarm
 callback destination. Keep the URL token private.
 
 The callback must use a supported media type and valid Tencent callback shape.
@@ -28,7 +26,7 @@ same not-found boundary.
 
 ## Ingestion and grouping
 
-FixThe validates the callback envelope before returning `202`. Tencent grouping
+Mendry validates the callback envelope before returning `202`. Tencent grouping
 uses a deterministic fingerprint from validated provider fields; model output,
 account metadata, topic IDs, and callback URLs do not become grouping authority.
 The stored Observation retains the accepted body, while normalized alert
@@ -50,6 +48,4 @@ text, and malformed control content.
 
 ## Verified against
 
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/remediation-evidence-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
+- `backend/internal/modules/hooks/adapter/tencentcls/client.go`

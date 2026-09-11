@@ -1,0 +1,72 @@
+---
+title: Agent Harness
+description: 了解已实现的共享 Runner、扩展契约、产物真实性与分阶段交付边界。
+availability: preview
+translationKey: agent-harness
+sources:
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/agentcore/application/registry.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/internal/modules/agentcore/application/completion.go
+  - backend/internal/modules/agentcore/application/history.go
+  - backend/internal/modules/remediation/application/agentcore_bridge.go
+---
+
+**可用性：preview — 已实现并通过聚焦测试的源码 Foundation**
+
+Mendry 的 Agent Harness 协调有界模型与工具执行、保存可检查状态，并按版本化任务契约判断完成。输入、工具集、产物类型、策略与完成评估器都是扩展点。事故调查与代码修复是默认应用场景，不是核心类型要求。
+
+Foundation 已在 `backend/internal/modules/agentcore` 中实现；根据 implementation report，其聚焦 Go 测试已经通过。此处 `preview` 表示共享源码边界可用于后续集成，不表示受支持的 Local release、通用 HTTP Service、通用 UI 或完整事故迁移已经交付。
+
+## Foundation 负责什么
+
+`agentcore/domain` 定义中立的 Event、Run、Tool、Invocation、Artifact、Profile、模型 provider、executor 与存储契约。`agentcore/application` 实现有界 Runner、accepted model stepping、配对 history、工具与 Profile registry、可替换 policy 和完成 evaluator。
+
+Runner 使用一条共享顺序：
+
+1. 加载 durable run、invocation、artifact 与配对 message state；
+2. 准备 Profile turn 和经 policy 筛选的 catalog；
+3. 执行并校验一次模型轮次；
+4. 在 dispatch 前再次授权每个工具请求；
+5. 在外部 effect 前持久化 invocation intent；
+6. 顺序执行调用，并原子保存 result 与 artifact；
+7. 追加 observation，并按 Profile 完成契约判断结果。
+
+取消，以及 elapsed、model-call、tool-call 与 output limit 相互独立。Core 不导入事故、项目、账号、HTTP、PostgreSQL、Redis 或 provider-specific 业务 package。
+
+## 工具与策略扩展
+
+可信 composition 为每个工具注册 namespaced name、`vN` version、闭合参数 schema、声明的 `read` 或 `write` effect 与 executor。Registry 在展示前拒绝冲突和无效定义；模型参数按该可信 schema 校验。
+
+Policy 在展示与 dispatch 两个阶段执行。`AllowAllPolicy` 允许可信注册能力，但不会移除预算、取消、凭据处理、intent 持久化或 audit record。`RestrictionPolicy` 可以限制工具、effect 与已配置的 path field。实践说明见[源码扩展指南](/zh-cn/docs/guides/extending-harness/)。
+
+## 产物与完成条件
+
+Artifact 包含自由类型、字符串 schema version、有界 data 或 reference，以及明确 provenance。
+
+| 来源       | 含义                      | 完成边界                                                 |
+| ---------- | ------------------------- | -------------------------------------------------------- |
+| `model`    | 模型生成的方案或解释      | 可满足方案交付，不能证明外部 effect                      |
+| `observed` | 可信工具 adapter 报告结果 | 记录观察到的动作或外部对象                               |
+| `verified` | 可信 adapter 报告验证     | 关联被验证 subject，并明确报告 `passed` 或 `failed` 结论 |
+
+版本化 Profile 准备轮次并解释非工具输出，其可信完成契约选择已注册 evaluator。Foundation 在 `v1` 提供 `solution_delivered`、`action_with_verification`、`observed_remote_branch` 与 `pipeline_verification`；这些 evaluator 本身不提供 provider、SCM、pipeline 或 deployment adapter。
+
+## 恢复边界
+
+`RunStore` 要求在执行前 durable 保存 invocation intent，并原子持久化 result/artifact。Pending 或 unknown write 会进入 `waiting`，reason 为 `unknown_write_outcome`，且绝不盲目重放。必须通过 connector-specific lookup 或操作员确认外部结果。Pending read 会记录为 interrupted，之后可作为新的有序调用再次请求。
+
+接口定义存储 adapter 必须保留的内容，并不证明 Local file 路径或生产 PostgreSQL Service 路径已完成 release 验证。
+
+## 事故兼容
+
+现有 remediation 应用使用共享 `ModelStep` acceptance boundary 与共享配对 history 机制。其 coordinator 仍负责事故状态、证据门禁、工具路由、checkpoint、预算与 lifecycle 行为。因此当前只是向共享机制的部分迁移，不能宣称完整事故 runner 已委托给通用 Runner。
+
+## 交付路径
+
+- [Local 流程状态](/zh-cn/docs/get-started/local-harness/)：源码进行中，尚无通过验证的可运行教程。
+- Service：通用 event acceptance、durable generic run 与 run API 仍为 planned。
+- Product：通用 run、call 与 artifact 视图仍为 planned。
+- [事故应用流程](/zh-cn/docs/get-started/)：现有源码评估路径，需要 PostgreSQL、Redis、账号与项目等应用前提。

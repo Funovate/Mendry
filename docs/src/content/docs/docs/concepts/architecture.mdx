@@ -1,48 +1,72 @@
 ---
-title: Architecture
-summary: Understand FixThe package boundaries, runtime dependencies, and operator control points.
-description: Understand FixThe package boundaries, runtime dependencies, evidence flow, and operator control points.
+title: AI incident investigation architecture
+description: Understand the Agent Harness core, adapter boundaries, staged delivery modes, and existing incident compatibility layer.
 availability: available
 translationKey: architecture
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/remediation/application/agentcore_bridge.go
   - backend/README.md
-  - .trellis/spec/backend/directory-structure.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
 ---
 
 **Availability: available**
 
-FixThe is one repository with independently buildable frontend, backend, and
-documentation packages. The browser console calls the Go API; PostgreSQL holds
-business state, while Redis holds only revocable login sessions.
+Mendry keeps a neutral Agent Harness inside one Go backend rather than creating
+a workflow service or business-specific second loop. The repository still has
+independently buildable backend, frontend, and documentation packages.
 
-## Runtime flow
+## Harness layers
 
-1. A project administrator stores project configuration and encrypted credential references.
-2. A signed webhook or authenticated connector creates a project-owned Observation.
-3. Incident ingestion groups the signal by a bounded fingerprint and opens or updates an Incident.
-4. The remediation coordinator reads only project/run-scoped evidence through trusted adapters.
-5. A review projection presents evidence, diagnosis, and candidate plan to an operator.
-6. People control merge, deployment, rollback, and recovery decisions.
+| Layer                    | Ownership                                                                                         | Exclusions                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `agentcore/domain`       | Event, Run, Tool, Invocation, Artifact, Profile, provider/executor/storage ports                  | No incident, project, account, HTTP, database, Redis, or provider SDK dependency          |
+| `agentcore/application`  | Bounded Runner, model acceptance, paired history, registries, policy, completion evaluators       | No credential lookup, transport, persistence implementation, or incident protocol         |
+| Adapters and composition | Provider protocols, MCP/tool clients, credentials, persistence, event ingress, rendering/delivery | Cannot let event/model data replace trusted bindings, effects, policy, or completion code |
+| Scenario application     | Incident evidence gates, lifecycle, checkpoints, review projection; future non-code workflows     | Does not own generic model/tool stepping                                                  |
 
-## Backend boundaries
+The foundation layer is implemented and focused-tested. Concrete Local, Service,
+and Product delivery remains separately gated.
 
-Commands construct process dependencies. HTTP adapters call application
-services; application and domain packages do not import HTTP, PostgreSQL, Redis,
-or provider clients. Feature packages own their SQL and adapters.
+## Shared execution flow
 
-The API process runs webhook background work and remediation coordination today.
-RabbitMQ, a durable general job queue, and remote telemetry export are not part
-of the current runtime.
+1. Composition chooses a trusted Profile, policy, provider, tools, and `RunStore`.
+2. Runner loads the durable run, paired history, calls, and artifacts.
+3. Profile prepares the next model turn; policy filters the advertised catalog.
+4. The model response is accepted only after protocol and tool validation.
+5. Policy runs again for each dispatch; invocation intent is persisted first.
+6. Tools execute sequentially; result and artifact batches persist atomically.
+7. Tool observations return to paired history, or completion is evaluated.
+8. Terminal, waiting, cancellation, and budget reasons remain inspectable.
+
+## Delivery modes
+
+- **Foundation:** implemented source contracts and shared mechanics.
+- **Local:** intended account-free composition with file durability; source is in progress and the walkthrough is not yet validated.
+- **Service:** planned generic event acceptance, PostgreSQL run storage, claims, cancellation, and APIs.
+- **Product:** planned generic run/call/artifact views.
+- **Incident application:** existing project/account-backed application, incrementally sharing foundation mechanics.
+
+These modes share boundaries; they are not all currently released. See
+[product status](/docs/project/status/).
+
+## Incident compatibility
+
+The browser console and current Go API still serve the incident application.
+PostgreSQL holds its business state and Redis holds revocable login sessions.
+Signed webhooks create project-owned observations, incident ingestion groups
+signals, and the remediation coordinator owns evidence gates and review states.
+
+Remediation provider calls cross the shared `ModelStep`, and history uses shared
+pairing mechanics. The coordinator has not been replaced by the generic Runner:
+incident states, tool routing, checkpoints, evidence, budgets, and human-review
+semantics remain in the remediation module. People continue to control merge,
+deployment, rollback, and recovery conclusions in that scenario.
 
 ## Related pages
 
+- [Agent Harness](/docs/concepts/agent-harness/)
 - [Data model](/docs/concepts/data-model/)
 - [Lifecycle](/docs/concepts/lifecycle/)
 - [Security boundaries](/docs/concepts/security/)
-
-## Verified against
-
-- `backend/README.md`
-- `.trellis/spec/backend/directory-structure.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`

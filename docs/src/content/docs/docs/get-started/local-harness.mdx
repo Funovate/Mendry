@@ -1,0 +1,43 @@
+---
+title: Local Harness walkthrough status
+description: Understand the intended database-free Local Harness path and why runnable commands are not published yet.
+availability: planned
+translationKey: local-harness
+sources:
+  - backend/cmd/agentcore-local/main.go
+  - backend/internal/modules/agentcore/command/local.go
+  - backend/internal/modules/agentcore/adapter/file/store.go
+---
+
+**Availability: planned — walkthrough awaiting validation**
+
+The Local delivery target is one bounded JSON event executed by the shared
+Harness, with calls, artifacts, budgets, state, and completion reason retained in
+an inspectable run directory. It is explicitly designed to require no
+PostgreSQL, Redis, project membership, or account onboarding.
+
+Source currently exists under `backend/cmd/agentcore-local` and
+`backend/internal/modules/agentcore`, including composition, file-store, provider,
+and MCP work in progress. File presence is not the release gate. This page will
+publish commands, configuration and event shapes, inspection, resume, and the
+reversible MCP example only after the complete walkthrough passes the task's
+focused tests, race checks, and temporary-directory smoke validation.
+
+## Intended trust boundary
+
+- Trusted startup configuration selects Profile, completion contract, finite budgets, policy, provider binding, and MCP bindings.
+- Event data supplies goal and context; it does not select commands, endpoints, credentials, effects, or policy.
+- Credentials come from explicitly named environment variables at composition time.
+- Stdio MCP receives only configured environment entries, not the complete parent environment.
+- Effectful calls are not automatically retried after timeout, disconnect, or an unknown result.
+
+## Intended examples
+
+Validation is expected to cover a non-code structured report, a reversible
+workspace write with independent verification, a restrictive policy refusal,
+and explicit allow-all execution. The fixture directory restriction belongs to
+the example tool, not to the Harness capability model.
+
+Until that validation is recorded, use the [source extension guide](/docs/guides/extending-harness/)
+for implemented contracts and the [incident application journey](/docs/get-started/)
+for the existing runnable source-evaluation path.

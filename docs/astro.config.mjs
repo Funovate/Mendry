@@ -1,6 +1,8 @@
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
 import { validatePublicOrigin } from "./scripts/public-origin.mjs";
+import { nonIndexableRoutes } from "./scripts/site-contract.mjs";
 
 const publicRelease = process.env.DOCS_PUBLIC_RELEASE === "true";
 const configuredOrigin = process.env.PUBLIC_SITE_ORIGIN;
@@ -12,10 +14,30 @@ export default defineConfig({
   site: publicOrigin,
   output: "static",
   integrations: [
+    sitemap({
+      filter: (page) => !nonIndexableRoutes.includes(new URL(page).pathname),
+      i18n: {
+        defaultLocale: "root",
+        locales: { root: "en", "zh-cn": "zh-CN" },
+      },
+    }),
     starlight({
-      title: "FixThe",
+      title: "Mendry",
+      logo: {
+        light: "./public/brand/mendry-logo-horizontal.svg",
+        dark: "./public/brand/mendry-logo-horizontal-reversed.svg",
+        replacesTitle: true,
+      },
+      favicon: "/brand/mendry-icon-tile.svg",
       description:
-        "Customer-managed production incident investigation and controlled remediation.",
+        "Self-hosted Agent Harness for bounded model and tool execution, traceable artifacts, and task-defined completion.",
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/Funovate/Mendry",
+        },
+      ],
       defaultLocale: "root",
       locales: {
         root: { label: "English", lang: "en" },
@@ -34,23 +56,44 @@ export default defineConfig({
           ],
         },
         {
+          label: "Agent Harness",
+          translations: { "zh-cn": "Agent Harness" },
+          items: [
+            {
+              slug: "docs/concepts/agent-harness",
+              label: "Core contracts",
+              translations: { "zh-cn": "核心契约" },
+            },
+            {
+              slug: "docs/get-started/local-harness",
+              label: "Local walkthrough status",
+              translations: { "zh-cn": "本地流程状态" },
+            },
+            {
+              slug: "docs/guides/extending-harness",
+              label: "Extend the Harness",
+              translations: { "zh-cn": "扩展 Harness" },
+            },
+          ],
+        },
+        {
           label: "Get started",
           translations: { "zh-cn": "入门" },
           items: [
             {
               slug: "docs/get-started",
-              label: "Journey overview",
-              translations: { "zh-cn": "流程概览" },
+              label: "Choose a path",
+              translations: { "zh-cn": "选择路径" },
             },
             {
               slug: "docs/get-started/prerequisites",
-              label: "Prerequisites",
-              translations: { "zh-cn": "前提条件" },
+              label: "Incident app prerequisites",
+              translations: { "zh-cn": "事故应用前提" },
             },
             {
               slug: "docs/get-started/install",
-              label: "Installation status",
-              translations: { "zh-cn": "安装状态" },
+              label: "Incident app installation",
+              translations: { "zh-cn": "事故应用安装" },
             },
             {
               slug: "docs/get-started/bootstrap",
@@ -151,10 +194,18 @@ export default defineConfig({
       customCss: ["./src/styles/starlight.css"],
       components: {
         Head: "./src/components/DocumentHead.astro",
+        Header: "./src/components/Header.astro",
         PageTitle: "./src/components/PageTitle.astro",
         SkipLink: "./src/components/SkipLink.astro",
       },
       head: [
+        {
+          tag: "link",
+          attrs: {
+            rel: "apple-touch-icon",
+            href: "/brand/mendry-icon-tile-512.png",
+          },
+        },
         {
           tag: "meta",
           attrs: {

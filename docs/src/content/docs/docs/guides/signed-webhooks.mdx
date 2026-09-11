@@ -1,12 +1,10 @@
 ---
-title: Signed webhooks
+title: Signed webhooks for incident ingestion
 description: Configure, rotate, send, and troubleshoot the implemented public webhook ingestion path.
 availability: available
 translationKey: signed-webhooks
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/incident-guidelines.md
 ---
 
 **Availability: available**
@@ -18,7 +16,7 @@ an HMAC secret to save or receive a webhook.
 
 ## Configure
 
-1. Set `FIXTHE_PUBLIC_URL` to the externally reachable API origin.
+1. Set `MENDRY_PUBLIC_URL` to the externally reachable API origin.
 2. Save a `signed_webhook` trigger as a project administrator.
 3. Copy the returned `inboundUrl` only from an administrator response.
 4. Configure the sender to post UTF-8 text or JSON no larger than the API body limit.
@@ -29,12 +27,50 @@ an HMAC secret to save or receive a webhook.
 curl -X POST \
   -H 'Content-Type: application/json' \
   -d '{"title":"database latency increased","service":"checkout-api"}' \
-  'https://fixthe.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
+  'https://mendry.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
 ```
 
 A valid token/body returns `202` before background normalization and incident
 writes finish. JSON uses bounded semantic grouping with deterministic fallback;
 plain text uses its first non-empty line.
+
+## AWS CloudWatch Alarm via SNS
+
+Choose **AWS CloudWatch Alarm via SNS** and save the exact standard SNS Topic
+ARN, for example `arn:aws:sns:us-east-1:123456789012:mendry-alarms`. Only the
+commercial `aws` partition is supported. FIFO topics, cross-account alarms,
+and cross-region alarms are rejected.
+
+In AWS:
+
+1. Open the SNS topic and create an **HTTPS** subscription whose endpoint is the generated `inboundUrl`; leave **Raw message delivery** disabled.
+2. Wait for Mendry to verify the signed `SubscriptionConfirmation` and call the exact AWS confirmation URL.
+3. In CloudWatch, configure the alarm action to publish to that SNS topic. Restrict the topic policy to the CloudWatch service and the intended alarm/account with `aws:SourceArn` and `aws:SourceAccount` conditions.
+4. Send a CloudWatch test alarm and verify an Event Stream observation appears.
+
+Mendry does not need an AWS access key or IAM permission for this integration.
+It verifies SNS RSA signatures using the regional AWS certificate endpoint.
+The HTTPS endpoint must be publicly reachable by SNS. SNS envelopes are limited
+to 512 KiB.
+
+`ALARM` creates an observation and enters incident analysis after normalized
+evidence is stored. AWS-triggered remediation is permanently analysis-only:
+it can diagnose and propose a solution, but cannot patch, validate, publish,
+repair, or deploy. `OK` and `INSUFFICIENT_DATA` create observations only and do
+not resolve or otherwise mutate incident lifecycle state.
+
+AWS references: [verify SNS message signatures](https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html), [prepare an HTTP/S endpoint](https://docs.aws.amazon.com/sns/latest/dg/SendMessageToHttp.prepare.html), and [configure CloudWatch alarm notifications](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html).
+
+## Troubleshoot AWS delivery
+
+- `404 webhook_not_found`: the token is wrong, rotated, disabled, or belongs to another trigger.
+- `403 invalid_aws_sns_signature`: the Topic ARN, signature, certificate URL, or signed confirmation URL did not match exactly.
+- `400 invalid_aws_sns_message`: the envelope is malformed, contains duplicate JSON keys, or is not a CloudWatch alarm publication.
+- `503 aws_sns_unavailable`: certificate retrieval or subscription confirmation failed transiently; SNS should retry.
+- No incident for `OK` or `INSUFFICIENT_DATA`: expected; inspect the Event Stream observation instead.
+
+Never log the inbound token, SNS `SubscribeURL`, confirmation token, signature,
+certificate body, or raw SNS envelope. Rotate the inbound URL if it is exposed.
 
 ## Rotate
 
@@ -52,5 +88,3 @@ than the raw path. Raw provider bodies are excluded from application logs.
 ## Verified against
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/incident-guidelines.md`

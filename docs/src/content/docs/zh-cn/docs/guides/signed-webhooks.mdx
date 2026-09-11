@@ -5,8 +5,6 @@ availability: available
 translationKey: signed-webhooks
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/incident-guidelines.md
 ---
 
 **可用性：available**
@@ -15,7 +13,7 @@ sources:
 
 ## 配置
 
-1. 将 `FIXTHE_PUBLIC_URL` 设置为外部可访问的 API origin。
+1. 将 `MENDRY_PUBLIC_URL` 设置为外部可访问的 API origin。
 2. 以项目管理员身份保存 `signed_webhook` trigger。
 3. 只从管理员响应复制返回的 `inboundUrl`。
 4. 让发送端提交不超过 API body limit 的 UTF-8 文本或 JSON。
@@ -26,10 +24,45 @@ sources:
 curl -X POST \
   -H 'Content-Type: application/json' \
   -d '{"title":"database latency increased","service":"checkout-api"}' \
-  'https://fixthe.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
+  'https://mendry.example/hooks/REPLACE_WITH_INBOUND_TOKEN'
 ```
 
 有效 token/body 会在后台归一化和事故写入完成前返回 `202`。JSON 使用有界语义分组与确定性 fallback；纯文本使用第一行非空内容。
+
+## 通过 SNS 接收 AWS CloudWatch Alarm
+
+选择 **AWS CloudWatch Alarm via SNS**，并保存唯一的标准 SNS Topic ARN，例如
+`arn:aws:sns:us-east-1:123456789012:mendry-alarms`。当前仅支持商业 `aws`
+partition；FIFO topic、跨账号 alarm 和跨 region alarm 都会被拒绝。
+
+在 AWS 中执行：
+
+1. 打开 SNS topic，创建 **HTTPS** subscription，并将 endpoint 设为生成的 `inboundUrl`；保持 **Raw message delivery** 关闭。
+2. 等待 Mendry 验证已签名的 `SubscriptionConfirmation`，并访问完全匹配的 AWS confirmation URL。
+3. 在 CloudWatch 中，把 alarm action 配置为向该 SNS topic 发布消息。通过 `aws:SourceArn` 和 `aws:SourceAccount` condition，把 topic policy 限制为 CloudWatch service 以及预期的 alarm/account。
+4. 发送一次 CloudWatch 测试 alarm，并确认 Event Stream 中出现 observation。
+
+该集成不需要 AWS Access Key 或 IAM 权限。Mendry 会通过 regional AWS certificate
+endpoint 验证 SNS RSA 签名。HTTPS endpoint 必须能被 SNS 从公网访问。SNS
+envelope 上限为 512 KiB。
+
+`ALARM` 会创建 observation，并在 normalized evidence 成功持久化后进入事故分析。
+AWS 触发的 remediation 永久为 analysis-only：可以诊断并提出方案，但不能 patch、
+validate、publish、repair 或 deploy。`OK` 和 `INSUFFICIENT_DATA` 仅创建
+observation，不会关闭事故或改变 incident lifecycle 状态。
+
+AWS 官方参考：[验证 SNS 消息签名](https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html)、[准备 HTTP/S endpoint](https://docs.aws.amazon.com/sns/latest/dg/SendMessageToHttp.prepare.html)以及[配置 CloudWatch alarm notification](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html)。
+
+## 排查 AWS 投递
+
+- `404 webhook_not_found`：token 错误、已轮换、已禁用，或属于其他 trigger。
+- `403 invalid_aws_sns_signature`：Topic ARN、签名、certificate URL 或签名内的 confirmation URL 未完全匹配。
+- `400 invalid_aws_sns_message`：envelope 格式错误、包含重复 JSON key，或消息不是 CloudWatch alarm publication。
+- `503 aws_sns_unavailable`：certificate 获取或 subscription confirmation 暂时失败；SNS 应重试。
+- `OK` 或 `INSUFFICIENT_DATA` 没有创建事故：这是预期行为，请检查 Event Stream observation。
+
+禁止记录 inbound token、SNS `SubscribeURL`、confirmation token、signature、
+certificate body 或原始 SNS envelope。若 inbound URL 泄露，应立即轮换。
 
 ## 轮换
 
@@ -42,5 +75,3 @@ curl -X POST \
 ## 核验依据
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/incident-guidelines.md`

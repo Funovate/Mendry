@@ -1,44 +1,54 @@
 ---
 title: 数据模型
-description: 了解项目如何拥有配置、观测记录、事故、修复 run、证据与审计事件。
+description: 了解中立 Harness 记录、durability 契约、artifact provenance 与事故应用兼容数据。
 availability: available
 translationKey: data-model
 sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
   - backend/README.md
-  - .trellis/spec/backend/database-guidelines.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/incident-guidelines.md
 ---
 
 **可用性：available**
 
-项目是主要的数据与授权边界。非成员访问项目时会收到与未知项目相同的 not-found 响应，避免枚举 project key。
+Harness 数据模型记录任务及执行期间实际发生的行为，不要求 User、Project、Observation 或 Incident。
 
-## 核心记录
+## 中立 Harness 记录
 
-| 记录               | 用途                                                                      |
-| ------------------ | ------------------------------------------------------------------------- |
-| User               | 本地登录身份与系统角色                                                    |
-| Project membership | 单个项目内的 `admin`、`operator` 或 `viewer` 权限                         |
-| Configuration      | 每个项目一组 environment、repository、source、trigger 与可选 LLM provider |
-| Credential         | AES-256-GCM 密文与非敏感元数据；明文只写不读                              |
-| Observation        | 归一化的项目内 Event Stream 记录                                          |
-| Incident           | 包含 priority、status、occurrence 与已捕获 deployed commit 的分组操作条件 |
-| Remediation run    | 针对某次事故生命周期 generation 的诊断与候选方案流程                      |
-| Evidence           | 由 run/incident 拥有、带 provenance 的事实和有界工具结果                  |
-| Audit event        | 管理与生命周期写操作的 actor、operation、target 和有界 metadata           |
+| 记录              | 用途                                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Event             | 带 source-scoped external identity、payload 与 context 的版本化输入                                               |
+| Run               | Goal、input/context、Profile/policy snapshot、configuration digest、state、reason、budget 与 result               |
+| Model message     | Provider-neutral accepted history；tool-call/result group 保持完整有序                                            |
+| Invocation        | 执行前 durable intent，包含 sequence、tool name/version、可信 effect、argument digest、authorization 与 state     |
+| Invocation result | 有序 outcome code、有界 output、byte count 与 completion time                                                     |
+| Artifact          | 自由类型和字符串 schema version，带有界 data/reference、provenance、external identity 与可选 verification subject |
 
-## 存储权威
+Run state 为 `queued`、`running`、`waiting`、`succeeded`、`failed` 与 `cancelled`。预算 limit/counter 分别覆盖 elapsed time、model call、tool call 与 output byte。
 
-PostgreSQL 是业务记录的 source of truth。Redis Session 可丢弃，只包含以摘要为 key 的登录 Session，不保存业务数据，也不是队列。配置与审计历史会跨进程重启保留。
+## Artifact 真实性模型
 
-## 身份与 generation
+`model` 记录方案或解释，`observed` 记录可信 adapter 的外部观察，`verified` 记录明确的 passed/failed 检查，并必须通过 artifact ID 或 external ID 标识 subject。Profile 不能把模型生成内容转换为 observed 或 verified provenance。
 
-公开事故 ID 是项目内编号，内部关系使用服务端生成的 UUIDv7。重新打开 Recovered 事故会增加 lifecycle generation，并捕获当前配置的 deployed commit；旧 run 证据仍属于旧 generation。
+自定义 artifact type 不要求修改 core switch。未来通用 renderer 可以回退显示 type、schema、安全 payload/reference 与 provenance；该 renderer 属于 Product 阶段，不属于已实现 Foundation。
 
-## 核验依据
+## 存储契约
 
-- `backend/README.md`
-- `.trellis/spec/backend/database-guidelines.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/incident-guidelines.md`
+`RunStore` 保存 run snapshot、有序 invocation、artifact 与完整 message group。外部调用前必须先持久化 intent；result 与同批返回 artifact 必须原子持久化。Restart reconstruction 保守处理：未解决 write 保持可见且不会重放。
+
+这是已实现 port 与 Runner 行为，但不表示 Local file adapter 或 Service PostgreSQL schema 已完成集成与 release 验证。
+
+## 事故应用兼容数据
+
+现有事故应用保留自己的记录与 ownership model：
+
+| 记录                                | 用途                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| User 与 membership                  | 登录身份、系统角色与 project-scoped authority                           |
+| Project configuration 与 credential | 事故 connector、加密 secret、repository、trigger 与 provider setting    |
+| Observation 与 Incident             | 项目范围 event stream 与分组后的 operational condition                  |
+| Remediation run 与 evidence         | 针对 incident generation 的 diagnosis、plan、provenance 与 review state |
+| Audit event                         | 管理与 lifecycle write metadata                                         |
+
+PostgreSQL 继续作为这些应用记录的 source of truth；Redis 只保存可丢弃的 digest-keyed 登录 Session。这些依赖描述事故 Service，而不是中立 Harness domain。

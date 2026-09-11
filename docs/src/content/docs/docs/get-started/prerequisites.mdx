@@ -1,6 +1,6 @@
 ---
 title: Prerequisites
-description: Prepare a source-evaluation environment for the current FixThe frontend and backend packages.
+description: Prepare a source-evaluation environment for the current Mendry frontend and backend packages.
 availability: preview
 translationKey: prerequisites
 journeyOrder: 2
@@ -16,6 +16,11 @@ sources:
 Use a private evaluation environment. The repository does not yet ship a
 supported production deployment bundle.
 
+This page covers the existing incident Web application. PostgreSQL, Redis,
+accounts, and the encryption key are requirements of that application, not of
+the Harness core. For the separate local path, see
+[Local Harness status](/docs/get-started/local-harness/).
+
 ## Required runtime
 
 - Go 1.25 for the backend.
@@ -29,12 +34,12 @@ supported production deployment bundle.
 The API defaults to `127.0.0.1:8080`. Staging and production session cookies are
 `Secure`, so any non-development deployment must serve the console and API over
 HTTPS. If the console uses a different origin during evaluation, configure one
-exact `FIXTHE_HTTP_CORS_ALLOWED_ORIGIN`.
+exact `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`.
 
 ## Required secrets
 
 Create a dedicated PostgreSQL database, a Redis endpoint, and a stable
-`FIXTHE_ENCRYPTION_KEY`. The key is standard-base64 encoding of exactly 32
+`MENDRY_ENCRYPTION_KEY`. The key is standard-base64 encoding of exactly 32
 random bytes. Losing or changing it makes stored connector credentials
 unusable.
 

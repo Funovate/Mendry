@@ -1,19 +1,24 @@
 ---
-title: LLM providers
-summary: Configure optional OpenAI-compatible analysis without expanding model authority or weakening deterministic operation.
-description: Configure optional OpenAI-compatible analysis without expanding model authority or weakening deterministic operation.
+title: LLM providers for incident investigation
+summary: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
+description: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
 availability: preview
 translationKey: llm-providers
 sources:
   - backend/README.md
-  - .trellis/spec/backend/project-guidelines.md
-  - .trellis/spec/backend/remediation-adapter-guidelines.md
-  - .trellis/spec/backend/logging-guidelines.md
 ---
 
 **Availability: preview**
 
-FixThe supports project-scoped OpenAI-compatible provider configuration. The
+## Scope: existing incident application
+
+This page documents project-scoped provider behavior in the current incident
+application. It is not the binding format for the unfinished Local Harness or
+planned generic Service. The neutral core depends only on `ModelProvider` and an
+opaque turn binding; concrete adapters and trusted composition resolve endpoint,
+model, and credentials.
+
+Mendry supports project-scoped OpenAI-compatible provider configuration. The
 provider is optional configuration, and a failed webhook classifier call falls
 back to deterministic normalization. Remediation model turns require valid
 project provider configuration when that mode is used.
@@ -51,6 +56,3 @@ source evaluation does not include a durable general-purpose worker queue.
 ## Verified against
 
 - `backend/README.md`
-- `.trellis/spec/backend/project-guidelines.md`
-- `.trellis/spec/backend/remediation-adapter-guidelines.md`
-- `.trellis/spec/backend/logging-guidelines.md`

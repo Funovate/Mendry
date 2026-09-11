@@ -1,0 +1,111 @@
+---
+title: 扩展 Agent Harness
+description: 按已实现的 Go 契约扩展工具、策略、Profile、完成评估器、产物与 durable RunStore adapter。
+availability: preview
+translationKey: extending-harness
+sources:
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/application/registry.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/internal/modules/agentcore/application/profile.go
+  - backend/internal/modules/agentcore/application/completion.go
+  - backend/internal/modules/agentcore/application/runner.go
+---
+
+**可用性：preview — 已实现源码契约，不是公开 SDK**
+
+当前扩展面是 `backend/internal/modules/agentcore` 下的内部 Go 边界。它已经实现并由 Foundation 聚焦测试覆盖，但尚未作为独立版本化公开 SDK 发布。扩展由可信 backend composition 注册；event 或模型响应不能提供可执行代码、凭据、effect 或 policy。
+
+## 1. 定义并注册工具
+
+工具由模型可见的 `ToolDefinition` 与 composition 持有的 `ToolExecutor` 组成。名称必须是小写 namespace identifier，版本使用 `vN`，effect 是可信声明的 `read` 或 `write`，参数 schema 根节点必须是闭合 JSON object。
+
+```go title="注册工具、executor 与 policy"
+type reportExecutor struct{}
+
+func (reportExecutor) Execute(
+    ctx context.Context,
+    call domain.ToolCall,
+) (domain.ToolExecution, error) {
+    // Adapter 校验自己的外部边界，并返回有界数据。
+    return domain.ToolExecution{Output: map[string]any{"status": "ready"}}, nil
+}
+
+func registerReportTool() (*application.ToolRegistry, application.Policy, error) {
+    schema := map[string]any{
+        "type":                 "object",
+        "properties":           map[string]any{},
+        "required":             []any{},
+        "additionalProperties": false,
+    }
+
+    definition := domain.ToolDefinition{
+        Name:        "report.generate",
+        Version:     "v1",
+        Description: "Generate an observed report",
+        Parameters:  schema,
+        Effect:      domain.ToolEffectRead,
+    }
+
+    registry := application.NewToolRegistry()
+    executor := reportExecutor{}
+    if err := registry.Register(definition, executor); err != nil {
+        return nil, nil, err
+    }
+
+    policy := application.NewRestrictionPolicy(application.RestrictionConfig{
+        AllowedTools:   []string{"report.generate"},
+        AllowedEffects: []domain.ToolEffect{domain.ToolEffectRead},
+    })
+    return registry, policy, nil
+}
+```
+
+`ToolRegistry.Register` 会拒绝冲突、未知 effect、不合法 name/version、过大 schema，以及超出受支持子集的 schema。`Runner` 在 policy 与执行前按注册 schema 校验模型参数。MCP discovery 可以作为 adapter 输入，但 MCP annotation 不能替代可信 name/version/effect 映射。
+
+## 2. 选择执行策略
+
+Policy 在工具展示时执行一次，在实际 dispatch 前再次执行。`AllowAllPolicy` 允许全部可信注册能力，但不会跳过 schema 校验、预算、取消、durable intent 记录或凭据处理。
+
+`RestrictionPolicy` 还可以把指定 path field 限制在相对 allowed root 中。这只是一个策略实现，不是所有 Harness 工具的硬编码能力上限。自定义策略实现 `application.Policy`，并应返回适合 durable audit 的稳定 decision code。
+
+## 3. 添加 Profile 与完成评估器
+
+`domain.Profile` 拥有 workflow-specific prompt 准备和非工具模型输出解释权。共享 `Runner` 仍负责模型/工具顺序、history、授权、调用记录、预算与完成检查。通过 `ProfileRegistry` 注册精确 name/version；event payload 只能引用可信 composition 已选定的 Profile。
+
+对于文本目标，可使用已有 `application.NewGoalProfile`。它的 `CompletionContract` 选择已注册 mode/version。默认 evaluator registry 包含：
+
+- `solution_delivered/v1`
+- `action_with_verification/v1`
+- `observed_remote_branch/v1`
+- `pipeline_verification/v1`
+
+自定义 evaluator 可实现 `CompletionEvaluator` 或使用 `CompletionEvaluatorFunc`，再通过 `EvaluatorRegistry.Register` 注册。Evaluator 参数来自可信 Profile 契约，而不是 event 内的任意代码。
+
+## 4. 保持产物真实性
+
+每个 Artifact 都有自由类型 `Type`、字符串 `SchemaVersion`、受限 data 或 reference，以及 provenance：
+
+- `model` 表示模型生成的方案或摘要；Profile 只能创建此类来源。
+- `observed` 表示可信 executor 报告的 effect 或外部对象。
+- `verified` 表示可信 executor 执行的独立检查，必须包含 `VerificationSubject` 以及明确的 `passed` 或 `failed` 状态。
+
+模型生成的摘要不能伪造已观察分支、部署或验证结果。动作加验证的完成条件要求 verified artifact 通过 artifact ID 或 external ID 关联 observed action。
+
+## 5. 保守实现 `RunStore`
+
+存储 adapter 必须实现 `domain.RunStore` 的全部方法。以下顺序是行为契约，不是可选约定：
+
+1. `RecordInvocationIntent` 必须在 `ToolExecutor.Execute` 前 durable。
+2. `RecordInvocationResult` 原子写入结果及同批 artifact。
+3. 调用 sequence 与完整 message group 必须跨 restart 保留。
+4. Run 的 Profile、policy reference、configuration digest、budget、state、result 与 artifact provenance snapshot 必须保留。
+
+Pending 或 unknown 的 `write` 不会重放。`Runner` 把 run 置为 `waiting`，reason 为 `unknown_write_outcome`；操作员或 connector-specific reconciliation 必须先确认外部实际结果。Pending `read` 会关闭为 `interrupted`，之后可作为一条新的、单独记录的调用再次请求。
+
+## 6. 组装并验证边界
+
+使用 instance-owned store、provider、tool registry、policy 与 evaluator registry 构造 `Runner`。Provider 凭据与 executor binding 必须留在模型可见定义和 event 数据之外。扩展测试应重点覆盖注册失败、策略拒绝且不执行、intent-before-effect 顺序、result/artifact 原子性、取消与独立预算、restart，以及 unknown write outcome。
+
+[Local 流程](/zh-cn/docs/get-started/local-harness/)会在该交付通过验证后说明完整 composition 与真实 MCP 边界。Service HTTP 注册和通用 run UI 仍是独立 planned adapter。
