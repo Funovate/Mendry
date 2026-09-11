@@ -8,7 +8,7 @@ import { queryKeys } from "../../app/query";
 import { LoadingState, PageError } from "../../shared/ui";
 import {
   buildSourceConfig, buildTriggerConfig, defaultSourceCapabilities,
-  readConfigNumber, readConfigObject, readConfigString, readStringRecord,
+  readConfigNumber, readConfigObject, readConfigString, readStringRecord, type WebhookProvider,
 } from "./configuration";
 import { LLMStep } from "./wizard/LLMStep";
 import { RepositoryStep } from "./wizard/RepositoryStep";
@@ -17,6 +17,11 @@ import { SourceStep } from "./wizard/SourceStep";
 import { TriggerStep } from "./wizard/TriggerStep";
 
 type StepId = "repository" | "source" | "trigger" | "llm" | "review";
+
+function readWebhookProvider(config: Record<string, unknown> | undefined): WebhookProvider {
+  const provider = readConfigString(config, "provider", "generic");
+  return provider === "tencent_cls" || provider === "aws_cloudwatch" ? provider : "generic";
+}
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: "repository", label: "Git repository" },
@@ -85,7 +90,9 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [triggerKind, setTriggerKind] = useState<TriggerKind>(current.trigger?.kind ?? "custom_rule");
   const [savedTriggerKind, setSavedTriggerKind] = useState<TriggerKind | null>(current.trigger?.kind ?? null);
   const [inboundUrl, setInboundUrl] = useState(current.trigger?.inboundUrl ?? "");
-  const [webhookProvider, setWebhookProvider] = useState<"generic" | "tencent_cls">(readConfigString(current.trigger?.config, "provider", "generic") === "tencent_cls" ? "tencent_cls" : "generic");
+  const [webhookProvider, setWebhookProvider] = useState<WebhookProvider>(readWebhookProvider(current.trigger?.config));
+  const awsCloudWatchConfig = readConfigObject(current.trigger?.config, "awsCloudWatch");
+  const [awsTopicArn, setAwsTopicArn] = useState(readConfigString(awsCloudWatchConfig, "topicArn", ""));
   const [groupingWindowSeconds, setGroupingWindowSeconds] = useState(readConfigNumber(current.trigger?.config, "groupingWindowSeconds", 900));
   const [matchExpression, setMatchExpression] = useState(readConfigString(current.trigger?.config, "matchExpression", "level=ERROR"));
   const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? "https://api.openai.com");
@@ -118,7 +125,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   });
   const buildTriggerPayload = () => ({
     kind: triggerKind, signingSecretId: null,
-    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression, webhookProvider }),
+    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression, webhookProvider, awsTopicArn }),
     enabled: current.trigger?.enabled ?? true,
   });
   const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
@@ -273,12 +280,15 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
       {activeStep === "trigger" && <TriggerStep
         triggerKind={triggerKind} setTriggerKind={setTriggerKind}
         webhookProvider={webhookProvider} setWebhookProvider={setWebhookProvider}
+        awsTopicArn={awsTopicArn} setAwsTopicArn={setAwsTopicArn}
         groupingWindowSeconds={groupingWindowSeconds} setGroupingWindowSeconds={setGroupingWindowSeconds}
         matchExpression={matchExpression} setMatchExpression={setMatchExpression}
         inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}
         generatingInboundUrl={rotateWebhookToken.isPending} generateInboundUrlError={rotateWebhookToken.error}
         canGenerateInboundUrl={savedTriggerKind === "signed_webhook"}
-        onSave={() => saveTrigger.mutate()} saving={saveTrigger.isPending} canSave saveError={saveTrigger.error}
+        onSave={() => saveTrigger.mutate()} saving={saveTrigger.isPending}
+        canSave={webhookProvider !== "aws_cloudwatch" || /^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(awsTopicArn.trim())}
+        saveError={saveTrigger.error}
       />}
       {activeStep === "llm" && <LLMStep
         baseUrl={llmBaseUrl} setBaseUrl={(value) => { setLlmBaseUrl(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}

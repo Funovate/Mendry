@@ -70,6 +70,12 @@ function sourceConfigurationSummary(config: ProjectConfiguration["source"]["conf
 
 function triggerConfigurationSummary(config: ProjectConfiguration["trigger"]["config"]): string {
   if (typeof config.matchExpression === "string") return config.matchExpression;
+  if (config.provider === "aws_cloudwatch") {
+    const aws = typeof config.awsCloudWatch === "object" && config.awsCloudWatch !== null && !Array.isArray(config.awsCloudWatch)
+      ? config.awsCloudWatch as Record<string, unknown>
+      : {};
+    return typeof aws.topicArn === "string" ? `AWS CloudWatch · ${aws.topicArn}` : "AWS CloudWatch";
+  }
   if (config.provider === "tencent_cls") return "Tencent Cloud CLS";
   if (config.provider === "generic") return "Generic webhook";
   if (Array.isArray(config.eventTypes)) return config.eventTypes.filter((value): value is string => typeof value === "string").join(", ") || "Signed webhook";

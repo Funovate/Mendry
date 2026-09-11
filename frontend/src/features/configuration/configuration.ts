@@ -87,9 +87,20 @@ export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): R
   };
 }
 
-export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string; webhookProvider?: "generic" | "tencent_cls" }): Record<string, unknown> {
+export type WebhookProvider = "generic" | "tencent_cls" | "aws_cloudwatch";
+
+export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string; webhookProvider?: WebhookProvider; awsTopicArn?: string }): Record<string, unknown> {
   if (kind === "signed_webhook") {
     const eventTypes = input.eventTypes.split(",").map((value) => value.trim()).filter(Boolean);
+    if (input.webhookProvider === "aws_cloudwatch") {
+      return {
+        schemaVersion: 3,
+        provider: "aws_cloudwatch",
+        eventTypes: eventTypes.length > 0 ? eventTypes : ["alarm"],
+        deduplicationKey: "alarm_arn",
+        awsCloudWatch: { topicArn: input.awsTopicArn?.trim() ?? "" },
+      };
+    }
     return {
       schemaVersion: 2,
       provider: input.webhookProvider ?? "generic",

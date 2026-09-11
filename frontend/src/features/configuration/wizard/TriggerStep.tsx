@@ -1,10 +1,12 @@
 import { Activity, Check, Copy, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import { messageFromError, type TriggerKind } from "../../../api";
+import type { WebhookProvider } from "../configuration";
 
 export function TriggerStep({
   triggerKind, setTriggerKind,
   webhookProvider, setWebhookProvider,
+  awsTopicArn, setAwsTopicArn,
   groupingWindowSeconds, setGroupingWindowSeconds, matchExpression, setMatchExpression,
   inboundUrl, onGenerateInboundUrl, generatingInboundUrl = false, generateInboundUrlError,
   canGenerateInboundUrl = false,
@@ -12,8 +14,10 @@ export function TriggerStep({
 }: {
   triggerKind: TriggerKind;
   setTriggerKind: (value: TriggerKind) => void;
-  webhookProvider: "generic" | "tencent_cls";
-  setWebhookProvider: (value: "generic" | "tencent_cls") => void;
+  webhookProvider: WebhookProvider;
+  setWebhookProvider: (value: WebhookProvider) => void;
+  awsTopicArn: string;
+  setAwsTopicArn: (value: string) => void;
   groupingWindowSeconds: number;
   setGroupingWindowSeconds: (value: number) => void;
   matchExpression: string;
@@ -44,10 +48,12 @@ export function TriggerStep({
       </select></label>
     </div>
     {triggerKind === "signed_webhook" ? <>
-      <label>Webhook provider<select aria-label="Webhook provider" value={webhookProvider} onChange={(event) => setWebhookProvider(event.target.value as "generic" | "tencent_cls")}>
+      <label>Webhook provider<select aria-label="Webhook provider" value={webhookProvider} onChange={(event) => setWebhookProvider(event.target.value as WebhookProvider)}>
         <option value="generic">Generic webhook</option>
         <option value="tencent_cls">Tencent Cloud CLS alert</option>
+        <option value="aws_cloudwatch">AWS CloudWatch Alarm via SNS</option>
       </select></label>
+      {webhookProvider === "aws_cloudwatch" && <label>SNS Topic ARN<input aria-label="SNS Topic ARN" value={awsTopicArn} onChange={(event) => setAwsTopicArn(event.target.value)} placeholder="arn:aws:sns:us-east-1:123456789012:mendry-alarms" /></label>}
       <div className="inbound-url-field">
       <label>Inbound webhook URL<input aria-label="Inbound webhook URL" value={inboundUrl ?? ""} readOnly placeholder="Generate an inbound URL after the project is saved." /></label>
       <div className="inbound-url-actions">

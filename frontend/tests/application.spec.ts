@@ -24,7 +24,7 @@ function project(role: MockRole, overrides: Partial<{ id: string; key: string; n
   };
 }
 
-function configuration(overrides: { environmentName?: string } = {}) {
+function configuration(overrides: { environmentName?: string; awsTrigger?: boolean } = {}) {
   return {
     environment: { id: "env-id", key: "production", name: overrides.environmentName ?? "Production", service: "real-estate-backend", version: 1 },
     repository: {
@@ -46,7 +46,21 @@ function configuration(overrides: { environmentName?: string } = {}) {
       enabled: true,
       version: 1,
     },
-    trigger: {
+    trigger: overrides.awsTrigger ? {
+      id: "trigger-id",
+      kind: "signed_webhook",
+      signingSecretId: null,
+      inboundUrl: "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO",
+      config: {
+        schemaVersion: 3,
+        provider: "aws_cloudwatch",
+        eventTypes: ["alarm"],
+        deduplicationKey: "alarm_arn",
+        awsCloudWatch: { topicArn: "arn:aws:sns:us-east-1:123456789012:mendry-alarms" },
+      },
+      enabled: true,
+      version: 1,
+    } : {
       id: "trigger-id",
       kind: "custom_rule",
       signingSecretId: null,
@@ -104,6 +118,7 @@ type MockOptions = {
   failResource?: "audit" | "observations";
   expireResource?: "observations";
   environmentName?: string;
+  awsTrigger?: boolean;
   remediationMode?: RemediationMode;
 };
 
@@ -112,7 +127,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
   const activeRole = options.role ?? "admin";
   const systemRole = options.systemRole ?? (activeRole === "admin" ? "admin" : "viewer");
   let projects = options.projects ?? [project(activeRole)];
-  let currentConfiguration = options.configured === false ? null : configuration({ environmentName: options.environmentName });
+  let currentConfiguration = options.configured === false ? null : configuration({ environmentName: options.environmentName, awsTrigger: options.awsTrigger });
   let remediationMode = options.remediationMode ?? "ready";
   let incidents = [incident()];
   let members = [
@@ -691,6 +706,30 @@ test("administrator persists credentials, configuration, members, and incident l
   const triggerWrite = state.writes.find((write) => write.path.endsWith("/configuration/trigger"));
   expect(triggerWrite?.body).not.toHaveProperty("llm");
   expect(triggerWrite?.body).not.toHaveProperty(["trigger", "name"]);
+});
+
+test("round-trips an existing AWS CloudWatch trigger through edit and save", async ({ page }) => {
+  const state = await mockApi(page, { role: "admin", awsTrigger: true });
+  await page.goto("/projects/real-estate/configuration/edit");
+  await page.getByRole("tab", { name: "Trigger" }).click();
+
+  await expect(page.getByLabel("Trigger type")).toHaveValue("signed_webhook");
+  await expect(page.getByLabel("Webhook provider")).toHaveValue("aws_cloudwatch");
+  await expect(page.getByLabel("SNS Topic ARN")).toHaveValue("arn:aws:sns:us-east-1:123456789012:mendry-alarms");
+  await page.getByRole("button", { name: "Save trigger" }).click();
+
+  await expect.poll(() => state.writes.find((write) => write.method === "PUT" && write.path.endsWith("/configuration/trigger"))?.body).toEqual({
+    kind: "signed_webhook",
+    signingSecretId: null,
+    config: {
+      schemaVersion: 3,
+      provider: "aws_cloudwatch",
+      eventTypes: ["alarm"],
+      deduplicationKey: "alarm_arn",
+      awsCloudWatch: { topicArn: "arn:aws:sns:us-east-1:123456789012:mendry-alarms" },
+    },
+    enabled: true,
+  });
 });
 
 const gitImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nfile-imported-secret-key\n-----END OPENSSH PRIVATE KEY-----";
