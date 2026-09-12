@@ -77,6 +77,17 @@ for (const pageCase of pages) {
           boxes: sections.map((selector) =>
             document.querySelector(selector)!.getBoundingClientRect().toJSON(),
           ),
+          proofItems: [
+            ...document.querySelectorAll(".home-proof-strip li"),
+          ].map((item) => item.getBoundingClientRect().toJSON()),
+          consoleBrand: {
+            whiteSpace: getComputedStyle(
+              document.querySelector(".home-console-brand")!,
+            ).whiteSpace,
+            contextDisplay: getComputedStyle(
+              document.querySelector(".home-console-brand > span:last-child")!,
+            ).display,
+          },
           scrollWidth: document.documentElement.scrollWidth,
           clientWidth: document.documentElement.clientWidth,
           externalResources: performance
@@ -90,6 +101,19 @@ for (const pageCase of pages) {
       });
       expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
       expect(layout.externalResources).toEqual([]);
+      expect(layout.proofItems).toHaveLength(3);
+      if (layout.clientWidth <= 768) {
+        expect(layout.consoleBrand).toEqual({
+          whiteSpace: "nowrap",
+          contextDisplay: "none",
+        });
+        expect(layout.proofItems[1].top).toBeGreaterThan(
+          layout.proofItems[0].bottom,
+        );
+        expect(layout.proofItems[2].top).toBeGreaterThan(
+          layout.proofItems[1].bottom,
+        );
+      }
       for (let i = 1; i < layout.boxes.length; i++) {
         expect(layout.boxes[i].top).toBeGreaterThanOrEqual(
           layout.boxes[i - 1].bottom - 1,

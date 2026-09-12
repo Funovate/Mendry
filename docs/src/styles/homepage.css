@@ -906,6 +906,12 @@ html:has(.home) footer.sl-flex {
   .home-console-bar {
     padding: 0.9rem 1.1rem;
   }
+  .home-console-brand {
+    white-space: nowrap;
+  }
+  .home-console-brand > span:last-child {
+    display: none;
+  }
   .home-incident-heading {
     padding: 1.5rem 1.1rem;
   }
@@ -938,7 +944,8 @@ html:has(.home) footer.sl-flex {
   }
   .home-proof-strip {
     gap: 0.9rem;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
     justify-content: flex-start;
     font-size: 0.7rem;
   }
@@ -1023,9 +1030,6 @@ html:has(.home) footer.sl-flex {
   }
 }
 @media (max-width: 24rem) {
-  .home-console-brand > span:last-child {
-    display: none;
-  }
   .home-evidence-column {
     padding: 1.2rem;
   }
