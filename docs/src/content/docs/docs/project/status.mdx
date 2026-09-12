@@ -40,18 +40,18 @@ session, project, and account dependencies do not apply to the neutral core. Its
 human-review restrictions are compatibility behavior, not a permanent
 prohibition on write-capable Harness extensions.
 
-| Capability                                                | Status    | Boundary                                                           |
-| --------------------------------------------------------- | --------- | ------------------------------------------------------------------ |
-| Explicit migrations and administrator bootstrap           | available | Source command; supported production package still absent          |
-| Local login sessions and project roles                    | available | Redis sessions and PostgreSQL users/memberships; incident app only |
-| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                |
-| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed     |
-| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input         |
-| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory        |
-| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped             |
-| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                               |
-| Automatic merge, deployment, rollback, or recovery        | planned   | No current production-action availability claim                    |
-| Outbound notifications and general durable worker queue   | planned   | Not part of the current API runtime                                |
+| Capability                                                | Status    | Boundary                                                            |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------------------- |
+| Explicit migrations and administrator bootstrap           | available | Source command; supported production package still absent           |
+| Single-user login sessions                                | available | Redis sessions and one PostgreSQL login identity; incident app only |
+| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                 |
+| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed      |
+| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input          |
+| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory         |
+| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped              |
+| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                                |
+| Automatic merge, deployment, rollback, or recovery        | planned   | No current production-action availability claim                     |
+| Outbound notifications and general durable worker queue   | planned   | Not part of the current API runtime                                 |
 
 ## Publication blockers
 

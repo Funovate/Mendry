@@ -47,10 +47,9 @@ export function IncidentsPage() {
         </div>
         <div className="incident-lifecycle">
           <label htmlFor="incident-status">Incident status</label>
-          <select id="incident-status" value={selected.status} disabled={!project.capabilities.writeIncidents || updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: selected.id, status: event.target.value as IncidentStatus })}>
+          <select id="incident-status" value={selected.status} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: selected.id, status: event.target.value as IncidentStatus })}>
             {statuses.map((status) => <option key={status} value={status}>{status === selected.status ? status : status === "Open" ? "Reopen incident" : status === "Recovered" ? "Mark as recovered" : "Close incident"}</option>)}
           </select>
-          {!project.capabilities.writeIncidents && <p className="readonly-note">Viewer access is read-only.</p>}
         </div>
         {updateStatus.error && <ErrorNotice message={messageFromError(updateStatus.error)} />}
       </header>

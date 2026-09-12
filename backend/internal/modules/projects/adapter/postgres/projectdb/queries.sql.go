@@ -12,22 +12,9 @@ import (
 )
 
 const createProject = `-- name: CreateProject :one
-WITH created_project AS (
-    INSERT INTO projects (id, project_key, name, description)
-    VALUES ($1, $2, $3, $4)
-    RETURNING id, project_key, name, description, version, created_at, updated_at
-), created_membership AS (
-    INSERT INTO project_memberships (project_id, user_id, role)
-    SELECT id, $5, 'admin'
-    FROM created_project
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $6, id, $5, 'project.created', 'project', id,
-           'Project created.', jsonb_build_object('projectKey', project_key)
-    FROM created_project
-)
-SELECT id, project_key, name, description, 'admin'::text AS role, version, created_at, updated_at
-FROM created_project
+INSERT INTO projects (id, project_key, name, description)
+VALUES ($1, $2, $3, $4)
+RETURNING id, project_key, name, description, version, created_at, updated_at
 `
 
 type CreateProjectParams struct {
@@ -35,8 +22,6 @@ type CreateProjectParams struct {
 	ProjectKey  string
 	Name        string
 	Description string
-	ActorUserID pgtype.UUID
-	AuditID     pgtype.UUID
 }
 
 type CreateProjectRow struct {
@@ -44,7 +29,6 @@ type CreateProjectRow struct {
 	ProjectKey  string
 	Name        string
 	Description string
-	Role        string
 	Version     int64
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
@@ -56,8 +40,6 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 		arg.ProjectKey,
 		arg.Name,
 		arg.Description,
-		arg.ActorUserID,
-		arg.AuditID,
 	)
 	var i CreateProjectRow
 	err := row.Scan(
@@ -65,7 +47,6 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 		&i.ProjectKey,
 		&i.Name,
 		&i.Description,
-		&i.Role,
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -79,27 +60,19 @@ WITH created_secret AS (
     VALUES ($1, $2, $3, $4,
             $5, $6, $7)
     RETURNING id, project_id, name, kind, key_version, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $8, project_id, $9, 'project.secret.created',
-           'project_secret', id, 'Project credential created.',
-           jsonb_build_object('name', name, 'kind', kind)
-    FROM created_secret
 )
 SELECT id, project_id, name, kind, key_version, version, created_at, updated_at
 FROM created_secret
 `
 
 type CreateProjectSecretParams struct {
-	SecretID    pgtype.UUID
-	ProjectID   pgtype.UUID
-	Name        string
-	Kind        string
-	Ciphertext  []byte
-	Nonce       []byte
-	KeyVersion  int32
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
+	SecretID   pgtype.UUID
+	ProjectID  pgtype.UUID
+	Name       string
+	Kind       string
+	Ciphertext []byte
+	Nonce      []byte
+	KeyVersion int32
 }
 
 type CreateProjectSecretRow struct {
@@ -122,8 +95,6 @@ func (q *Queries) CreateProjectSecret(ctx context.Context, arg CreateProjectSecr
 		arg.Ciphertext,
 		arg.Nonce,
 		arg.KeyVersion,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i CreateProjectSecretRow
 	err := row.Scan(
@@ -139,121 +110,30 @@ func (q *Queries) CreateProjectSecret(ctx context.Context, arg CreateProjectSecr
 	return i, err
 }
 
-const deleteProjectMember = `-- name: DeleteProjectMember :one
-WITH target_membership AS (
-    SELECT pm.user_id, u.username, pm.role
-    FROM project_memberships AS pm
-    JOIN users AS u ON u.id = pm.user_id
-    WHERE pm.project_id = $1
-      AND u.username = $2
-      AND (
-          pm.role <> 'admin'
-          OR EXISTS (
-              SELECT 1
-              FROM project_memberships AS another_admin
-              WHERE another_admin.project_id = pm.project_id
-                AND another_admin.role = 'admin'
-                AND another_admin.user_id <> pm.user_id
-          )
-      )
-), deleted_membership AS (
-    DELETE FROM project_memberships
-    WHERE project_id = $1
-      AND user_id = (SELECT user_id FROM target_membership)
-    RETURNING user_id
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $3, $1, $4,
-           'project.member.removed', 'project_membership', deleted_membership.user_id,
-           'Project member removed.', jsonb_build_object('username', target_membership.username)
-    FROM deleted_membership
-    JOIN target_membership ON target_membership.user_id = deleted_membership.user_id
-)
-SELECT target_membership.user_id, target_membership.username, target_membership.role
-FROM target_membership
-JOIN deleted_membership ON deleted_membership.user_id = target_membership.user_id
+const getProject = `-- name: GetProject :one
+SELECT id, project_key, name, description, version, created_at, updated_at
+FROM projects
+WHERE project_key = $1
 `
 
-type DeleteProjectMemberParams struct {
-	ProjectID   pgtype.UUID
-	Username    string
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
-}
-
-type DeleteProjectMemberRow struct {
-	UserID   pgtype.UUID
-	Username string
-	Role     string
-}
-
-func (q *Queries) DeleteProjectMember(ctx context.Context, arg DeleteProjectMemberParams) (DeleteProjectMemberRow, error) {
-	row := q.db.QueryRow(ctx, deleteProjectMember,
-		arg.ProjectID,
-		arg.Username,
-		arg.AuditID,
-		arg.ActorUserID,
-	)
-	var i DeleteProjectMemberRow
-	err := row.Scan(&i.UserID, &i.Username, &i.Role)
-	return i, err
-}
-
-const getEnabledProjectUser = `-- name: GetEnabledProjectUser :one
-SELECT id, username
-FROM users
-WHERE username = $1 AND enabled
-`
-
-type GetEnabledProjectUserRow struct {
-	ID       pgtype.UUID
-	Username string
-}
-
-func (q *Queries) GetEnabledProjectUser(ctx context.Context, username string) (GetEnabledProjectUserRow, error) {
-	row := q.db.QueryRow(ctx, getEnabledProjectUser, username)
-	var i GetEnabledProjectUserRow
-	err := row.Scan(&i.ID, &i.Username)
-	return i, err
-}
-
-const getProjectAccess = `-- name: GetProjectAccess :one
-SELECT p.id, p.project_key, p.name, p.description,
-       COALESCE(CASE WHEN $1::boolean THEN 'admin'::text ELSE pm.role END, 'admin')::text AS role,
-       p.version, p.created_at, p.updated_at
-FROM projects AS p
-LEFT JOIN project_memberships AS pm
-    ON pm.project_id = p.id AND pm.user_id = $2
-WHERE p.project_key = $3
-  AND ($1::boolean OR pm.user_id IS NOT NULL)
-`
-
-type GetProjectAccessParams struct {
-	SystemAdmin bool
-	UserID      pgtype.UUID
-	ProjectKey  string
-}
-
-type GetProjectAccessRow struct {
+type GetProjectRow struct {
 	ID          pgtype.UUID
 	ProjectKey  string
 	Name        string
 	Description string
-	Role        string
 	Version     int64
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }
 
-func (q *Queries) GetProjectAccess(ctx context.Context, arg GetProjectAccessParams) (GetProjectAccessRow, error) {
-	row := q.db.QueryRow(ctx, getProjectAccess, arg.SystemAdmin, arg.UserID, arg.ProjectKey)
-	var i GetProjectAccessRow
+func (q *Queries) GetProject(ctx context.Context, projectKey string) (GetProjectRow, error) {
+	row := q.db.QueryRow(ctx, getProject, projectKey)
+	var i GetProjectRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectKey,
 		&i.Name,
 		&i.Description,
-		&i.Role,
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -427,42 +307,6 @@ func (q *Queries) GetProjectLLMProvider(ctx context.Context, projectID pgtype.UU
 	return i, err
 }
 
-const getProjectMemberByUsername = `-- name: GetProjectMemberByUsername :one
-SELECT u.id AS user_id, u.username, pm.role, pm.version, pm.created_at, pm.updated_at
-FROM project_memberships AS pm
-JOIN users AS u ON u.id = pm.user_id
-WHERE pm.project_id = $1
-  AND u.username = $2
-`
-
-type GetProjectMemberByUsernameParams struct {
-	ProjectID pgtype.UUID
-	Username  string
-}
-
-type GetProjectMemberByUsernameRow struct {
-	UserID    pgtype.UUID
-	Username  string
-	Role      string
-	Version   int64
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-}
-
-func (q *Queries) GetProjectMemberByUsername(ctx context.Context, arg GetProjectMemberByUsernameParams) (GetProjectMemberByUsernameRow, error) {
-	row := q.db.QueryRow(ctx, getProjectMemberByUsername, arg.ProjectID, arg.Username)
-	var i GetProjectMemberByUsernameRow
-	err := row.Scan(
-		&i.UserID,
-		&i.Username,
-		&i.Role,
-		&i.Version,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getProjectRemediationPolicy = `-- name: GetProjectRemediationPolicy :one
 SELECT agent_loop_mode, agent_loop_policy_version
 FROM projects
@@ -614,111 +458,6 @@ func (q *Queries) GetProjectTrigger(ctx context.Context, projectID pgtype.UUID) 
 	return i, err
 }
 
-const listProjectAuditEvents = `-- name: ListProjectAuditEvents :many
-SELECT id, project_id, actor_user_id, action, target_type, target_id, summary, metadata, occurred_at,
-       COUNT(*) OVER() AS total_count
-FROM audit_events
-WHERE project_id = $1
-ORDER BY occurred_at DESC, id DESC
-LIMIT $2
-`
-
-type ListProjectAuditEventsParams struct {
-	ProjectID   pgtype.UUID
-	ResultLimit int32
-}
-
-type ListProjectAuditEventsRow struct {
-	ID          pgtype.UUID
-	ProjectID   pgtype.UUID
-	ActorUserID pgtype.UUID
-	Action      string
-	TargetType  string
-	TargetID    pgtype.UUID
-	Summary     string
-	Metadata    []byte
-	OccurredAt  pgtype.Timestamptz
-	TotalCount  int64
-}
-
-func (q *Queries) ListProjectAuditEvents(ctx context.Context, arg ListProjectAuditEventsParams) ([]ListProjectAuditEventsRow, error) {
-	rows, err := q.db.Query(ctx, listProjectAuditEvents, arg.ProjectID, arg.ResultLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListProjectAuditEventsRow
-	for rows.Next() {
-		var i ListProjectAuditEventsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProjectID,
-			&i.ActorUserID,
-			&i.Action,
-			&i.TargetType,
-			&i.TargetID,
-			&i.Summary,
-			&i.Metadata,
-			&i.OccurredAt,
-			&i.TotalCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listProjectMembers = `-- name: ListProjectMembers :many
-SELECT u.id AS user_id, u.username, pm.role, pm.version, pm.created_at, pm.updated_at,
-       COUNT(*) OVER() AS total_count
-FROM project_memberships AS pm
-JOIN users AS u ON u.id = pm.user_id
-WHERE pm.project_id = $1
-ORDER BY u.username
-`
-
-type ListProjectMembersRow struct {
-	UserID     pgtype.UUID
-	Username   string
-	Role       string
-	Version    int64
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	TotalCount int64
-}
-
-func (q *Queries) ListProjectMembers(ctx context.Context, projectID pgtype.UUID) ([]ListProjectMembersRow, error) {
-	rows, err := q.db.Query(ctx, listProjectMembers, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListProjectMembersRow
-	for rows.Next() {
-		var i ListProjectMembersRow
-		if err := rows.Scan(
-			&i.UserID,
-			&i.Username,
-			&i.Role,
-			&i.Version,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.TotalCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listProjectSecrets = `-- name: ListProjectSecrets :many
 SELECT id, project_id, name, kind, key_version, version, created_at, updated_at,
        COUNT(*) OVER() AS total_count
@@ -769,52 +508,39 @@ func (q *Queries) ListProjectSecrets(ctx context.Context, projectID pgtype.UUID)
 	return items, nil
 }
 
-const listProjectsForUser = `-- name: ListProjectsForUser :many
-SELECT p.id, p.project_key, p.name, p.description,
-       COALESCE(CASE WHEN $1::boolean THEN 'admin'::text ELSE pm.role END, 'admin')::text AS role,
-       p.version, p.created_at, p.updated_at,
+const listProjects = `-- name: ListProjects :many
+SELECT id, project_key, name, description, version, created_at, updated_at,
        COUNT(*) OVER() AS total_count
-FROM projects AS p
-LEFT JOIN project_memberships AS pm
-    ON pm.project_id = p.id AND pm.user_id = $2
-WHERE $1::boolean OR pm.user_id IS NOT NULL
-ORDER BY p.name, p.project_key
-LIMIT $3
+FROM projects
+ORDER BY name, project_key
+LIMIT $1
 `
 
-type ListProjectsForUserParams struct {
-	SystemAdmin bool
-	UserID      pgtype.UUID
-	ResultLimit int32
-}
-
-type ListProjectsForUserRow struct {
+type ListProjectsRow struct {
 	ID          pgtype.UUID
 	ProjectKey  string
 	Name        string
 	Description string
-	Role        string
 	Version     int64
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	TotalCount  int64
 }
 
-func (q *Queries) ListProjectsForUser(ctx context.Context, arg ListProjectsForUserParams) ([]ListProjectsForUserRow, error) {
-	rows, err := q.db.Query(ctx, listProjectsForUser, arg.SystemAdmin, arg.UserID, arg.ResultLimit)
+func (q *Queries) ListProjects(ctx context.Context, resultLimit int32) ([]ListProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listProjects, resultLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListProjectsForUserRow
+	var items []ListProjectsRow
 	for rows.Next() {
-		var i ListProjectsForUserRow
+		var i ListProjectsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectKey,
 			&i.Name,
 			&i.Description,
-			&i.Role,
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -866,40 +592,30 @@ const updateProjectName = `-- name: UpdateProjectName :one
 WITH existing_project AS (
     SELECT projects.id, projects.project_key, projects.name, projects.description, projects.version, projects.created_at
     FROM projects
-    WHERE projects.id = $2
+    WHERE projects.id = $1
 ), changed_project AS (
     UPDATE projects
-    SET name = $3,
+    SET name = $2,
         version = projects.version + 1,
         updated_at = clock_timestamp()
-    WHERE projects.id = $2
+    WHERE projects.id = $1
     RETURNING id, project_key, name, description, version, created_at, updated_at
 ), synchronized_environment AS (
     UPDATE project_environments
-    SET name = $3,
+    SET name = $2,
         version = project_environments.version + 1,
         updated_at = clock_timestamp()
     FROM existing_project
     WHERE project_environments.project_id = existing_project.id
       AND project_environments.name = existing_project.name
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $4, changed_project.id, $5,
-           'project.renamed', 'project', changed_project.id,
-           'Project renamed.', jsonb_build_object('projectKey', changed_project.project_key)
-    FROM changed_project
 )
-SELECT changed_project.id, changed_project.project_key, changed_project.name, changed_project.description,
-       $1::text AS role, changed_project.version, changed_project.created_at, changed_project.updated_at
+SELECT id, project_key, name, description, version, created_at, updated_at
 FROM changed_project
 `
 
 type UpdateProjectNameParams struct {
-	Role        string
-	ProjectID   pgtype.UUID
-	Name        string
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
+	ProjectID pgtype.UUID
+	Name      string
 }
 
 type UpdateProjectNameRow struct {
@@ -907,27 +623,19 @@ type UpdateProjectNameRow struct {
 	ProjectKey  string
 	Name        string
 	Description string
-	Role        string
 	Version     int64
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }
 
 func (q *Queries) UpdateProjectName(ctx context.Context, arg UpdateProjectNameParams) (UpdateProjectNameRow, error) {
-	row := q.db.QueryRow(ctx, updateProjectName,
-		arg.Role,
-		arg.ProjectID,
-		arg.Name,
-		arg.AuditID,
-		arg.ActorUserID,
-	)
+	row := q.db.QueryRow(ctx, updateProjectName, arg.ProjectID, arg.Name)
 	var i UpdateProjectNameRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectKey,
 		&i.Name,
 		&i.Description,
-		&i.Role,
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -946,12 +654,6 @@ WITH changed_secret AS (
         updated_at = clock_timestamp()
     WHERE project_secrets.project_id = $5 AND project_secrets.id = $6
     RETURNING id, project_id, name, kind, key_version, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $7, changed_secret.project_id, $8, 'project.secret.updated',
-           'project_secret', changed_secret.id, 'Project credential updated.',
-           jsonb_build_object('name', changed_secret.name, 'kind', changed_secret.kind, 'rotated', $9::boolean)
-    FROM changed_secret
 )
 SELECT changed_secret.id, changed_secret.project_id, changed_secret.name, changed_secret.kind,
        changed_secret.key_version, changed_secret.version, changed_secret.created_at, changed_secret.updated_at
@@ -959,15 +661,12 @@ FROM changed_secret
 `
 
 type UpdateProjectSecretParams struct {
-	Name        string
-	Ciphertext  []byte
-	Nonce       []byte
-	KeyVersion  int32
-	ProjectID   pgtype.UUID
-	SecretID    pgtype.UUID
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
-	Rotated     bool
+	Name       string
+	Ciphertext []byte
+	Nonce      []byte
+	KeyVersion int32
+	ProjectID  pgtype.UUID
+	SecretID   pgtype.UUID
 }
 
 type UpdateProjectSecretRow struct {
@@ -989,9 +688,6 @@ func (q *Queries) UpdateProjectSecret(ctx context.Context, arg UpdateProjectSecr
 		arg.KeyVersion,
 		arg.ProjectID,
 		arg.SecretID,
-		arg.AuditID,
-		arg.ActorUserID,
-		arg.Rotated,
 	)
 	var i UpdateProjectSecretRow
 	err := row.Scan(
@@ -1018,13 +714,6 @@ WITH changed_trigger AS (
     WHERE project_triggers.project_id = $4
       AND project_triggers.kind = 'signed_webhook'
     RETURNING id, project_id, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $5, changed_trigger.project_id, $6,
-           'project.trigger.webhook_token', 'project_trigger', changed_trigger.id,
-           'Project webhook token updated.',
-           jsonb_build_object('rotated', $7::boolean)
-    FROM changed_trigger
 )
 SELECT id, version
 FROM changed_trigger
@@ -1035,9 +724,6 @@ type UpdateWebhookTokenParams struct {
 	IngressTokenCiphertext []byte
 	IngressTokenNonce      []byte
 	ProjectID              pgtype.UUID
-	AuditID                pgtype.UUID
-	ActorUserID            pgtype.UUID
-	Rotated                bool
 }
 
 type UpdateWebhookTokenRow struct {
@@ -1051,9 +737,6 @@ func (q *Queries) UpdateWebhookToken(ctx context.Context, arg UpdateWebhookToken
 		arg.IngressTokenCiphertext,
 		arg.IngressTokenNonce,
 		arg.ProjectID,
-		arg.AuditID,
-		arg.ActorUserID,
-		arg.Rotated,
 	)
 	var i UpdateWebhookTokenRow
 	err := row.Scan(&i.ID, &i.Version)
@@ -1150,19 +833,6 @@ WITH changed_environment AS (
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, provider, base_url, credential_secret_id, model, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $32, $2, $33,
-           'project.configuration.updated', 'project', $2,
-           'Project configuration updated.',
-           jsonb_build_object(
-               'environmentKey', changed_environment.environment_key,
-               'sourceKind', changed_source.kind,
-               'triggerKind', changed_trigger.kind,
-               'llmProvider', changed_llm.provider,
-               'llmModel', changed_llm.model
-           )
-    FROM changed_environment, changed_source, changed_trigger, changed_llm
 )
 SELECT changed_environment.id AS environment_id,
        changed_environment.environment_key, changed_environment.name AS environment_name,
@@ -1220,8 +890,6 @@ type UpsertProjectConfigurationParams struct {
 	LlmBaseUrl                   string
 	LlmCredentialSecretID        pgtype.UUID
 	LlmModel                     string
-	AuditID                      pgtype.UUID
-	ActorUserID                  pgtype.UUID
 }
 
 type UpsertProjectConfigurationRow struct {
@@ -1295,8 +963,6 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		arg.LlmBaseUrl,
 		arg.LlmCredentialSecretID,
 		arg.LlmModel,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectConfigurationRow
 	err := row.Scan(
@@ -1351,14 +1017,7 @@ WITH changed_environment AS (
         version = project_environments.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, environment_key, name, service, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $6, $2, $7,
-           'project.configuration.updated', 'project', $2,
-           'Project environment configuration updated.',
-           jsonb_build_object('environmentKey', changed_environment.environment_key)
-    FROM changed_environment
- )
+)
 SELECT id, environment_key, name, service, version
 FROM changed_environment
 `
@@ -1369,8 +1028,6 @@ type UpsertProjectEnvironmentParams struct {
 	EnvironmentKey  string
 	EnvironmentName string
 	Service         *string
-	AuditID         pgtype.UUID
-	ActorUserID     pgtype.UUID
 }
 
 type UpsertProjectEnvironmentRow struct {
@@ -1388,8 +1045,6 @@ func (q *Queries) UpsertProjectEnvironment(ctx context.Context, arg UpsertProjec
 		arg.EnvironmentKey,
 		arg.EnvironmentName,
 		arg.Service,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectEnvironmentRow
 	err := row.Scan(
@@ -1418,14 +1073,7 @@ WITH changed_llm AS (
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, provider, base_url, credential_secret_id, model, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $7, $2, $8,
-           'project.configuration.updated', 'project', $2,
-           'Project LLM provider configuration updated.',
-           jsonb_build_object('llmProvider', changed_llm.provider, 'llmModel', changed_llm.model)
-    FROM changed_llm
- )
+)
 SELECT id, provider, base_url, credential_secret_id, model, version
 FROM changed_llm
 `
@@ -1437,8 +1085,6 @@ type UpsertProjectLLMProviderParams struct {
 	LlmBaseUrl            string
 	LlmCredentialSecretID pgtype.UUID
 	LlmModel              string
-	AuditID               pgtype.UUID
-	ActorUserID           pgtype.UUID
 }
 
 type UpsertProjectLLMProviderRow struct {
@@ -1458,8 +1104,6 @@ func (q *Queries) UpsertProjectLLMProvider(ctx context.Context, arg UpsertProjec
 		arg.LlmBaseUrl,
 		arg.LlmCredentialSecretID,
 		arg.LlmModel,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectLLMProviderRow
 	err := row.Scan(
@@ -1473,81 +1117,6 @@ func (q *Queries) UpsertProjectLLMProvider(ctx context.Context, arg UpsertProjec
 	return i, err
 }
 
-const upsertProjectMember = `-- name: UpsertProjectMember :one
-WITH target_user AS (
-    SELECT id, username
-    FROM users
-    WHERE username = $1 AND enabled
-), changed_membership AS (
-    INSERT INTO project_memberships (project_id, user_id, role)
-    SELECT $2, id, $3
-    FROM target_user
-    ON CONFLICT (project_id, user_id) DO UPDATE
-    SET role = EXCLUDED.role,
-        version = project_memberships.version + 1,
-        updated_at = clock_timestamp()
-    WHERE project_memberships.role <> 'admin'
-       OR EXCLUDED.role = 'admin'
-       OR EXISTS (
-           SELECT 1
-           FROM project_memberships AS another_admin
-           WHERE another_admin.project_id = project_memberships.project_id
-             AND another_admin.role = 'admin'
-             AND another_admin.user_id <> project_memberships.user_id
-       )
-    RETURNING user_id, role, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $4, $2, $5,
-           'project.member.updated', 'project_membership', changed_membership.user_id,
-           'Project member updated.',
-           jsonb_build_object('username', target_user.username, 'role', changed_membership.role)
-    FROM changed_membership
-    JOIN target_user ON target_user.id = changed_membership.user_id
-)
-SELECT changed_membership.user_id, target_user.username, changed_membership.role,
-       changed_membership.version, changed_membership.created_at, changed_membership.updated_at
-FROM changed_membership
-JOIN target_user ON target_user.id = changed_membership.user_id
-`
-
-type UpsertProjectMemberParams struct {
-	Username    string
-	ProjectID   pgtype.UUID
-	Role        string
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
-}
-
-type UpsertProjectMemberRow struct {
-	UserID    pgtype.UUID
-	Username  string
-	Role      string
-	Version   int64
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-}
-
-func (q *Queries) UpsertProjectMember(ctx context.Context, arg UpsertProjectMemberParams) (UpsertProjectMemberRow, error) {
-	row := q.db.QueryRow(ctx, upsertProjectMember,
-		arg.Username,
-		arg.ProjectID,
-		arg.Role,
-		arg.AuditID,
-		arg.ActorUserID,
-	)
-	var i UpsertProjectMemberRow
-	err := row.Scan(
-		&i.UserID,
-		&i.Username,
-		&i.Role,
-		&i.Version,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const upsertProjectRemediationPolicy = `-- name: UpsertProjectRemediationPolicy :one
 WITH changed_policy AS (
     UPDATE projects
@@ -1557,14 +1126,6 @@ WITH changed_policy AS (
         updated_at = clock_timestamp()
     WHERE projects.id = $2
     RETURNING id, agent_loop_mode, agent_loop_policy_version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $3, changed_policy.id, $4,
-           'project.remediation_policy.updated', 'project', changed_policy.id,
-           'Project remediation policy updated.',
-           jsonb_build_object('agentLoopMode', changed_policy.agent_loop_mode,
-                              'policyVersion', changed_policy.agent_loop_policy_version)
-    FROM changed_policy
 )
 SELECT agent_loop_mode, agent_loop_policy_version
 FROM changed_policy
@@ -1573,8 +1134,6 @@ FROM changed_policy
 type UpsertProjectRemediationPolicyParams struct {
 	AgentLoopMode string
 	ProjectID     pgtype.UUID
-	AuditID       pgtype.UUID
-	ActorUserID   pgtype.UUID
 }
 
 type UpsertProjectRemediationPolicyRow struct {
@@ -1583,12 +1142,7 @@ type UpsertProjectRemediationPolicyRow struct {
 }
 
 func (q *Queries) UpsertProjectRemediationPolicy(ctx context.Context, arg UpsertProjectRemediationPolicyParams) (UpsertProjectRemediationPolicyRow, error) {
-	row := q.db.QueryRow(ctx, upsertProjectRemediationPolicy,
-		arg.AgentLoopMode,
-		arg.ProjectID,
-		arg.AuditID,
-		arg.ActorUserID,
-	)
+	row := q.db.QueryRow(ctx, upsertProjectRemediationPolicy, arg.AgentLoopMode, arg.ProjectID)
 	var i UpsertProjectRemediationPolicyRow
 	err := row.Scan(&i.AgentLoopMode, &i.AgentLoopPolicyVersion)
 	return i, err
@@ -1615,14 +1169,7 @@ WITH changed_repository AS (
         updated_at = clock_timestamp()
     RETURNING id, remote_url, scm_provider, transport, credential_secret_id,
               production_branch, deployed_commit, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $9, $2, $10,
-           'project.configuration.updated', 'project', $2,
-           'Project repository configuration updated.',
-           jsonb_build_object('scmProvider', changed_repository.scm_provider, 'remoteUrl', changed_repository.remote_url)
-    FROM changed_repository
- )
+)
 SELECT id, remote_url, scm_provider, transport, credential_secret_id,
        production_branch, deployed_commit, version
 FROM changed_repository
@@ -1637,8 +1184,6 @@ type UpsertProjectRepositoryParams struct {
 	CredentialSecretID  pgtype.UUID
 	ProductionBranch    string
 	DeployedCommit      string
-	AuditID             pgtype.UUID
-	ActorUserID         pgtype.UUID
 }
 
 type UpsertProjectRepositoryRow struct {
@@ -1662,8 +1207,6 @@ func (q *Queries) UpsertProjectRepository(ctx context.Context, arg UpsertProject
 		arg.CredentialSecretID,
 		arg.ProductionBranch,
 		arg.DeployedCommit,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectRepositoryRow
 	err := row.Scan(
@@ -1697,17 +1240,7 @@ WITH changed_source AS (
         version = project_sources.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $9, $2, $10,
-           'project.configuration.updated', 'project', $2,
-           'Project collection source configuration updated.',
-           jsonb_build_object('sourceKind', changed_source.kind)
-           || CASE WHEN changed_source.kind = 'ssh' THEN
-                  jsonb_build_object('deploymentKind', COALESCE(changed_source.config->'deployment'->>'kind', 'host'))
-              ELSE '{}'::jsonb END
-    FROM changed_source
- )
+)
 SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
 FROM changed_source
 `
@@ -1721,8 +1254,6 @@ type UpsertProjectSourceParams struct {
 	SourceConfig       []byte
 	SourceCapabilities []string
 	SourceEnabled      bool
-	AuditID            pgtype.UUID
-	ActorUserID        pgtype.UUID
 }
 
 type UpsertProjectSourceRow struct {
@@ -1745,8 +1276,6 @@ func (q *Queries) UpsertProjectSource(ctx context.Context, arg UpsertProjectSour
 		arg.SourceConfig,
 		arg.SourceCapabilities,
 		arg.SourceEnabled,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectSourceRow
 	err := row.Scan(
@@ -1784,17 +1313,7 @@ WITH changed_trigger AS (
         updated_at = clock_timestamp()
     RETURNING id, kind, signing_secret_id, config, enabled, version,
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT $11, $2, $12,
-           'project.configuration.updated', 'project', $2,
-           'Project trigger configuration updated.',
-           jsonb_build_object('triggerKind', changed_trigger.kind)
-           || CASE WHEN changed_trigger.kind = 'signed_webhook' THEN
-                  jsonb_build_object('provider', COALESCE(changed_trigger.config->>'provider', 'generic'))
-              ELSE '{}'::jsonb END
-    FROM changed_trigger
- )
+)
 SELECT id, kind, signing_secret_id, config, enabled, version,
        ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 FROM changed_trigger
@@ -1811,8 +1330,6 @@ type UpsertProjectTriggerParams struct {
 	IngressTokenHash       []byte
 	IngressTokenCiphertext []byte
 	IngressTokenNonce      []byte
-	AuditID                pgtype.UUID
-	ActorUserID            pgtype.UUID
 }
 
 type UpsertProjectTriggerRow struct {
@@ -1839,8 +1356,6 @@ func (q *Queries) UpsertProjectTrigger(ctx context.Context, arg UpsertProjectTri
 		arg.IngressTokenHash,
 		arg.IngressTokenCiphertext,
 		arg.IngressTokenNonce,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpsertProjectTriggerRow
 	err := row.Scan(

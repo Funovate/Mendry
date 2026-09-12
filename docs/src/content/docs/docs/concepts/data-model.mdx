@@ -58,11 +58,10 @@ The existing incident application retains its own records and ownership model:
 
 | Record                               | Purpose                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| User and membership                  | Login identity, system role, and project-scoped authority                          |
+| Login identity                       | Single login identity with access to every project                                 |
 | Project configuration and credential | Incident connectors, encrypted secrets, repository, trigger, and provider settings |
 | Observation and Incident             | Project-owned event stream and grouped operational condition                       |
 | Remediation run and evidence         | Incident-generation-specific diagnosis, plan, provenance, and review state         |
-| Audit event                          | Administrative and lifecycle write metadata                                        |
 
 PostgreSQL remains the source of truth for these application records. Redis holds
 only disposable digest-keyed login sessions. These dependencies describe the

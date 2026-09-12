@@ -24,7 +24,6 @@ export function ProjectSwitcher() {
       setEditing(false);
     },
   });
-  const canManage = project.capabilities.manageConfiguration;
   const startEdit = () => {
     setName(project.name);
     setEditing(true);
@@ -75,6 +74,6 @@ export function ProjectSwitcher() {
       <span><strong>{project.name}</strong></span>
       <ChevronsUpDown size={16} />
     </button>
-    {canManage && <IconButton label="Edit project name" onClick={startEdit}><Pencil size={15} /></IconButton>}
+    <IconButton label="Edit project name" onClick={startEdit}><Pencil size={15} /></IconButton>
   </div>;
 }

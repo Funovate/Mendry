@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiContractError, ApiError, api } from "../src/api";
 
-const user = { id: "user-1", username: "operator", role: "operator" };
+const user = { id: "user-1", username: "operator" };
 const project = {
   id: "project-1",
   key: "payments",
   name: "Payments",
   description: "Payments project",
-  role: "operator",
-  capabilities: { read: true, writeIncidents: true, manageMembers: false, manageConfiguration: false },
   version: 1,
   createdAt: "2026-08-13T08:00:00Z",
   updatedAt: "2026-08-13T08:00:00Z",
@@ -48,7 +46,7 @@ describe("API contract boundary", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       code: "ok",
       message: "OK",
-      data: { ...user, role: "owner" },
+      data: { id: "user-1" },
       meta: { requestId: "request-1", durationMs: 1 },
     }), { status: 200 })));
     await expect(api.me()).rejects.toBeInstanceOf(ApiContractError);

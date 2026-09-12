@@ -37,12 +37,12 @@ type ListResult struct {
 
 // Repository 是事故用例需要的最小 persistence contract。
 type Repository interface {
-	Create(context.Context, domain.Incident, string, string, *RemediationRequest) (domain.Incident, error)
+	Create(context.Context, domain.Incident, *RemediationRequest) (domain.Incident, error)
 	GetByNumber(context.Context, string, int64) (domain.Incident, error)
 	GetByFingerprint(context.Context, string, string) (domain.Incident, error)
-	RecordOccurrence(context.Context, string, string, time.Time, string) (domain.Incident, error)
+	RecordOccurrence(context.Context, string, string, time.Time) (domain.Incident, error)
 	List(context.Context, string, int32) (ListResult, error)
-	UpdateStatus(context.Context, string, int64, domain.Status, int64, string, string, string, *RemediationRequest) (domain.Incident, error)
+	UpdateStatus(context.Context, string, int64, domain.Status, int64, string, *RemediationRequest) (domain.Incident, error)
 }
 
 type ProjectAccess interface {
@@ -171,12 +171,8 @@ func (s *Service) Create(ctx context.Context, principal authdomain.User, project
 	if err != nil {
 		return domain.Incident{}, err
 	}
-	auditID, err := s.newIncidentID()
-	if err != nil {
-		return domain.Incident{}, fmt.Errorf("generate incident audit ID: %w", err)
-	}
 	remediation := automaticRequest(incident)
-	created, err := s.repository.Create(ctx, incident, principal.ID, auditID, remediation)
+	created, err := s.repository.Create(ctx, incident, remediation)
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("create incident: %w", err)
 	}
@@ -216,10 +212,6 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 			return domain.Incident{}, fmt.Errorf("load project deployed commit: %w", err)
 		}
 	}
-	auditID, err := s.newIncidentID()
-	if err != nil {
-		return domain.Incident{}, fmt.Errorf("generate incident audit ID: %w", err)
-	}
 	var remediation *RemediationRequest
 	if reopened {
 		remediation = automaticRequest(domain.Incident{
@@ -227,7 +219,7 @@ func (s *Service) UpdateStatus(ctx context.Context, principal authdomain.User, p
 			DeployedCommit: commit, Priority: current.Priority, Version: current.Version + 1,
 		})
 	}
-	updated, err := s.repository.UpdateStatus(ctx, project.ID, number, status, generation, commit, principal.ID, auditID, remediation)
+	updated, err := s.repository.UpdateStatus(ctx, project.ID, number, status, generation, commit, remediation)
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("update incident status: %w", err)
 	}
@@ -284,11 +276,7 @@ func (s *Service) ingestInbound(ctx context.Context, projectID, sourceID, title,
 	if current.Status != domain.StatusOpen {
 		return current, false, nil
 	}
-	auditID, err := s.newIncidentID()
-	if err != nil {
-		return domain.Incident{}, false, fmt.Errorf("generate incident audit ID: %w", err)
-	}
-	updated, err := s.repository.RecordOccurrence(ctx, projectID, fingerprint, occurredAt.UTC(), auditID)
+	updated, err := s.repository.RecordOccurrence(ctx, projectID, fingerprint, occurredAt.UTC())
 	if err != nil {
 		return domain.Incident{}, false, fmt.Errorf("record incident occurrence: %w", err)
 	}
@@ -316,15 +304,11 @@ func (s *Service) createInbound(ctx context.Context, projectID, sourceID, title,
 	if err != nil {
 		return domain.Incident{}, err
 	}
-	auditID, err := s.newIncidentID()
-	if err != nil {
-		return domain.Incident{}, fmt.Errorf("generate incident audit ID: %w", err)
-	}
 	remediation := automaticRequest(incident)
 	if remediation != nil {
 		remediation.AnalysisOnly = analysisOnly
 	}
-	created, err := s.repository.Create(ctx, incident, "", auditID, remediation)
+	created, err := s.repository.Create(ctx, incident, remediation)
 	if err != nil {
 		return domain.Incident{}, fmt.Errorf("create incident: %w", err)
 	}

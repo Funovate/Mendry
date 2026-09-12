@@ -84,7 +84,7 @@ func (f *fakePasswords) Compare(hash string, password []byte) error {
 func TestLoginCreatesSessionAndHidesCredentialFailures(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
 	users := &fakeUsers{accounts: map[string]Account{
-		"admin": {User: domain.User{ID: "user-1", Username: "admin", Role: domain.RoleAdmin, Enabled: true}, PasswordHash: "hashed:correct-password"},
+		"admin": {User: domain.User{ID: "user-1", Username: "admin", Enabled: true}, PasswordHash: "hashed:correct-password"},
 	}}
 	sessions := &fakeSessions{sessions: make(map[string]Session)}
 	passwords := &fakePasswords{}
@@ -121,13 +121,13 @@ func TestLoginCreatesSessionAndHidesCredentialFailures(t *testing.T) {
 func TestAuthenticateRejectsMissingAndExpiredSessions(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
 	sessions := &fakeSessions{sessions: map[string]Session{
-		"active":  {User: domain.User{ID: "1", Username: "viewer", Role: domain.RoleViewer, Enabled: true}, ExpiresAt: now.Add(time.Hour)},
-		"expired": {User: domain.User{ID: "1", Username: "viewer", Role: domain.RoleViewer, Enabled: true}, ExpiresAt: now},
+		"active":  {User: domain.User{ID: "1", Username: "viewer", Enabled: true}, ExpiresAt: now.Add(time.Hour)},
+		"expired": {User: domain.User{ID: "1", Username: "viewer", Enabled: true}, ExpiresAt: now},
 	}}
 	service := newTestService(t, &fakeUsers{accounts: make(map[string]Account)}, sessions, &fakePasswords{}, now)
 
 	user, err := service.Authenticate(context.Background(), "active")
-	if err != nil || user.Role != domain.RoleViewer {
+	if err != nil || user.Username != "viewer" {
 		t.Fatalf("Authenticate(active) = %#v, %v", user, err)
 	}
 	for _, token := range []string{"", "missing", "expired"} {
@@ -143,7 +143,7 @@ func TestAuthenticateRejectsMissingAndExpiredSessions(t *testing.T) {
 func TestLoginRemovesNewSessionWhenRotationFails(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
 	users := &fakeUsers{accounts: map[string]Account{
-		"admin": {User: domain.User{ID: "user-1", Username: "admin", Role: domain.RoleAdmin, Enabled: true}, PasswordHash: "hashed:correct-password"},
+		"admin": {User: domain.User{ID: "user-1", Username: "admin", Enabled: true}, PasswordHash: "hashed:correct-password"},
 	}}
 	sessions := &fakeSessions{sessions: make(map[string]Session), deleteError: errors.New("Redis unavailable")}
 	service := newTestService(t, users, sessions, &fakePasswords{}, now)
@@ -160,7 +160,7 @@ func TestDisabledAccountStillVerifiesPassword(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
 	passwords := &fakePasswords{}
 	users := &fakeUsers{accounts: map[string]Account{
-		"disabled": {User: domain.User{ID: "user-1", Username: "disabled", Role: domain.RoleViewer, Enabled: false}, PasswordHash: "hashed:correct-password"},
+		"disabled": {User: domain.User{ID: "user-1", Username: "disabled", Enabled: false}, PasswordHash: "hashed:correct-password"},
 	}}
 	service := newTestService(t, users, &fakeSessions{sessions: make(map[string]Session)}, passwords, now)
 	if _, err := service.Login(context.Background(), "disabled", []byte("correct-password"), ""); !errors.Is(err, ErrInvalidCredentials) {
@@ -181,7 +181,7 @@ func TestBootstrapAdminIsIdempotentWithoutReplacingPassword(t *testing.T) {
 	}
 
 	user, created, err := service.BootstrapAdmin(context.Background(), "Admin", []byte("long-enough-password"))
-	if err != nil || !created || user.Role != domain.RoleAdmin {
+	if err != nil || !created || user.Username != "admin" {
 		t.Fatalf("BootstrapAdmin() = %#v, %t, %v", user, created, err)
 	}
 	firstHash := users.created.PasswordHash
@@ -195,45 +195,6 @@ func TestBootstrapAdminIsIdempotentWithoutReplacingPassword(t *testing.T) {
 
 	if _, _, err := service.BootstrapAdmin(context.Background(), "other", []byte("short")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("short password error = %v", err)
-	}
-}
-
-func TestSystemAdminCreatesViewerAccount(t *testing.T) {
-	users := &fakeUsers{accounts: make(map[string]Account)}
-	service := newTestService(t, users, &fakeSessions{sessions: make(map[string]Session)}, &fakePasswords{}, time.Now())
-	admin := domain.User{ID: "admin-1", Role: domain.RoleAdmin, Enabled: true}
-
-	created, err := service.CreateUser(context.Background(), admin, " Operator.User ", []byte("long-enough-password"))
-	if err != nil {
-		t.Fatalf("CreateUser() error = %v", err)
-	}
-	if created.Username != "operator.user" || created.Role != domain.RoleViewer || !created.Enabled {
-		t.Fatalf("CreateUser() = %#v", created)
-	}
-	if users.created == nil || users.created.PasswordHash != "hashed:long-enough-password" {
-		t.Fatalf("created account = %#v", users.created)
-	}
-
-	viewer := domain.User{ID: "viewer-1", Role: domain.RoleViewer, Enabled: true}
-	if _, err := service.CreateUser(context.Background(), viewer, "another.user", []byte("long-enough-password")); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("viewer CreateUser() error = %v", err)
-	}
-	if _, err := service.CreateUser(context.Background(), admin, "another.user", []byte("short")); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("short password error = %v", err)
-	}
-	if _, err := service.CreateUser(context.Background(), admin, "operator.user", []byte("long-enough-password")); !errors.Is(err, ErrUserConflict) {
-		t.Fatalf("duplicate user error = %v", err)
-	}
-}
-
-func TestRequireRoles(t *testing.T) {
-	viewer := domain.User{Enabled: true, Role: domain.RoleViewer}
-	operator := domain.User{Enabled: true, Role: domain.RoleOperator}
-	if err := RequireRoles(operator, domain.RoleAdmin, domain.RoleOperator); err != nil {
-		t.Fatalf("RequireRoles(operator) error = %v", err)
-	}
-	if err := RequireRoles(viewer, domain.RoleAdmin, domain.RoleOperator); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("RequireRoles(viewer) error = %v", err)
 	}
 }
 

@@ -20,8 +20,6 @@ const (
 	projectIDValue     = "019ff544-405c-7d21-9f10-cb3fc579605c"
 	environmentIDValue = "019ff544-405c-7d22-9f10-cb3fc579605c"
 	sourceIDValue      = "019ff544-405c-7d23-9f10-cb3fc579605c"
-	actorIDValue       = "019ff544-405c-7d10-8f10-cb3fc579605c"
-	auditIDValue       = "019ff544-405c-7d12-9f10-cb3fc579605c"
 )
 
 type fakeQueries struct {
@@ -69,17 +67,16 @@ func (f *fakeQueries) RecordIncidentOccurrence(_ context.Context, params inciden
 	return incidentdb.RecordIncidentOccurrenceRow{}, f.updateError
 }
 
-func TestRepositoryCreateCarriesProjectSourceActorAndAudit(t *testing.T) {
+func TestRepositoryCreateCarriesProjectAndSource(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 456000000, time.FixedZone("offset", 8*60*60))
 	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Source: "mcp"}, createRow: validCreateRow(t, now.UTC())}
 	repository := &Repository{queries: queries}
-	created, err := repository.Create(context.Background(), validDomainIncident(now), actorIDValue, auditIDValue, nil)
+	created, err := repository.Create(context.Background(), validDomainIncident(now), nil)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if created.Number != 2049 || created.ProjectID != projectIDValue || created.SourceID != sourceIDValue ||
 		queries.createParams.ProjectID != uuidValue(t, projectIDValue) || queries.createParams.SourceID != uuidValue(t, sourceIDValue) ||
-		queries.createParams.ActorUserID != uuidValue(t, actorIDValue) || queries.createParams.AuditID != uuidValue(t, auditIDValue) ||
 		queries.createParams.Source != "mcp" || queries.createParams.FirstSeen.Time.Location() != time.UTC {
 		t.Fatalf("created = %#v, params = %#v", created, queries.createParams)
 	}
@@ -93,9 +90,8 @@ func TestRepositoryScopesReadAndStatusByProject(t *testing.T) {
 		queries.getParams.ProjectID != uuidValue(t, projectIDValue) || queries.getParams.IncidentNumber != 2049 {
 		t.Fatalf("GetByNumber() params = %#v, error = %v", queries.getParams, err)
 	}
-	if _, err := repository.UpdateStatus(context.Background(), projectIDValue, 2049, domain.StatusClosed, 1, "abc123", actorIDValue, auditIDValue, nil); err != nil ||
-		queries.updateParams.ProjectID != uuidValue(t, projectIDValue) || queries.updateParams.ActorUserID != uuidValue(t, actorIDValue) ||
-		queries.updateParams.AuditID != uuidValue(t, auditIDValue) || queries.updateParams.LifecycleGeneration != 1 ||
+	if _, err := repository.UpdateStatus(context.Background(), projectIDValue, 2049, domain.StatusClosed, 1, "abc123", nil); err != nil ||
+		queries.updateParams.ProjectID != uuidValue(t, projectIDValue) || queries.updateParams.LifecycleGeneration != 1 ||
 		queries.updateParams.DeployedCommit != "abc123" {
 		t.Fatalf("UpdateStatus() params = %#v, error = %v", queries.updateParams, err)
 	}
@@ -111,19 +107,19 @@ func TestRepositoryMapsNotFoundConflictAndSafeErrors(t *testing.T) {
 	if _, err := repository.GetByNumber(context.Background(), projectIDValue, 2049); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("GetByNumber() error = %v", err)
 	}
-	if _, err := repository.UpdateStatus(context.Background(), projectIDValue, 2049, domain.StatusClosed, 1, "", actorIDValue, auditIDValue, nil); !errors.Is(err, application.ErrNotFound) {
+	if _, err := repository.UpdateStatus(context.Background(), projectIDValue, 2049, domain.StatusClosed, 1, "", nil); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("UpdateStatus() error = %v", err)
 	}
 
 	repository = &Repository{queries: &fakeQueries{scopeError: pgx.ErrNoRows}}
-	if _, err := repository.Create(context.Background(), validDomainIncident(time.Now()), actorIDValue, auditIDValue, nil); !errors.Is(err, application.ErrNotFound) {
+	if _, err := repository.Create(context.Background(), validDomainIncident(time.Now()), nil); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("cross-project source Create() error = %v", err)
 	}
 
 	postgresError := &pgconn.PgError{Code: "23505", ConstraintName: "incidents_project_fingerprint_unique_idx", Message: "sensitive database detail"}
 	queries := &fakeQueries{scope: incidentdb.GetIncidentSourceScopeRow{EnvironmentID: uuidValue(t, environmentIDValue), Source: "cloud"}, createError: postgresError}
 	repository = &Repository{queries: queries}
-	if _, err := repository.Create(context.Background(), validDomainIncident(time.Now()), actorIDValue, auditIDValue, nil); !errors.Is(err, application.ErrConflict) {
+	if _, err := repository.Create(context.Background(), validDomainIncident(time.Now()), nil); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("Create() conflict error = %v", err)
 	}
 

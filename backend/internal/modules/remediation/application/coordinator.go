@@ -1704,7 +1704,7 @@ func (c *RemediationCoordinator) recordPlans(ctx context.Context, runID string, 
 	return nil
 }
 
-// notifyTerminal 在到达 PRD 列出的四个终态后写入 in-console audit。
+// notifyTerminal 在到达 PRD 列出的四个终态后发送终态通知。
 // 通知失败会使本次 run 失败：控制台必须能看到 durable 结果，测试也保持确定性。
 func (c *RemediationCoordinator) notifyTerminal(ctx context.Context, runID string, state domain.RunState, fixability domain.FixabilityClass) error {
 	kind := NotificationKindForTerminal(state, fixability)
@@ -1724,7 +1724,7 @@ func (c *RemediationCoordinator) notifyTerminal(ctx context.Context, runID strin
 		Summary:    notificationSummary(kind),
 		Fixability: fixability,
 		State:      state,
-		// AgentLoopMode 记录到 audit metadata 白名单，不进 summary。
+		// AgentLoopMode 记录到通知 metadata 白名单，不进 summary。
 		AgentLoopMode: mode,
 	}); err != nil {
 		return fmt.Errorf("notify terminal %s: %w", kind, err)

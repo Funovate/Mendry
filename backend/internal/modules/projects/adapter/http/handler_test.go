@@ -52,15 +52,6 @@ func (f *fakeService) UpdateProjectName(_ context.Context, _ authdomain.User, pr
 	f.project = updated
 	return updated, nil
 }
-func (*fakeService) ListMembers(context.Context, authdomain.User, string) (projectapplication.ListResult[domain.Member], error) {
-	return projectapplication.ListResult[domain.Member]{Items: []domain.Member{}}, nil
-}
-func (*fakeService) UpsertMember(context.Context, authdomain.User, string, string, string) (domain.Member, error) {
-	return domain.Member{}, nil
-}
-func (*fakeService) DeleteMember(context.Context, authdomain.User, string, string) (domain.Member, error) {
-	return domain.Member{}, nil
-}
 func (f *fakeService) CreateSecret(_ context.Context, _ authdomain.User, projectKey, _, _ string, value []byte) (domain.Secret, error) {
 	f.projectKey, f.secretValue = projectKey, append([]byte(nil), value...)
 	return f.secret, nil
@@ -193,9 +184,6 @@ func (*fakeService) ProbeLLMModels(context.Context, authdomain.User, string, str
 func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error {
 	return nil
 }
-func (*fakeService) ListAuditEvents(context.Context, authdomain.User, string, int32) (projectapplication.ListResult[domain.AuditEvent], error) {
-	return projectapplication.ListResult[domain.AuditEvent]{Items: []domain.AuditEvent{}}, nil
-}
 
 type fakeAuthService struct{ user authdomain.User }
 
@@ -210,15 +198,15 @@ func (f *fakeAuthService) Authenticate(context.Context, string) (authdomain.User
 }
 func (*fakeAuthService) Logout(context.Context, string) error { return nil }
 
-func TestProjectResponseExposesServerCapabilities(t *testing.T) {
+func TestProjectResponseOmitsAuthorizationMetadata(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
-	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleOperator, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Version: 1, CreatedAt: now, UpdatedAt: now}}
 	handler := newHandler(t, service)
 	request := httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments", nil)
 	request.AddCookie(sessionCookie())
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != nethttp.StatusOK || !strings.Contains(response.Body.String(), `"writeIncidents":true`) || !strings.Contains(response.Body.String(), `"manageMembers":false`) {
+	if response.Code != nethttp.StatusOK || !strings.Contains(response.Body.String(), `"key":"payments"`) || strings.Contains(response.Body.String(), `"role"`) || strings.Contains(response.Body.String(), `"capabilities"`) {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
 }
@@ -267,7 +255,7 @@ func TestSecretCreateAndListNeverDiscloseSensitiveMaterial(t *testing.T) {
 
 func TestUpdateProjectReturnsSafeDTOAndPreservesKey(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
-	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleAdmin, Version: 1, CreatedAt: now, UpdatedAt: now}}
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Version: 1, CreatedAt: now, UpdatedAt: now}}
 	handler := newHandler(t, service)
 	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments", strings.NewReader(`{"name":"Payments Platform"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -278,14 +266,14 @@ func TestUpdateProjectReturnsSafeDTOAndPreservesKey(t *testing.T) {
 		t.Fatalf("response = %d %q, project = %#v", response.Code, response.Body.String(), service.project)
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, `"key":"payments"`) || !strings.Contains(body, `"name":"Payments Platform"`) || !strings.Contains(body, `"manageConfiguration":true`) {
+	if !strings.Contains(body, `"key":"payments"`) || !strings.Contains(body, `"name":"Payments Platform"`) || strings.Contains(body, `"capabilities"`) {
 		t.Fatalf("body = %s", body)
 	}
 }
 
 func TestUpdateProjectMapsForbiddenAndInvalidErrors(t *testing.T) {
 	now := time.Now().UTC()
-	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Role: domain.RoleAdmin, Version: 1, CreatedAt: now, UpdatedAt: now}, updateErr: projectapplication.ErrForbidden}
+	service := &fakeService{project: domain.Project{ID: "project", Key: "payments", Name: "Payments", Version: 1, CreatedAt: now, UpdatedAt: now}, updateErr: projectapplication.ErrForbidden}
 	handler := newHandler(t, service)
 	request := httptest.NewRequest(nethttp.MethodPatch, "/api/v1/projects/payments", strings.NewReader(`{"name":"Payments Platform"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -453,7 +441,7 @@ func TestConfigurationRemediationPolicyPUTIsComponentScoped(t *testing.T) {
 
 func newHandler(t *testing.T, service *fakeService) nethttp.Handler {
 	t.Helper()
-	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: &fakeAuthService{user: authdomain.User{ID: "user", Enabled: true, Role: authdomain.RoleViewer}}})
+	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: &fakeAuthService{user: authdomain.User{ID: "user", Enabled: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}

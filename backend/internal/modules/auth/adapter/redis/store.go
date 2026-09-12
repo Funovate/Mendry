@@ -34,7 +34,6 @@ type commandClient interface {
 type sessionValue struct {
 	UserID    string    `json:"userId"`
 	Username  string    `json:"username"`
-	Role      string    `json:"role"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
@@ -74,7 +73,7 @@ func (s *Store) Create(ctx context.Context, session application.Session) (string
 		return "", fmt.Errorf("session expiry must be in the future")
 	}
 	payload, err := json.Marshal(sessionValue{
-		UserID: session.User.ID, Username: session.User.Username, Role: string(session.User.Role), ExpiresAt: session.ExpiresAt.UTC(),
+		UserID: session.User.ID, Username: session.User.Username, ExpiresAt: session.ExpiresAt.UTC(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode Redis session: %w", err)
@@ -115,10 +114,9 @@ func (s *Store) Get(ctx context.Context, token string) (application.Session, err
 	if err := json.Unmarshal(payload, &value); err != nil {
 		return application.Session{}, fmt.Errorf("decode Redis session: %w", err)
 	}
-	role, err := domain.ParseRole(value.Role)
 	userID, idError := uuid.Parse(value.UserID)
 	username, usernameError := domain.NormalizeUsername(value.Username)
-	if err != nil || idError != nil || userID.Version() != 7 || usernameError != nil || username != value.Username || value.ExpiresAt.IsZero() {
+	if idError != nil || userID.Version() != 7 || usernameError != nil || username != value.Username || value.ExpiresAt.IsZero() {
 		return application.Session{}, fmt.Errorf("Redis session value is invalid")
 	}
 	if !value.ExpiresAt.After(s.now().UTC()) {
@@ -126,7 +124,7 @@ func (s *Store) Get(ctx context.Context, token string) (application.Session, err
 		return application.Session{}, application.ErrSessionNotFound
 	}
 	return application.Session{User: domain.User{
-		ID: value.UserID, Username: value.Username, Role: role, Enabled: true,
+		ID: value.UserID, Username: value.Username, Enabled: true,
 	}, ExpiresAt: value.ExpiresAt.UTC()}, nil
 }
 

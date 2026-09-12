@@ -61,7 +61,7 @@ func recoveryCheckpointSnapshot(runID string) domain.CheckpointSnapshot {
 func reviewServiceWithCheckpoints(t *testing.T, reviews application.ReviewQuery, checkpoints application.CheckpointReviewReader) *application.Service {
 	t.Helper()
 	service, err := application.NewService(application.ServiceOptions{
-		Projects: &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		Projects: &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 		Incidents: &fakeIncidentLookup{identity: application.IncidentIdentity{
 			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 1, DeployedCommit: "abc123", ContextVersion: 9,
 		}},

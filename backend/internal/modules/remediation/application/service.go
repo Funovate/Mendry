@@ -264,8 +264,7 @@ func (s *Service) GetRemediation(ctx context.Context, principal authdomain.User,
 		return Review{}, ErrNotFound
 	}
 	review := buildReview(agg)
-	review.ContinuationAvailable = project.CanWriteIncidents() &&
-		isManualContinuationState(agg.Run.State) && !aggregateHasActiveAttempt(agg)
+	review.ContinuationAvailable = isManualContinuationState(agg.Run.State) && !aggregateHasActiveAttempt(agg)
 	// D8：resilient_v1 run 且注入了 checkpoint reader 时附加最新 durable
 	// checkpoint/recovery projection。任何加载/校验错误都只跳过 projection，
 	// review 页面保持可用（legacy run 与未注入部署完全不受影响）。

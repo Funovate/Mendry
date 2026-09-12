@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ListFilter, LogOut, Menu, Settings2, ShieldCheck, Users, X } from "lucide-react";
+import { Activity, ListFilter, LogOut, Menu, Settings2, X } from "lucide-react";
 import brandLogo from "../assets/mendry-logo-horizontal.svg";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
@@ -13,8 +13,6 @@ const navItems = [
   { path: "incidents", label: "Incidents", icon: Activity },
   { path: "observations", label: "Event stream", icon: ListFilter },
   { path: "configuration", label: "Configuration", icon: Settings2 },
-  { path: "members", label: "Members", icon: Users },
-  { path: "audit", label: "Audit", icon: ShieldCheck },
 ] as const;
 
 export function AppShell() {
@@ -52,7 +50,7 @@ export function AppShell() {
         <div className="sidebar-foot">
           <div className="user-card">
             <div className="avatar">{user.username.slice(0, 1).toUpperCase()}</div>
-            <div><strong>{user.username}</strong><small>{project.role}</small></div>
+            <div><strong>{user.username}</strong></div>
           </div>
           <IconButton label="Sign out" onClick={() => void logout()}><LogOut size={18} /></IconButton>
         </div>

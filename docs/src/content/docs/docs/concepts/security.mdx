@@ -54,9 +54,9 @@ MCP environment; those details are not yet a validated release path.
 
 The existing incident service has additional application security controls:
 PostgreSQL business records, Redis login sessions, bcrypt passwords, encrypted
-project credentials, project membership, signed webhook tokens, bounded evidence
+project credentials, signed webhook tokens, bounded evidence
 adapters, and human review. Those controls are scoped to the incident application;
-accounts and memberships are not core Harness requirements.
+application login is not a core Harness requirement.
 
 Optional OpenAI-compatible incident analysis uses project configuration and
 bounded adapters. Provider content cannot become credential, URL, shell, evidence,

@@ -55,47 +55,6 @@ func (q *Queries) CreateRemediationArtifact(ctx context.Context, arg CreateRemed
 	return i, err
 }
 
-const createRemediationAuditEvent = `-- name: CreateRemediationAuditEvent :execrows
-INSERT INTO audit_events (
-    id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-)
-SELECT
-    $1,
-    incidents.project_id,
-    NULL,
-    $2,
-    'remediation_run',
-    remediation_run.id,
-    $3,
-    $4::jsonb
-FROM remediation_run
-JOIN remediation_series ON remediation_series.id = remediation_run.series_id
-JOIN incidents ON incidents.id = remediation_series.incident_id
-WHERE remediation_run.id = $5
-`
-
-type CreateRemediationAuditEventParams struct {
-	AuditID  pgtype.UUID
-	Action   string
-	Summary  string
-	Metadata []byte
-	RunID    pgtype.UUID
-}
-
-func (q *Queries) CreateRemediationAuditEvent(ctx context.Context, arg CreateRemediationAuditEventParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createRemediationAuditEvent,
-		arg.AuditID,
-		arg.Action,
-		arg.Summary,
-		arg.Metadata,
-		arg.RunID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const createRemediationCheckpointEvent = `-- name: CreateRemediationCheckpointEvent :one
 INSERT INTO remediation_checkpoint_event (
     run_id,

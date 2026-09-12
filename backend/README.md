@@ -8,8 +8,8 @@ account-free Local composition and adapters are still being validated; their
 source presence is not a supported walkthrough or release claim.
 
 The existing incident API remains a separate compatibility application.
-PostgreSQL is its source of truth for users, projects, memberships, collection
-configuration, encrypted credentials, observations, incidents, and audit events.
+PostgreSQL is its source of truth for the single login identity, projects, collection
+configuration, encrypted credentials, observations, and incidents.
 Redis stores only revocable login sessions. Its remediation coordinator uses
 selected shared model/history mechanics but still owns the incident loop,
 evidence gates, checkpoints, and lifecycle. RabbitMQ, background workers,
@@ -25,7 +25,7 @@ internal/commands/migrate/   explicit incident-service schema migration runtime
 internal/platform/           shared incident-service infrastructure: PostgreSQL, Redis, local telemetry
 internal/modules/agentcore/  neutral Harness domain/application plus adapters in staged validation
 internal/modules/auth/       local users, bcrypt passwords, Redis sessions, auth HTTP adapter
-internal/modules/projects/   project access, members, configuration, credentials, audit
+internal/modules/projects/   project lookup, configuration, credentials
 internal/modules/observations/ project-owned Event Stream
 internal/modules/incidents/  project-owned incident lifecycle
 internal/modules/system/     liveness and readiness vertical slice
@@ -227,7 +227,7 @@ legacy global incidents into a legacy project. The unreleased scaffold previousl
 used migration version `000002` for an outbox table. Recreate any local development
 database that applied that old version before running the current migrations. The
 seed creates a complete demo project/configuration and project-owned incidents but
-never creates users, memberships, passwords, or credentials.
+never creates users, passwords, or credentials.
 
 ## Authentication
 
@@ -258,15 +258,17 @@ Authentication endpoints are:
 | Method | Path | Behavior |
 |---|---|---|
 | `POST` | `/api/v1/auth/login` | Verify local credentials, rotate Session, set cookie |
-| `GET` | `/api/v1/auth/me` | Return `id`, `username`, and `role` for the current Session |
+| `GET` | `/api/v1/auth/me` | Return `id` and `username` for the current Session |
 | `POST` | `/api/v1/auth/logout` | Revoke the Session and clear the cookie |
-| `POST` | `/api/v1/users` | System admin only: create an enabled local login with system role `viewer` |
 
-System role and project role are separate. Only `users.role=admin` is a system
-administrator. Accounts created through `/api/v1/users` receive system role
-`viewer`; their project access is granted independently through membership APIs.
-This prevents creating a project operator from accidentally granting global
-administration.
+The application supports one login identity and no roles or memberships. The
+logged-in user can create and manage every project. A database unique index
+prevents bootstrap-admin from creating a second account, including concurrent
+bootstrap calls with different usernames.
+
+Migration 000020 removes membership and audit data and the user role column.
+It refuses databases with multiple users; select the account to retain before
+upgrading. Existing single-account credentials remain unchanged.
 
 All authentication responses use `Cache-Control: no-store`. Login and logout
 accept JSON objects; logout uses an empty object. A local smoke flow is:
@@ -280,27 +282,14 @@ curl -c /tmp/mendry-cookie.txt \
 curl -b /tmp/mendry-cookie.txt http://127.0.0.1:8080/api/v1/auth/me
 
 curl -b /tmp/mendry-cookie.txt \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"oncall.operator","password":"replace-with-a-different-long-password"}' \
-  http://127.0.0.1:8080/api/v1/users
-
-curl -b /tmp/mendry-cookie.txt \
   -H 'Content-Type: application/json' -d '{}' \
   http://127.0.0.1:8080/api/v1/auth/logout
 ```
 
 ## Projects, collection configuration, and Event Stream
 
-Project is the data and authorization boundary. A non-member receives the same
-`404 project_not_found` response as an unknown project, so project keys cannot be
-enumerated. Project responses contain server-derived capabilities; clients must
-not infer permissions from a local role switch.
-
-| Project role | Read project/config/events/incidents/audit | Create/update incidents | Manage members/config/credentials |
-|---|---:|---:|---:|
-| `admin` | yes | yes | yes |
-| `operator` | yes | yes | no |
-| `viewer` | yes | no | no |
+Projects scope configuration and operational data. Every authenticated user
+request can access every project; an unknown project returns 404.
 
 The current MVP stores at most one row for each configuration component per project. The editor saves environment, Git repository, source, trigger, and optional LLM provider independently; the complete configuration read is available once the required environment, repository, source, and trigger rows exist:
 
@@ -327,7 +316,7 @@ in the API process background. Authenticated `POST observations` remains the
 temporary connector/development ingestion boundary.
 
 Set `MENDRY_PUBLIC_URL` to the absolute public origin used to display
-`{publicURL}/hooks/{token}`. Project admins copy that URL from configuration;
+`{publicURL}/hooks/{token}`. The logged-in user copies that URL from configuration;
 rotate it with `POST /api/v1/projects/{projectKey}/configuration/webhook-token`.
 
 Main project routes are:
@@ -335,7 +324,6 @@ Main project routes are:
 ```text
 GET|POST /api/v1/projects
 GET      /api/v1/projects/{projectKey}
-GET|PUT|DELETE /api/v1/projects/{projectKey}/members[/{username}]
 GET|POST /api/v1/projects/{projectKey}/secrets
 GET      /api/v1/projects/{projectKey}/configuration
 GET      /api/v1/projects/{projectKey}/configuration/draft
@@ -346,12 +334,10 @@ GET|POST /api/v1/projects/{projectKey}/observations
 GET|POST /api/v1/projects/{projectKey}/incidents
 GET      /api/v1/projects/{projectKey}/incidents/{incidentId}
 PATCH    /api/v1/projects/{projectKey}/incidents/{incidentId}/status
-GET      /api/v1/projects/{projectKey}/audit-events
 POST     /hooks/{token}
 ```
 
-After logging in as the system administrator, create a project and grant the
-previously created account an operator membership:
+After logging in, create a project:
 
 ```bash
 curl -b /tmp/mendry-cookie.txt \
@@ -359,9 +345,6 @@ curl -b /tmp/mendry-cookie.txt \
   -d '{"key":"checkout-api","name":"Checkout API","description":"Production checkout service"}' \
   http://127.0.0.1:8080/api/v1/projects
 
-curl -X PUT -b /tmp/mendry-cookie.txt \
-  -H 'Content-Type: application/json' -d '{"role":"operator"}' \
-  http://127.0.0.1:8080/api/v1/projects/checkout-api/members/oncall.operator
 ```
 
 Persist each configuration component independently. For example, saving a signed webhook does not require an LLM model:
@@ -390,7 +373,6 @@ Read the saved setup and project-owned operational data with:
 curl -b /tmp/mendry-cookie.txt http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration
 curl -b /tmp/mendry-cookie.txt http://127.0.0.1:8080/api/v1/projects/checkout-api/observations
 curl -b /tmp/mendry-cookie.txt http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents
-curl -b /tmp/mendry-cookie.txt http://127.0.0.1:8080/api/v1/projects/checkout-api/audit-events
 ```
 
 The old global `/api/v1/incidents` routes are intentionally absent.

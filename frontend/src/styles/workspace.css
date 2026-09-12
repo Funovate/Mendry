@@ -1,8 +1,8 @@
 /* Workspace presentation: quiet surfaces, clear hierarchy, useful information. */
 .app-shell,
 .project-directory {
-  --color-canvas: #faf9f5;
-  --color-surface: #fffefa;
+  --color-canvas: #ffffff;
+  --color-surface: #ffffff;
   --color-surface-muted: #f3f0e7;
   --color-border: #dedfd5;
   --color-border-soft: #e9e8df;
@@ -24,7 +24,7 @@
 .app-shell { --topbar-height: 0px; }
 .app-shell .sidebar {
   padding: 32px 18px 24px;
-  background: var(--color-surface-muted);
+  background: var(--color-surface);
   border-color: var(--color-border-soft);
 }
 .app-shell .brand { padding: 4px 10px 38px; }

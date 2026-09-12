@@ -46,12 +46,12 @@ type ReviewQuery interface {
 	GetLatestForIncident(ctx context.Context, incidentID string, generation int64, deployedCommit string) (domain.RunAggregate, error)
 }
 
-// NotificationSink 把终态通知写成 durable audit_events，供既有 Audit 页读取。
+// NotificationSink receives bounded terminal remediation notifications.
 type NotificationSink interface {
 	Notify(ctx context.Context, n TerminalNotification) error
 }
 
-// TerminalNotification 是系统 actor 写入 audit_events 的有界载荷。
+// TerminalNotification 是终态 remediation 的有界通知载荷。
 // Metadata 只允许 runId/state/fixability/kind/agentLoopMode，禁止 prompt、
 // diff、凭据和原始日志。AgentLoopMode 记录 run 快照的 D9 政策模式。
 type TerminalNotification struct {
@@ -61,8 +61,7 @@ type TerminalNotification struct {
 	Summary    string
 	Fixability domain.FixabilityClass
 	State      domain.RunState
-	// AgentLoopMode 是 run 创建时快照的项目 remediation 政策模式；只写
-	// audit_events.metadata 白名单键，不进正文。
+	// AgentLoopMode 是 run 创建时快照的项目 remediation 政策模式。
 	AgentLoopMode domain.AgentLoopMode
 }
 
@@ -546,7 +545,7 @@ func sanitizeSuggestedDiff(value string) string {
 	return redactConversationText(redactSensitiveValues(value))
 }
 
-// NotificationMetadata 是写入 audit_events.metadata 的白名单投影。
+// NotificationMetadata 返回终态通知的白名单投影。
 // 只允许 runId/state/fixability/kind/agentLoopMode，禁止 prompt、diff、凭据
 // 和原始日志。agentLoopMode 空值（旧路径）时省略，保持既有审计行不变。
 func NotificationMetadata(n TerminalNotification) map[string]string {

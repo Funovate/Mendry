@@ -22,7 +22,7 @@ export function ConfigurationPage() {
     return <section className="settings-view">
       <div className="view-header">
         <div><h1>Configuration</h1></div>
-        {project.capabilities.manageConfiguration && <button className="primary-button" type="button" onClick={edit}><Plus size={16} />Configure project</button>}
+        <button className="primary-button" type="button" onClick={edit}><Plus size={16} />Configure project</button>
       </div>
       <section className="empty-projects compact"><Settings2 size={24} /><h2>Configuration required</h2><p>Events and incidents need an environment, Git baseline, collection source, and trigger.</p></section>
     </section>;
@@ -32,7 +32,7 @@ export function ConfigurationPage() {
   return <section className="settings-view">
     <div className="view-header">
       <div><h1>Configuration</h1></div>
-      {project.capabilities.manageConfiguration ? <button className="primary-button" type="button" onClick={edit}><Settings2 size={16} />Edit configuration</button> : <span className="readonly-note">{project.role} access</span>}
+      <button className="primary-button" type="button" onClick={edit}><Settings2 size={16} />Edit configuration</button>
     </div>
     <div className="setup-summary">
       <div><GitBranch size={17} /><span><strong>Production baseline</strong><small>{value.repository.productionBranch}@{value.repository.deployedCommit}</small></span></div>

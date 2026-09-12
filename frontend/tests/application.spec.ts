@@ -1,23 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
-type MockRole = "admin" | "operator" | "viewer";
-
 const now = "2026-08-13T08:00:00Z";
 
-function project(role: MockRole, overrides: Partial<{ id: string; key: string; name: string; description: string }> = {}) {
+function project(overrides: Partial<{ id: string; key: string; name: string; description: string }> = {}) {
   return {
     id: "0198-project",
     key: "real-estate",
     name: "Real Estate API",
     description: "Production property service",
     ...overrides,
-    role,
-    capabilities: {
-      read: true,
-      writeIncidents: role !== "viewer",
-      manageMembers: role === "admin",
-      manageConfiguration: role === "admin",
-    },
     version: 1,
     createdAt: now,
     updatedAt: now,
@@ -111,11 +102,9 @@ type RemediationMode = "ready" | "retryable" | "missing" | "started" | "conflict
 
 type MockOptions = {
   authenticated?: boolean;
-  role?: MockRole;
-  systemRole?: "admin" | "viewer";
   projects?: ReturnType<typeof project>[];
   configured?: boolean;
-  failResource?: "audit" | "observations";
+  failResource?: "observations";
   expireResource?: "observations";
   environmentName?: string;
   awsTrigger?: boolean;
@@ -124,17 +113,10 @@ type MockOptions = {
 
 async function mockApi(page: Page, options: MockOptions = {}) {
   let authenticated = options.authenticated ?? true;
-  const activeRole = options.role ?? "admin";
-  const systemRole = options.systemRole ?? (activeRole === "admin" ? "admin" : "viewer");
-  let projects = options.projects ?? [project(activeRole)];
+  let projects = options.projects ?? [project()];
   let currentConfiguration = options.configured === false ? null : configuration({ environmentName: options.environmentName, awsTrigger: options.awsTrigger });
   let remediationMode = options.remediationMode ?? "ready";
   let incidents = [incident()];
-  let members = [
-    { userId: "user-admin", username: "admin", role: "admin", version: 1, createdAt: now, updatedAt: now },
-    { userId: "user-operator", username: "operator", role: "operator", version: 1, createdAt: now, updatedAt: now },
-    { userId: "user-viewer", username: "viewer", role: "viewer", version: 1, createdAt: now, updatedAt: now },
-  ];
   let secrets = [
     { id: "secret-git", name: "git-http-prod", kind: "git_credential", keyVersion: 1, version: 1, createdAt: now, updatedAt: now },
     { id: "secret-source", name: "source-bearer-prod", kind: "http_bearer", keyVersion: 1, version: 1, createdAt: now, updatedAt: now },
@@ -248,12 +230,12 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     });
 
     if (path === "/api/v1/auth/me" && method === "GET") {
-      return authenticated ? json({ id: "current-user", username: activeRole, role: systemRole }) : error(401, "unauthenticated", "Authentication is required.");
+      return authenticated ? json({ id: "current-user", username: "admin" }) : error(401, "unauthenticated", "Authentication is required.");
     }
     if (path === "/api/v1/auth/login" && method === "POST") {
       authenticated = true;
       writes.push({ method, path, body });
-      return json({ id: "current-user", username: activeRole, role: systemRole });
+      return json({ id: "current-user", username: "admin" });
     }
     if (path === "/api/v1/auth/logout" && method === "POST") {
       authenticated = false;
@@ -264,7 +246,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     if (path === "/api/v1/projects" && method === "GET") return json(projects);
     if (path === "/api/v1/projects" && method === "POST") {
       const input = body as { key: string; name: string; description: string };
-      const created = { ...project("admin"), id: "new-project", ...input };
+      const created = { ...project(), id: "new-project", ...input };
       projects = [...projects, created];
       writes.push({ method, path, body });
       return json(created, 201);
@@ -401,24 +383,6 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       writes.push({ method, path, body });
       return json(incidents[0]);
     }
-    if (path === "/api/v1/projects/real-estate/audit-events" && method === "GET") {
-      if (options.failResource === "audit") return error(503, "audit_unavailable", "Audit history is unavailable.");
-      return json([{ id: "audit-id", actorUserId: "user-admin", action: "configuration.updated", targetType: "project", targetId: "0198-project", summary: "Project configuration updated.", metadata: {}, occurredAt: now }]);
-    }
-    if (path === "/api/v1/projects/real-estate/members" && method === "GET") return json(members);
-    if (path.startsWith("/api/v1/projects/real-estate/members/") && method === "PUT") {
-      const username = decodeURIComponent(path.split("/").at(-1) ?? "");
-      const member = { userId: `user-${username}`, username, role: (body as { role: MockRole }).role, version: 1, createdAt: now, updatedAt: now };
-      members = [...members.filter((item) => item.username !== username), member];
-      writes.push({ method, path, body });
-      return json(member);
-    }
-    if (path.startsWith("/api/v1/projects/real-estate/members/") && method === "DELETE") {
-      const username = decodeURIComponent(path.split("/").at(-1) ?? "");
-      members = members.filter((item) => item.username !== username);
-      writes.push({ method, path, body });
-      return route.fulfill({ status: 204 });
-    }
     if (path === "/api/v1/projects/real-estate/secrets" && method === "GET") return json(secrets);
     if (path === "/api/v1/projects/real-estate/secrets" && method === "POST") {
       const input = body as { name: string; kind: string; value: string };
@@ -472,7 +436,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
 }
 
 test("requires a server session and logs in through the real auth route", async ({ page }) => {
-  const state = await mockApi(page, { authenticated: false, role: "operator", systemRole: "viewer" });
+  const state = await mockApi(page, { authenticated: false });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.getByLabel("Username").fill("operator");
@@ -482,8 +446,8 @@ test("requires a server session and logs in through the real auth route", async 
   expect(state.writes).toContainEqual({ method: "POST", path: "/api/v1/auth/login", body: { username: "operator", password: "correct-password" } });
 });
 
-test("loads project-owned configuration, events, incidents, members, and audit records", async ({ page }) => {
-  await mockApi(page, { role: "admin" });
+test("loads project-owned configuration, events, and incidents", async ({ page }) => {
+  await mockApi(page);
   await page.goto("/");
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toBeVisible();
 
@@ -503,18 +467,14 @@ test("loads project-owned configuration, events, incidents, members, and audit r
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByText("https://git.example.internal/platform/real-estate-api.git", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Members", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Audit", exact: true })).toHaveCount(0);
   await expect(page.getByText("production@4f9c2b7", { exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "Members" }).click();
-  await expect(page.getByRole("row", { name: /operator operator Yes Yes No/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /viewer viewer Yes No No/ })).toBeVisible();
-
-  await page.getByRole("link", { name: "Audit" }).click();
-  await expect(page.getByText("Project configuration updated.", { exact: true })).toBeVisible();
 });
 
 test("shows diagnosis and operational context without expanding sections", async ({ page }) => {
-  await mockApi(page, { role: "admin" });
+  await mockApi(page);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
@@ -539,7 +499,7 @@ test("shows diagnosis and operational context without expanding sections", async
 });
 
 test("renders remediation diagnostics in the selected incident detail", async ({ page }) => {
-  await mockApi(page, { role: "admin" });
+  await mockApi(page);
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await expect(page.getByRole("heading", { name: "Remediation review" })).toBeVisible();
@@ -551,7 +511,7 @@ test("renders remediation diagnostics in the selected incident detail", async ({
 });
 
 test("highlights the manual fix suggestion for blocked remediation", async ({ page }) => {
-  await mockApi(page, { role: "operator", remediationMode: "blocked" });
+  await mockApi(page, { remediationMode: "blocked" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await expect(page.getByRole("heading", { name: "人工修复建议 / Manual fix suggestion", exact: true })).toBeVisible();
@@ -561,8 +521,8 @@ test("highlights the manual fix suggestion for blocked remediation", async ({ pa
   await expect(page.getByText("provider detail", { exact: true })).toBeVisible();
 });
 
-test("operator can continue a retryable remediation and see attempt two", async ({ page }) => {
-  const state = await mockApi(page, { role: "operator", remediationMode: "retryable" });
+test("the user can continue a retryable remediation and see attempt two", async ({ page }) => {
+  const state = await mockApi(page, { remediationMode: "retryable" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toBeVisible();
@@ -578,16 +538,9 @@ test("operator can continue a retryable remediation and see attempt two", async 
   });
 });
 
-test("viewer sees retry history but no continuation control", async ({ page }) => {
-  await mockApi(page, { role: "viewer", remediationMode: "retryable" });
-  await page.goto("/projects/real-estate/incidents/INC-2048");
-
-  await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toHaveCount(0);
-  await expect(page.getByText("Viewer access is read-only.", { exact: true }).first()).toBeVisible();
-});
 
 test("a stale remediation retry reports conflict without rendering a new attempt", async ({ page }) => {
-  const state = await mockApi(page, { role: "operator", remediationMode: "conflict" });
+  const state = await mockApi(page, { remediationMode: "conflict" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await page.getByRole("button", { name: "Continue analysis", exact: true }).click();
@@ -597,8 +550,8 @@ test("a stale remediation retry reports conflict without rendering a new attempt
   expect(state.writes.filter((write) => write.path.endsWith("/remediation/retry"))).toHaveLength(1);
 });
 
-test("operator can start remediation when the incident has no series", async ({ page }) => {
-  const state = await mockApi(page, { role: "operator", remediationMode: "missing" });
+test("the user can start remediation when the incident has no series", async ({ page }) => {
+  const state = await mockApi(page, { remediationMode: "missing" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
   await expect(page.getByRole("button", { name: "Start remediation", exact: true })).toBeVisible();
@@ -612,16 +565,16 @@ test("operator can start remediation when the incident has no series", async ({ 
 });
 
 test("distinguishes an existing project with no configuration from an empty project list", async ({ page }) => {
-  await mockApi(page, { role: "admin", configured: false });
+  await mockApi(page, { configured: false });
   await page.goto("/");
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.getByRole("heading", { name: "Configuration required" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Configure project" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "No accessible projects" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "No projects" })).toHaveCount(0);
 });
 
-test("administrator persists credentials, configuration, members, and incident lifecycle", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin" });
+test("persists credentials, configuration, and incident lifecycle", async ({ page }) => {
+  const state = await mockApi(page);
   await page.goto("/");
 
   await page.getByText("Validator locale fr is not registered", { exact: true }).click();
@@ -693,17 +646,11 @@ test("administrator persists credentials, configuration, members, and incident l
   await page.getByRole("button", { name: "Regenerate URL" }).click();
   await expect(page.getByLabel("Inbound webhook URL")).toHaveValue("http://127.0.0.1:8080/hooks/zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONML");
 
-  await page.getByRole("link", { name: "Members" }).click();
-  await page.getByLabel("Member username").fill("oncall");
-  await page.getByLabel("Member role").selectOption("operator");
-  await page.getByRole("button", { name: "Add or update" }).click();
-  await expect(page.getByRole("cell", { name: "oncall" })).toBeVisible();
 
   expect(state.writes).toEqual(expect.arrayContaining([
     { method: "PATCH", path: "/api/v1/projects/real-estate/incidents/INC-2048/status", body: { status: "Recovered" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-http-ci", kind: "git_credential", value: "deploy:https-token-value" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "git-ssh-ci", kind: "ssh_private_key", value: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key\n-----END OPENSSH PRIVATE KEY-----\nkey-passphrase" } },
-    { method: "PUT", path: "/api/v1/projects/real-estate/members/oncall", body: { role: "operator" } },
     { method: "POST", path: "/api/v1/projects/real-estate/repository/refs", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", transport: "https", credentialSecretId: "secret-git" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/trigger", body: { kind: "signed_webhook", signingSecretId: null, config: { schemaVersion: 2, provider: "generic", eventTypes: ["alarm"], deduplicationKey: "title" }, enabled: true } },
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/repository", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", scmProvider: "yunxiao", transport: "https", credentialSecretId: "secret-git", productionBranch: "production", deployedCommit: "abcdef0123456789abcdef0123456789abcdef01" } },
@@ -722,7 +669,7 @@ test("administrator persists credentials, configuration, members, and incident l
 });
 
 test("round-trips an existing AWS CloudWatch trigger through edit and save", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin", awsTrigger: true });
+  const state = await mockApi(page, { awsTrigger: true });
   await page.goto("/projects/real-estate/configuration/edit");
   await page.getByRole("tab", { name: "Trigger" }).click();
 
@@ -749,7 +696,7 @@ const gitImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nfile-imported-secre
 const sourceImportedPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nsource-imported-secret-key\n-----END OPENSSH PRIVATE KEY-----";
 
 test("imports an SSH PEM file on Git and source credentials and rejects non-key files", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin" });
+  const state = await mockApi(page);
   await page.goto("/projects/real-estate/configuration/edit");
 
   await page.getByRole("button", { name: "New credential" }).click();
@@ -847,8 +794,8 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
   expect(state.writes.some((write) => JSON.stringify(write.body).includes("PuTTY-User-Key-File"))).toBeFalsy();
 });
 
-test("administrator renames a project and refreshes a derived environment name", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin", environmentName: "Real Estate API" });
+test("the user renames a project and refreshes a derived environment name", async ({ page }) => {
+  const state = await mockApi(page, { environmentName: "Real Estate API" });
   await page.goto("/projects/real-estate/incidents");
   await expect(page.getByRole("button", { name: "Project Real Estate API" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit project name" })).toBeVisible();
@@ -870,8 +817,8 @@ test("administrator renames a project and refreshes a derived environment name",
   await expect(page.getByLabel("Project key")).toHaveCount(0);
 });
 
-test("administrator preserves a distinct environment name when renaming a project", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin", environmentName: "Production" });
+test("the user preserves a distinct environment name when renaming a project", async ({ page }) => {
+  const state = await mockApi(page, { environmentName: "Production" });
   await page.goto("/projects/real-estate/configuration");
   await page.getByRole("button", { name: "Edit project name" }).click();
   await page.getByRole("textbox", { name: "Project name" }).fill("Property Platform");
@@ -882,8 +829,8 @@ test("administrator preserves a distinct environment name when renaming a projec
   expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
 });
 
-test("administrator edits Git, source, and webhook credentials without disclosing secrets", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin" });
+test("the user edits Git, source, and webhook credentials without disclosing secrets", async ({ page }) => {
+  const state = await mockApi(page);
   await page.goto("/projects/real-estate/configuration/edit");
 
   await page.getByRole("button", { name: "Edit credential" }).click();
@@ -929,8 +876,8 @@ test("administrator edits Git, source, and webhook credentials without disclosin
   expect(state.writes.some((write) => JSON.stringify(write.body).includes("ciphertext"))).toBeFalsy();
 });
 
-test("administrator discovers a Docker container through the bounded source probe", async ({ page }) => {
-  const state = await mockApi(page, { role: "admin" });
+test("the user discovers a Docker container through the bounded source probe", async ({ page }) => {
+  const state = await mockApi(page);
   await page.goto("/projects/real-estate/configuration/edit");
   await page.getByRole("tab", { name: "Collection source" }).click();
   await page.getByLabel("Source type").selectOption("ssh");
@@ -961,32 +908,11 @@ test("administrator discovers a Docker container through the bounded source prob
   await expect(page.locator("body")).not.toContainText("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 });
 
-test("viewer receives the permission matrix without mutation controls", async ({ page }) => {
-  const state = await mockApi(page, { role: "viewer", systemRole: "viewer" });
-  await page.goto("/");
-  await expect(page.locator(".user-card small")).toHaveText("viewer");
-  await page.getByText("Validator locale fr is not registered", { exact: true }).click();
-  await expect(page.getByText("Viewer access is read-only.", { exact: true }).first()).toBeVisible();
-  await expect(page.getByLabel("Incident status", { exact: true })).toBeDisabled();
 
-  await page.getByRole("link", { name: "Configuration" }).click();
-  await expect(page.getByRole("button", { name: "Edit configuration" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Project identity" })).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Project name" })).toHaveCount(0);
-  await expect(page.getByLabel("Project key")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Edit project name" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Project Real Estate API" })).toBeVisible();
-  await expect(page.getByText("Inbound webhook", { exact: true })).toHaveCount(0);
-  await page.getByRole("link", { name: "Members" }).click();
-  await expect(page.getByRole("row", { name: /operator operator Yes Yes No/ })).toBeVisible();
-  await expect(page.getByLabel("Member username")).toHaveCount(0);
-  expect(state.writes).toEqual([]);
-});
-
-test("system administrator creates a project when the project list is empty", async ({ page }) => {
-  const state = await mockApi(page, { systemRole: "admin", projects: [] });
+test("the user creates a project when the project list is empty", async ({ page }) => {
+  const state = await mockApi(page, { projects: [] });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "No accessible projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No projects" })).toBeVisible();
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page).toHaveURL(/\/projects\/new$/);
   await page.reload();
@@ -999,23 +925,10 @@ test("system administrator creates a project when the project list is empty", as
   expect(state.writes).toContainEqual({ method: "POST", path: "/api/v1/projects", body: { key: "payments-api", name: "Payments API", description: "Payment processing incidents" } });
 });
 
-test("supports direct project URLs and browser history", async ({ page }) => {
-  await mockApi(page, { role: "admin" });
-  await page.goto("/projects/real-estate/audit");
-  await expect(page.getByRole("heading", { name: "Audit" })).toBeVisible();
-  await expect(page).toHaveURL(/\/projects\/real-estate\/audit$/);
-
-  await page.getByRole("link", { name: "Event stream" }).click();
-  await expect(page.getByRole("heading", { name: "Event stream" })).toBeVisible();
-  await page.getByRole("link", { name: "Configuration" }).click();
-  await expect(page.getByRole("heading", { name: "Configuration" })).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("heading", { name: "Event stream" })).toBeVisible();
-});
 
 test("keeps project data isolated while switching projects", async ({ page }) => {
-  const payments = project("operator", { id: "project-payments", key: "payments", name: "Payments API", description: "Payment processing" });
-  await mockApi(page, { role: "admin", projects: [project("admin"), payments] });
+  const payments = project({ id: "project-payments", key: "payments", name: "Payments API", description: "Payment processing" });
+  await mockApi(page, { projects: [project(), payments] });
   await page.goto("/projects/real-estate/incidents");
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toBeVisible();
 
@@ -1026,17 +939,9 @@ test("keeps project data isolated while switching projects", async ({ page }) =>
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toHaveCount(0);
 });
 
-test("isolates a feature failure and keeps other project routes usable", async ({ page }) => {
-  await mockApi(page, { role: "admin", failResource: "audit" });
-  await page.goto("/projects/real-estate/audit");
-  await expect(page.getByText("Audit history is unavailable.", { exact: true })).toBeVisible();
-
-  await page.getByRole("link", { name: "Incidents" }).click();
-  await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toBeVisible();
-});
 
 test("returns to login when a project request loses authentication", async ({ page }) => {
-  await mockApi(page, { role: "operator", systemRole: "viewer", expireResource: "observations" });
+  await mockApi(page, { expireResource: "observations" });
   await page.goto("/projects/real-estate/incidents");
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toBeVisible();
 
@@ -1050,7 +955,7 @@ test.describe("mobile", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true });
 
   test("remediation review stays ordered within the viewport", async ({ page }) => {
-    await mockApi(page, { role: "admin" });
+    await mockApi(page);
     await page.goto("/projects/real-estate/incidents/INC-2048");
 
     const diagnosis = page.getByRole("heading", { name: "Diagnosis", exact: true });
@@ -1068,11 +973,29 @@ test.describe("mobile", () => {
   });
 
   test("project navigation and event stream stay within the viewport", async ({ page }) => {
-    await mockApi(page, { role: "operator", systemRole: "viewer" });
+    await mockApi(page);
     await page.goto("/");
     await page.getByLabel("Open navigation").click();
     await page.getByRole("link", { name: "Event stream" }).click();
     await expect(page.getByRole("heading", { name: "Event stream" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   });
+});
+
+test("supports direct project URLs and browser history", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/projects/real-estate/configuration");
+  await expect(page.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Event stream" }).click();
+  await expect(page.getByRole("heading", { name: "Event stream", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
+});
+
+test("isolates a feature failure and keeps other project routes usable", async ({ page }) => {
+  await mockApi(page, { failResource: "observations" });
+  await page.goto("/projects/real-estate/observations");
+  await expect(page.getByText("The observation stream is unavailable.", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Configuration" }).click();
+  await expect(page.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
 });

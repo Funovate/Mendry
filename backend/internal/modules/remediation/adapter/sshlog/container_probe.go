@@ -21,7 +21,7 @@ const (
 	maxContainerInventoryEntries     = 100
 )
 
-// ContainerProbeOptions 构造 admin-only Docker inventory adapter；不接受模型命令。
+// ContainerProbeOptions 构造 authenticated Docker inventory adapter；不接受模型命令。
 type ContainerProbeOptions struct {
 	Secrets        SecretLoader
 	Cipher         projectapplication.Cipher

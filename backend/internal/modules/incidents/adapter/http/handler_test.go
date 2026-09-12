@@ -68,7 +68,7 @@ func (f *fakeAuthService) Authenticate(context.Context, string) (authdomain.User
 
 func (*fakeAuthService) Logout(context.Context, string) error { return nil }
 
-func TestIncidentRoutesRequireAuthenticationAndRoles(t *testing.T) {
+func TestIncidentRoutesRequireAuthentication(t *testing.T) {
 	service := &fakeIncidentService{incidents: []domain.Incident{testIncident()}}
 	authService := &fakeAuthService{}
 	handler := newHandler(t, service, authService)
@@ -79,7 +79,7 @@ func TestIncidentRoutesRequireAuthenticationAndRoles(t *testing.T) {
 		t.Fatalf("unauthenticated response = %d %q", response.Code, response.Body.String())
 	}
 
-	authService.user = authdomain.User{Enabled: true, Role: authdomain.RoleViewer}
+	authService.user = authdomain.User{Enabled: true}
 	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents", `{"title":"title"}`)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -98,7 +98,7 @@ func TestIncidentRoutesRequireAuthenticationAndRoles(t *testing.T) {
 
 func TestListReturnsEnvelopeWithTotalAndValidatesLimit(t *testing.T) {
 	service := &fakeIncidentService{incidents: []domain.Incident{testIncident()}}
-	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true, Role: authdomain.RoleViewer}})
+	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true}})
 	request := httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/incidents?limit=25", nil)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestListReturnsEnvelopeWithTotalAndValidatesLimit(t *testing.T) {
 
 func TestCreateUsesStrictJSONAndReturnsLocation(t *testing.T) {
 	service := &fakeIncidentService{incidents: []domain.Incident{testIncident()}}
-	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true, Role: authdomain.RoleOperator}})
+	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true}})
 	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents", `{"title":"Database latency","fingerprint":"pg:latency","sourceId":"019ff544-405c-7d23-9f10-cb3fc579605c","unknown":true}`)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response := httptest.NewRecorder()
@@ -154,7 +154,7 @@ func TestCreateUsesStrictJSONAndReturnsLocation(t *testing.T) {
 
 func TestGetUpdateAndApplicationErrorMapping(t *testing.T) {
 	service := &fakeIncidentService{incidents: []domain.Incident{testIncident()}}
-	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true, Role: authdomain.RoleAdmin}})
+	handler := newHandler(t, service, &fakeAuthService{user: authdomain.User{Enabled: true}})
 	request := httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/incidents/INC-2049", nil)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response := httptest.NewRecorder()

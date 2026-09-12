@@ -303,24 +303,6 @@ SELECT * FROM remediation_tool_invocation
 WHERE run_id = $1
 ORDER BY sequence ASC;
 
--- name: CreateRemediationAuditEvent :execrows
-INSERT INTO audit_events (
-    id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-)
-SELECT
-    sqlc.arg(audit_id),
-    incidents.project_id,
-    NULL,
-    sqlc.arg(action),
-    'remediation_run',
-    remediation_run.id,
-    sqlc.arg(summary),
-    sqlc.arg(metadata)::jsonb
-FROM remediation_run
-JOIN remediation_series ON remediation_series.id = remediation_run.series_id
-JOIN incidents ON incidents.id = remediation_series.incident_id
-WHERE remediation_run.id = sqlc.arg(run_id);
-
 -- name: CreateRemediationEvidence :one
 INSERT INTO remediation_evidence (
     project_id, environment_id, source_id, incident_id, run_id, observation_id,

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// 保存可登录 FixThe 的本地用户身份、credential 摘要和授权角色。
+// Single login identity; at most one account, created by bootstrap-admin.
 type User struct {
 	// 应用生成的 UUIDv7 用户内部标识，不作为登录凭据。
 	ID pgtype.UUID
@@ -16,8 +16,6 @@ type User struct {
 	Username string
 	// 密码的自适应单向 hash；属于敏感 credential，不得存储明文或写入日志。
 	PasswordHash string
-	// 授权角色，取值为 admin、operator 或 viewer。
-	Role string
 	// 账户是否允许认证；false 表示账户已停用。
 	Enabled bool
 	// 用户聚合的单调递增版本号，供更新时执行乐观并发控制。

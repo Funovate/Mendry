@@ -93,7 +93,7 @@ func TestStartRemediationRequiresAuthenticationAndReturnsRunEnvelope(t *testing.
 		t.Fatalf("unauthenticated response = %d %q", response.Code, response.Body.String())
 	}
 
-	authService.user = authdomain.User{Enabled: true, Role: authdomain.RoleViewer}
+	authService.user = authdomain.User{Enabled: true}
 	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/start", `{"generation":2}`)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response = httptest.NewRecorder()
@@ -131,7 +131,7 @@ func TestRetryRemediationRequiresAuthenticationAndReturnsNewAttempt(t *testing.T
 		t.Fatalf("unauthenticated response = %d %q", response.Code, response.Body.String())
 	}
 
-	authService.user = authdomain.User{Enabled: true, Role: authdomain.RoleOperator}
+	authService.user = authdomain.User{Enabled: true}
 	request = jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/retry", `{"generation":2,"runId":"run-1","version":4}`)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response = httptest.NewRecorder()
@@ -281,7 +281,7 @@ func TestGetRemediationRequiresAuthenticationAndReturnsSecretFreeEnvelope(t *tes
 		t.Fatalf("unauthenticated GET = %d %q", response.Code, response.Body.String())
 	}
 
-	authService.user = authdomain.User{Enabled: true, Role: authdomain.RoleViewer}
+	authService.user = authdomain.User{Enabled: true}
 	request := httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/incidents/INC-2049/remediation", nil)
 	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 	response = httptest.NewRecorder()

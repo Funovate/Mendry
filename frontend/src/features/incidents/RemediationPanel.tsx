@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, BadgeCheck, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench } from "lucide-react";
 import { api, ApiError, messageFromError, type RemediationContinuationInput } from "../../api";
-import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
 import { ErrorNotice } from "../../shared/ui";
@@ -90,7 +89,6 @@ function DiffViewer({ value }: { value: string }) {
 }
 
 export function RemediationPanel({ projectKey, incidentId, generation, fingerprint, notificationSummary }: RemediationPanelProps) {
-  const project = useCurrentProject();
   const queryClient = useQueryClient();
   const remediation = useQuery({
     queryKey: queryKeys.remediation(projectKey, incidentId),
@@ -98,7 +96,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
     retry: false,
   });
   const missing = remediation.error instanceof ApiError && remediation.error.code === "remediation_not_found";
-  const canWrite = project.capabilities.writeIncidents;
+  const canWrite = true;
 
   const startRemediation = useMutation({
     mutationFn: () => api.startRemediation(projectKey, incidentId, generation),

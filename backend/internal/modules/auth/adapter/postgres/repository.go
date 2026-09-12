@@ -46,7 +46,7 @@ func (r *Repository) Create(ctx context.Context, account application.Account) (d
 		return domain.User{}, err
 	}
 	row, err := r.queries.CreateUser(platformpostgres.WithOperation(ctx, "auth.user.create"), authdb.CreateUserParams{
-		ID: id, Username: account.User.Username, PasswordHash: account.PasswordHash, Role: string(account.User.Role),
+		ID: id, Username: account.User.Username, PasswordHash: account.PasswordHash,
 	})
 	if err != nil {
 		var postgresError *pgconn.PgError
@@ -77,12 +77,8 @@ func mapAccount(row authdb.User) (application.Account, error) {
 	if !row.ID.Valid {
 		return application.Account{}, fmt.Errorf("user row has invalid ID")
 	}
-	role, err := domain.ParseRole(row.Role)
-	if err != nil {
-		return application.Account{}, fmt.Errorf("map user role: %w", err)
-	}
 	return application.Account{User: domain.User{
-		ID: uuid.UUID(row.ID.Bytes).String(), Username: row.Username, Role: role, Enabled: row.Enabled,
+		ID: uuid.UUID(row.ID.Bytes).String(), Username: row.Username, Enabled: row.Enabled,
 	}, PasswordHash: row.PasswordHash}, nil
 }
 

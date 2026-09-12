@@ -180,8 +180,8 @@ export default defineConfig({
             },
             {
               slug: "docs/reference/roles",
-              label: "Roles",
-              translations: { "zh-CN": "角色" },
+              label: "Authentication",
+              translations: { "zh-CN": "认证" },
             },
             {
               slug: "docs/project/status",

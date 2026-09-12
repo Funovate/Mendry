@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-const systemRoleSchema = z.enum(["admin", "operator", "viewer"]);
-const projectRoleSchema = z.enum(["admin", "operator", "viewer"]);
 const sourceKindSchema = z.enum(["ssh", "cloud", "mcp"]);
 const triggerKindSchema = z.enum(["signed_webhook", "custom_rule"]);
 const incidentStatusSchema = z.enum(["Open", "Recovered", "Closed"]);
@@ -10,14 +8,6 @@ const unknownRecordSchema = z.record(z.string(), z.unknown());
 const currentUserSchema = z.object({
   id: z.string(),
   username: z.string(),
-  role: systemRoleSchema,
-});
-
-const projectCapabilitiesSchema = z.object({
-  read: z.boolean(),
-  writeIncidents: z.boolean(),
-  manageMembers: z.boolean(),
-  manageConfiguration: z.boolean(),
 });
 
 const projectSchema = z.object({
@@ -25,17 +15,6 @@ const projectSchema = z.object({
   key: z.string(),
   name: z.string(),
   description: z.string(),
-  role: projectRoleSchema,
-  capabilities: projectCapabilitiesSchema,
-  version: z.number(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-const projectMemberSchema = z.object({
-  userId: z.string(),
-  username: z.string(),
-  role: projectRoleSchema,
   version: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -186,17 +165,6 @@ const incidentSchema = z.object({
   updatedAt: z.string(),
 });
 
-const auditEventSchema = z.object({
-  id: z.string(),
-  actorUserId: z.string().nullable(),
-  action: z.string(),
-  targetType: z.string(),
-  targetId: z.string().nullable(),
-  summary: z.string(),
-  metadata: unknownRecordSchema,
-  occurredAt: z.string(),
-});
-
 const remediationDiagnosisSchema = z.object({
   fixability: z.string(),
   confidence: z.number(),
@@ -337,15 +305,11 @@ const listSuccessEnvelope = <T extends z.ZodType>(schema: T) => z.object({
   meta: listSuccessMetaSchema,
 });
 
-export type SystemRole = z.infer<typeof systemRoleSchema>;
-export type ProjectRole = z.infer<typeof projectRoleSchema>;
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 export type TriggerKind = z.infer<typeof triggerKindSchema>;
 export type IncidentStatus = z.infer<typeof incidentStatusSchema>;
 export type CurrentUser = z.infer<typeof currentUserSchema>;
-export type ProjectCapabilities = z.infer<typeof projectCapabilitiesSchema>;
 export type Project = z.infer<typeof projectSchema>;
-export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export type ProjectSecret = z.infer<typeof projectSecretSchema>;
 export type RepositoryRefs = z.infer<typeof repositoryRefsSchema>;
 export type DockerContainer = z.infer<typeof dockerContainerSchema>;
@@ -353,7 +317,6 @@ export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 export type ProjectConfigurationDraft = z.infer<typeof projectConfigurationDraftSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
-export type AuditEvent = z.infer<typeof auditEventSchema>;
 export type RemediationReview = z.infer<typeof remediationReviewSchema>;
 export type RemediationCheckpoint = z.infer<typeof remediationCheckpointSchema>;
 export type RemediationRecovery = z.infer<typeof remediationRecoverySchema>;
@@ -481,14 +444,6 @@ export const api = {
     method: "POST",
     body: JSON.stringify(input),
   }),
-  listMembers: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/members"), projectMemberSchema, { signal }),
-  upsertMember: (projectKey: string, username: string, role: ProjectRole) =>
-    requestData(projectPath(projectKey, `/members/${encodeURIComponent(username)}`), projectMemberSchema, {
-      method: "PUT",
-      body: JSON.stringify({ role }),
-    }),
-  deleteMember: (projectKey: string, username: string) =>
-    requestEmpty(projectPath(projectKey, `/members/${encodeURIComponent(username)}`), { method: "DELETE" }),
   listSecrets: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/secrets"), projectSecretSchema, { signal }),
   updateProjectName: (projectKey: string, name: string) =>
     requestData(projectPath(projectKey), projectSchema, { method: "PATCH", body: JSON.stringify({ name }) }),
@@ -535,7 +490,6 @@ export const api = {
   startRemediation,
   retryRemediation,
   continueRemediation: retryRemediation,
-  listAuditEvents: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/audit-events?limit=100"), auditEventSchema, { signal }),
 };
 
 export function messageFromError(error: unknown): string {

@@ -18,8 +18,6 @@ var (
 	ErrNotFound              = errors.New("project not found")
 	ErrForbidden             = errors.New("project operation forbidden")
 	ErrConflict              = errors.New("project resource conflict")
-	ErrMemberNotFound        = errors.New("project member user not found")
-	ErrMemberChangeRejected  = errors.New("project member change rejected")
 	ErrConfigurationNotFound = errors.New("project configuration not found")
 	ErrGitUnreachable        = errors.New("git remote is unreachable")
 	ErrLLMUnreachable        = errors.New("LLM provider is unreachable")
@@ -38,29 +36,25 @@ type ListResult[T any] struct {
 }
 
 type Repository interface {
-	CreateProject(context.Context, domain.Project, string, string) (domain.Project, error)
-	ListProjects(context.Context, string, bool, int32) (ListResult[domain.Project], error)
-	ResolveProject(context.Context, string, string, bool) (domain.Project, error)
-	ListMembers(context.Context, string) (ListResult[domain.Member], error)
-	UpsertMember(context.Context, string, string, domain.Role, string, string) (domain.Member, error)
-	DeleteMember(context.Context, string, string, string, string) (domain.Member, error)
-	UpdateProjectName(context.Context, domain.Project, string, string) (domain.Project, error)
-	CreateSecret(context.Context, domain.EncryptedSecret, string, string) (domain.Secret, error)
-	UpdateSecret(context.Context, domain.EncryptedSecret, string, string, bool) (domain.Secret, error)
+	CreateProject(context.Context, domain.Project) (domain.Project, error)
+	ListProjects(context.Context, int32) (ListResult[domain.Project], error)
+	ResolveProject(context.Context, string) (domain.Project, error)
+	UpdateProjectName(context.Context, domain.Project) (domain.Project, error)
+	CreateSecret(context.Context, domain.EncryptedSecret) (domain.Secret, error)
+	UpdateSecret(context.Context, domain.EncryptedSecret) (domain.Secret, error)
 	ListSecrets(context.Context, string) (ListResult[domain.Secret], error)
 	GetEncryptedSecret(context.Context, string, string) (domain.EncryptedSecret, error)
 	GetConfiguration(context.Context, string) (domain.Configuration, error)
 	GetConfigurationDraft(context.Context, string) (domain.ConfigurationDraft, error)
-	UpsertConfiguration(context.Context, string, domain.Configuration, string, string) (domain.Configuration, error)
-	UpsertEnvironment(context.Context, string, domain.Environment, string, string) (domain.Environment, error)
-	UpsertRepository(context.Context, string, domain.Repository, string, string) (domain.Repository, error)
-	UpsertSource(context.Context, string, string, domain.Source, string, string) (domain.Source, error)
-	UpsertTrigger(context.Context, string, string, domain.Trigger, string, string) (domain.Trigger, error)
-	UpsertLLMProvider(context.Context, string, domain.LLMProvider, string, string) (domain.LLMProvider, error)
-	UpsertRemediationPolicy(context.Context, string, domain.RemediationPolicy, string, string) (domain.RemediationPolicy, error)
+	UpsertConfiguration(context.Context, string, domain.Configuration) (domain.Configuration, error)
+	UpsertEnvironment(context.Context, string, domain.Environment) (domain.Environment, error)
+	UpsertRepository(context.Context, string, domain.Repository) (domain.Repository, error)
+	UpsertSource(context.Context, string, string, domain.Source) (domain.Source, error)
+	UpsertTrigger(context.Context, string, string, domain.Trigger) (domain.Trigger, error)
+	UpsertLLMProvider(context.Context, string, domain.LLMProvider) (domain.LLMProvider, error)
+	UpsertRemediationPolicy(context.Context, string, domain.RemediationPolicy) (domain.RemediationPolicy, error)
 	LookupWebhookToken(context.Context, []byte) (WebhookIngress, error)
-	UpdateWebhookToken(context.Context, string, []byte, []byte, []byte, string, string, bool) error
-	ListAuditEvents(context.Context, string, int32) (ListResult[domain.AuditEvent], error)
+	UpdateWebhookToken(context.Context, string, []byte, []byte, []byte) error
 }
 
 // WebhookIngress 是路径 token 验通后定位到的项目与已启用 source。
@@ -90,7 +84,7 @@ type LLMModelLister interface {
 	ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string) error
 }
 
-// ContainerProbeRequest 是 admin-only Docker inventory probe 的无命令请求。
+// ContainerProbeRequest 是 authenticated Docker inventory probe 的无命令请求。
 // credential reference 由受信 adapter 解析；它不会携带明文 SSH credential。
 type ContainerProbeRequest struct {
 	ProjectID          string
@@ -152,22 +146,22 @@ func NewService(options Options) (*Service, error) {
 }
 
 func (s *Service) CreateProject(ctx context.Context, principal authdomain.User, key, name, description string) (domain.Project, error) {
-	if principal.Role != authdomain.RoleAdmin || !principal.Enabled {
-		return domain.Project{}, ErrForbidden
+	if err := validatePrincipal(principal); err != nil {
+		return domain.Project{}, err
 	}
 	normalizedKey, err := domain.NormalizeProjectKey(key)
 	if err != nil {
 		return domain.Project{}, ErrInvalidInput
 	}
-	ids, err := s.newIDs(2)
+	id, err := s.newID()
 	if err != nil {
 		return domain.Project{}, err
 	}
-	project := domain.Project{ID: ids[0], Key: normalizedKey, Name: name, Description: description, Role: domain.RoleAdmin}
+	project := domain.Project{ID: id, Key: normalizedKey, Name: name, Description: description}
 	if err := domain.ValidateProject(project); err != nil {
 		return domain.Project{}, ErrInvalidInput
 	}
-	return s.repository.CreateProject(ctx, project, principal.ID, ids[1])
+	return s.repository.CreateProject(ctx, project)
 }
 
 func (s *Service) ListProjects(ctx context.Context, principal authdomain.User, limit int32) (ListResult[domain.Project], error) {
@@ -177,7 +171,7 @@ func (s *Service) ListProjects(ctx context.Context, principal authdomain.User, l
 	if limit < 1 || limit > MaximumListLimit {
 		return ListResult[domain.Project]{}, ErrInvalidInput
 	}
-	result, err := s.repository.ListProjects(ctx, principal.ID, principal.Role == authdomain.RoleAdmin, limit)
+	result, err := s.repository.ListProjects(ctx, limit)
 	return normalizeListResult(result, err)
 }
 
@@ -185,9 +179,9 @@ func (s *Service) GetProject(ctx context.Context, principal authdomain.User, pro
 	return s.resolve(ctx, principal, projectKey)
 }
 
-// UpdateProjectName 仅允许项目管理员改写展示名，并保持稳定 project key 不变。
+// UpdateProjectName 更新项目展示名，并保持稳定 project key 不变。
 func (s *Service) UpdateProjectName(ctx context.Context, principal authdomain.User, projectKey, name string) (domain.Project, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -195,60 +189,11 @@ func (s *Service) UpdateProjectName(ctx context.Context, principal authdomain.Us
 	if err := domain.ValidateProject(project); err != nil {
 		return domain.Project{}, ErrInvalidInput
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Project{}, err
-	}
-	return s.repository.UpdateProjectName(ctx, project, principal.ID, auditID)
-}
-
-func (s *Service) ListMembers(ctx context.Context, principal authdomain.User, projectKey string) (ListResult[domain.Member], error) {
-	project, err := s.resolve(ctx, principal, projectKey)
-	if err != nil {
-		return ListResult[domain.Member]{}, err
-	}
-	result, err := s.repository.ListMembers(ctx, project.ID)
-	return normalizeListResult(result, err)
-}
-
-func (s *Service) UpsertMember(ctx context.Context, principal authdomain.User, projectKey, username, roleValue string) (domain.Member, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
-	if err != nil {
-		return domain.Member{}, err
-	}
-	role, err := domain.ParseRole(roleValue)
-	if err != nil {
-		return domain.Member{}, ErrInvalidInput
-	}
-	normalizedUsername, err := authdomain.NormalizeUsername(username)
-	if err != nil {
-		return domain.Member{}, ErrInvalidInput
-	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Member{}, err
-	}
-	return s.repository.UpsertMember(ctx, project.ID, normalizedUsername, role, principal.ID, auditID)
-}
-
-func (s *Service) DeleteMember(ctx context.Context, principal authdomain.User, projectKey, username string) (domain.Member, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
-	if err != nil {
-		return domain.Member{}, err
-	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Member{}, err
-	}
-	normalizedUsername, err := authdomain.NormalizeUsername(username)
-	if err != nil {
-		return domain.Member{}, ErrInvalidInput
-	}
-	return s.repository.DeleteMember(ctx, project.ID, normalizedUsername, principal.ID, auditID)
+	return s.repository.UpdateProjectName(ctx, project)
 }
 
 func (s *Service) CreateSecret(ctx context.Context, principal authdomain.User, projectKey, name, kindValue string, value []byte) (domain.Secret, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Secret{}, err
 	}
@@ -256,11 +201,11 @@ func (s *Service) CreateSecret(ctx context.Context, principal authdomain.User, p
 	if err != nil {
 		return domain.Secret{}, ErrInvalidInput
 	}
-	ids, err := s.newIDs(2)
+	id, err := s.newID()
 	if err != nil {
 		return domain.Secret{}, err
 	}
-	secret := domain.Secret{ID: ids[0], ProjectID: project.ID, Name: name, Kind: kind}
+	secret := domain.Secret{ID: id, ProjectID: project.ID, Name: name, Kind: kind}
 	if err := domain.ValidateSecret(secret, value); err != nil {
 		return domain.Secret{}, ErrInvalidInput
 	}
@@ -269,12 +214,12 @@ func (s *Service) CreateSecret(ctx context.Context, principal authdomain.User, p
 		return domain.Secret{}, fmt.Errorf("encrypt project credential: %w", err)
 	}
 	secret.KeyVersion = keyVersion
-	return s.repository.CreateSecret(ctx, domain.EncryptedSecret{Secret: secret, Ciphertext: ciphertext, Nonce: nonce}, principal.ID, ids[1])
+	return s.repository.CreateSecret(ctx, domain.EncryptedSecret{Secret: secret, Ciphertext: ciphertext, Nonce: nonce})
 }
 
 // UpdateSecret 更新同一凭据的展示名；nil value 保留密文，非 nil value 按原 ID/kind 重新加密。
 func (s *Service) UpdateSecret(ctx context.Context, principal authdomain.User, projectKey, secretID, name string, value []byte) (domain.Secret, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Secret{}, err
 	}
@@ -298,11 +243,7 @@ func (s *Service) UpdateSecret(ctx context.Context, principal authdomain.User, p
 	} else if err := domain.ValidateSecretMetadata(encrypted.Secret); err != nil {
 		return domain.Secret{}, ErrInvalidInput
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Secret{}, err
-	}
-	return s.repository.UpdateSecret(ctx, encrypted, principal.ID, auditID, rotate)
+	return s.repository.UpdateSecret(ctx, encrypted)
 }
 
 func (s *Service) ListSecrets(ctx context.Context, principal authdomain.User, projectKey string) (ListResult[domain.Secret], error) {
@@ -349,7 +290,7 @@ func (s *Service) GetConfigurationDraft(ctx context.Context, principal authdomai
 
 // PutConfigurationEnvironment 独立保存项目环境配置。
 func (s *Service) PutConfigurationEnvironment(ctx context.Context, principal authdomain.User, projectKey string, environment domain.Environment) (domain.Environment, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Environment{}, err
 	}
@@ -368,16 +309,12 @@ func (s *Service) PutConfigurationEnvironment(ctx context.Context, principal aut
 			return domain.Environment{}, err
 		}
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Environment{}, err
-	}
-	return s.repository.UpsertEnvironment(ctx, project.ID, environment, principal.ID, auditID)
+	return s.repository.UpsertEnvironment(ctx, project.ID, environment)
 }
 
 // PutConfigurationRepository 独立保存 Git 仓库配置。
 func (s *Service) PutConfigurationRepository(ctx context.Context, principal authdomain.User, projectKey string, repository domain.Repository) (domain.Repository, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Repository{}, err
 	}
@@ -396,16 +333,12 @@ func (s *Service) PutConfigurationRepository(ctx context.Context, principal auth
 			return domain.Repository{}, err
 		}
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Repository{}, err
-	}
-	return s.repository.UpsertRepository(ctx, project.ID, repository, principal.ID, auditID)
+	return s.repository.UpsertRepository(ctx, project.ID, repository)
 }
 
 // PutConfigurationSource 独立保存 collection source 配置。
 func (s *Service) PutConfigurationSource(ctx context.Context, principal authdomain.User, projectKey string, source domain.Source) (domain.Source, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Source{}, err
 	}
@@ -416,7 +349,7 @@ func (s *Service) PutConfigurationSource(ctx context.Context, principal authdoma
 	if err != nil {
 		return domain.Source{}, err
 	}
-	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft, principal.ID)
+	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft)
 	if err != nil {
 		return domain.Source{}, err
 	}
@@ -428,16 +361,12 @@ func (s *Service) PutConfigurationSource(ctx context.Context, principal authdoma
 			return domain.Source{}, err
 		}
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Source{}, err
-	}
-	return s.repository.UpsertSource(ctx, project.ID, environment.ID, source, principal.ID, auditID)
+	return s.repository.UpsertSource(ctx, project.ID, environment.ID, source)
 }
 
 // PutConfigurationTrigger 独立保存 trigger 配置，并在首次保存 signed_webhook 时签发 token。
 func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdomain.User, projectKey string, trigger domain.Trigger) (domain.Trigger, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Trigger{}, err
 	}
@@ -448,7 +377,7 @@ func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdom
 	if err != nil {
 		return domain.Trigger{}, err
 	}
-	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft, principal.ID)
+	environment, err := s.ensureConfigurationEnvironment(ctx, project, draft)
 	if err != nil {
 		return domain.Trigger{}, err
 	}
@@ -466,11 +395,7 @@ func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdom
 	if err := s.applyWebhookToken(project.ID, &configuration, current); err != nil {
 		return domain.Trigger{}, err
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.Trigger{}, err
-	}
-	saved, err := s.repository.UpsertTrigger(ctx, project.ID, environment.ID, configuration.Trigger, principal.ID, auditID)
+	saved, err := s.repository.UpsertTrigger(ctx, project.ID, environment.ID, configuration.Trigger)
 	if err != nil {
 		return domain.Trigger{}, err
 	}
@@ -482,7 +407,7 @@ func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdom
 
 // PutConfigurationLLMProvider 独立保存 LLM provider 配置。
 func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal authdomain.User, projectKey string, provider domain.LLMProvider) (domain.LLMProvider, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.LLMProvider{}, err
 	}
@@ -501,47 +426,39 @@ func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal aut
 			return domain.LLMProvider{}, err
 		}
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.LLMProvider{}, err
-	}
-	return s.repository.UpsertLLMProvider(ctx, project.ID, provider, principal.ID, auditID)
+	return s.repository.UpsertLLMProvider(ctx, project.ID, provider)
 }
 
 // PutConfigurationRemediationPolicy is the authorized project-policy source
 // used by root remediation run creation. Existing runs are immutable snapshots.
 func (s *Service) PutConfigurationRemediationPolicy(ctx context.Context, principal authdomain.User, projectKey string, policy domain.RemediationPolicy) (domain.RemediationPolicy, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.RemediationPolicy{}, err
 	}
 	if err := domain.ValidateRemediationPolicy(policy); err != nil {
 		return domain.RemediationPolicy{}, ErrInvalidInput
 	}
-	auditID, err := s.newID()
-	if err != nil {
-		return domain.RemediationPolicy{}, err
-	}
-	return s.repository.UpsertRemediationPolicy(ctx, project.ID, policy, principal.ID, auditID)
+	return s.repository.UpsertRemediationPolicy(ctx, project.ID, policy)
 }
 
-func (s *Service) ensureConfigurationEnvironment(ctx context.Context, project domain.Project, draft domain.ConfigurationDraft, actorUserID string) (domain.Environment, error) {
+func (s *Service) ensureConfigurationEnvironment(ctx context.Context, project domain.Project, draft domain.ConfigurationDraft) (domain.Environment, error) {
 	if draft.Environment != nil {
 		return *draft.Environment, nil
 	}
-	ids, err := s.newIDs(2)
+	id, err := s.newID()
 	if err != nil {
 		return domain.Environment{}, err
 	}
-	environment := domain.Environment{ID: ids[0], Key: project.Key, Name: project.Name}
+	environment := domain.Environment{ID: id, Key: project.Key, Name: project.Name}
 	if err := domain.ValidateEnvironment(environment); err != nil {
 		return domain.Environment{}, ErrInvalidInput
 	}
-	return s.repository.UpsertEnvironment(ctx, project.ID, environment, actorUserID, ids[1])
+	return s.repository.UpsertEnvironment(ctx, project.ID, environment)
 }
 
 func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.User, projectKey string, configuration domain.Configuration) (domain.Configuration, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Configuration{}, err
 	}
@@ -555,7 +472,7 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 	if err != nil && !errors.Is(err, ErrConfigurationNotFound) {
 		return domain.Configuration{}, err
 	}
-	ids, err := s.newIDs(6)
+	ids, err := s.newIDs(5)
 	if err != nil {
 		return domain.Configuration{}, err
 	}
@@ -570,7 +487,7 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 	if err := s.applyWebhookToken(project.ID, &configuration, current.Trigger); err != nil {
 		return domain.Configuration{}, err
 	}
-	saved, err := s.repository.UpsertConfiguration(ctx, project.ID, configuration, principal.ID, ids[5])
+	saved, err := s.repository.UpsertConfiguration(ctx, project.ID, configuration)
 	if err != nil {
 		return domain.Configuration{}, err
 	}
@@ -582,7 +499,7 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 
 // RotateWebhookToken 在 signed_webhook 上创建或轮换入站 token，并返回完整公开地址。
 func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.User, projectKey string) (string, error) {
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return "", err
 	}
@@ -594,17 +511,12 @@ func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.U
 	if configuration.Trigger.Kind != "signed_webhook" {
 		return "", ErrInvalidInput
 	}
-	rotated := len(configuration.Trigger.IngressTokenHash) > 0
 	plaintext, hash, ciphertext, nonce, err := s.issueWebhookToken(project.ID, configuration.Trigger.ID)
 	if err != nil {
 		return "", err
 	}
 	defer clearBytes(plaintext)
-	auditID, err := s.newID()
-	if err != nil {
-		return "", err
-	}
-	if err := s.repository.UpdateWebhookToken(ctx, project.ID, hash, ciphertext, nonce, principal.ID, auditID, rotated); err != nil {
+	if err := s.repository.UpdateWebhookToken(ctx, project.ID, hash, ciphertext, nonce); err != nil {
 		return "", err
 	}
 	return domain.InboundWebhookURL(s.publicURL, string(plaintext))
@@ -621,31 +533,12 @@ func (s *Service) LookupWebhookToken(ctx context.Context, token string) (Webhook
 	return s.repository.LookupWebhookToken(ctx, sum[:])
 }
 
-func (s *Service) ListAuditEvents(ctx context.Context, principal authdomain.User, projectKey string, limit int32) (ListResult[domain.AuditEvent], error) {
-	project, err := s.resolve(ctx, principal, projectKey)
-	if err != nil {
-		return ListResult[domain.AuditEvent]{}, err
-	}
-	if limit < 1 || limit > MaximumListLimit {
-		return ListResult[domain.AuditEvent]{}, ErrInvalidInput
-	}
-	result, err := s.repository.ListAuditEvents(ctx, project.ID, limit)
-	return normalizeListResult(result, err)
-}
-
 func (s *Service) ResolveAccess(ctx context.Context, principal authdomain.User, projectKey string) (domain.Project, error) {
 	return s.resolve(ctx, principal, projectKey)
 }
 
 func (s *Service) RequireIncidentWrite(ctx context.Context, principal authdomain.User, projectKey string) (domain.Project, error) {
-	project, err := s.resolve(ctx, principal, projectKey)
-	if err != nil {
-		return domain.Project{}, err
-	}
-	if !project.CanWriteIncidents() {
-		return domain.Project{}, ErrForbidden
-	}
-	return project, nil
+	return s.resolve(ctx, principal, projectKey)
 }
 
 func (s *Service) resolve(ctx context.Context, principal authdomain.User, projectKey string) (domain.Project, error) {
@@ -656,14 +549,14 @@ func (s *Service) resolve(ctx context.Context, principal authdomain.User, projec
 	if err != nil {
 		return domain.Project{}, ErrNotFound
 	}
-	return s.repository.ResolveProject(ctx, normalizedKey, principal.ID, principal.Role == authdomain.RoleAdmin)
+	return s.repository.ResolveProject(ctx, normalizedKey)
 }
 
 func (s *Service) ProbeRepositoryRefs(ctx context.Context, principal authdomain.User, projectKey, remoteURL, transport, secretID string) (RepositoryRefs, error) {
 	if s.git == nil {
 		return RepositoryRefs{}, fmt.Errorf("git ref lister is required")
 	}
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return RepositoryRefs{}, err
 	}
@@ -692,7 +585,7 @@ func (s *Service) ProbeSSHContainers(ctx context.Context, principal authdomain.U
 	if s.containers == nil {
 		return nil, ErrDockerUnavailable
 	}
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return nil, err
 	}
@@ -723,7 +616,7 @@ func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User,
 	if s.llm == nil {
 		return LLMModels{}, fmt.Errorf("LLM model lister is required")
 	}
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return LLMModels{}, err
 	}
@@ -753,7 +646,7 @@ func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, p
 	if s.llm == nil {
 		return fmt.Errorf("LLM model lister is required")
 	}
-	project, err := s.requireAdmin(ctx, principal, projectKey)
+	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return err
 	}
@@ -842,7 +735,7 @@ func (s *Service) attachInboundURL(project domain.Project, configuration *domain
 
 func (s *Service) attachInboundURLToTrigger(project domain.Project, trigger *domain.Trigger) error {
 	trigger.InboundURL = ""
-	if !project.CanAdminister() || trigger.Kind != "signed_webhook" {
+	if trigger.Kind != "signed_webhook" {
 		return nil
 	}
 	if len(trigger.IngressTokenCiphertext) == 0 || len(trigger.IngressTokenNonce) == 0 {
@@ -865,15 +758,8 @@ func (s *Service) attachInboundURLToTrigger(project domain.Project, trigger *dom
 	return nil
 }
 
-func (s *Service) requireAdmin(ctx context.Context, principal authdomain.User, projectKey string) (domain.Project, error) {
-	project, err := s.resolve(ctx, principal, projectKey)
-	if err != nil {
-		return domain.Project{}, err
-	}
-	if !project.CanAdminister() {
-		return domain.Project{}, ErrForbidden
-	}
-	return project, nil
+func (s *Service) resolveProject(ctx context.Context, principal authdomain.User, projectKey string) (domain.Project, error) {
+	return s.resolve(ctx, principal, projectKey)
 }
 
 func (s *Service) newID() (string, error) {

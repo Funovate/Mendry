@@ -15,7 +15,7 @@ describe("project-scoped query state", () => {
     client.setQueryData(queryKeys.incidents("payments"), [{ id: "incident-1" }]);
 
     await expect(client.fetchQuery({
-      queryKey: queryKeys.members("payments"),
+      queryKey: queryKeys.configuration("payments"),
       queryFn: () => Promise.reject(new ApiError(401, "unauthenticated", "Authentication is required.")),
     })).rejects.toBeInstanceOf(ApiError);
 

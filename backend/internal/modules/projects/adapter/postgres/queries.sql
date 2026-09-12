@@ -1,42 +1,19 @@
 -- name: CreateProject :one
-WITH created_project AS (
-    INSERT INTO projects (id, project_key, name, description)
-    VALUES (sqlc.arg(project_id), sqlc.arg(project_key), sqlc.arg(name), sqlc.arg(description))
-    RETURNING id, project_key, name, description, version, created_at, updated_at
-), created_membership AS (
-    INSERT INTO project_memberships (project_id, user_id, role)
-    SELECT id, sqlc.arg(actor_user_id), 'admin'
-    FROM created_project
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), id, sqlc.arg(actor_user_id), 'project.created', 'project', id,
-           'Project created.', jsonb_build_object('projectKey', project_key)
-    FROM created_project
-)
-SELECT id, project_key, name, description, 'admin'::text AS role, version, created_at, updated_at
-FROM created_project;
+INSERT INTO projects (id, project_key, name, description)
+VALUES (sqlc.arg(project_id), sqlc.arg(project_key), sqlc.arg(name), sqlc.arg(description))
+RETURNING id, project_key, name, description, version, created_at, updated_at;
 
--- name: ListProjectsForUser :many
-SELECT p.id, p.project_key, p.name, p.description,
-       COALESCE(CASE WHEN sqlc.arg(system_admin)::boolean THEN 'admin'::text ELSE pm.role END, 'admin')::text AS role,
-       p.version, p.created_at, p.updated_at,
+-- name: ListProjects :many
+SELECT id, project_key, name, description, version, created_at, updated_at,
        COUNT(*) OVER() AS total_count
-FROM projects AS p
-LEFT JOIN project_memberships AS pm
-    ON pm.project_id = p.id AND pm.user_id = sqlc.arg(user_id)
-WHERE sqlc.arg(system_admin)::boolean OR pm.user_id IS NOT NULL
-ORDER BY p.name, p.project_key
+FROM projects
+ORDER BY name, project_key
 LIMIT sqlc.arg(result_limit);
 
--- name: GetProjectAccess :one
-SELECT p.id, p.project_key, p.name, p.description,
-       COALESCE(CASE WHEN sqlc.arg(system_admin)::boolean THEN 'admin'::text ELSE pm.role END, 'admin')::text AS role,
-       p.version, p.created_at, p.updated_at
-FROM projects AS p
-LEFT JOIN project_memberships AS pm
-    ON pm.project_id = p.id AND pm.user_id = sqlc.arg(user_id)
-WHERE p.project_key = sqlc.arg(project_key)
-  AND (sqlc.arg(system_admin)::boolean OR pm.user_id IS NOT NULL);
+-- name: GetProject :one
+SELECT id, project_key, name, description, version, created_at, updated_at
+FROM projects
+WHERE project_key = sqlc.arg(project_key);
 
 -- name: UpdateProjectName :one
 WITH existing_project AS (
@@ -58,107 +35,9 @@ WITH existing_project AS (
     FROM existing_project
     WHERE project_environments.project_id = existing_project.id
       AND project_environments.name = existing_project.name
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), changed_project.id, sqlc.arg(actor_user_id),
-           'project.renamed', 'project', changed_project.id,
-           'Project renamed.', jsonb_build_object('projectKey', changed_project.project_key)
-    FROM changed_project
 )
-SELECT changed_project.id, changed_project.project_key, changed_project.name, changed_project.description,
-       sqlc.arg(role)::text AS role, changed_project.version, changed_project.created_at, changed_project.updated_at
+SELECT id, project_key, name, description, version, created_at, updated_at
 FROM changed_project;
-
--- name: ListProjectMembers :many
-SELECT u.id AS user_id, u.username, pm.role, pm.version, pm.created_at, pm.updated_at,
-       COUNT(*) OVER() AS total_count
-FROM project_memberships AS pm
-JOIN users AS u ON u.id = pm.user_id
-WHERE pm.project_id = sqlc.arg(project_id)
-ORDER BY u.username;
-
--- name: GetEnabledProjectUser :one
-SELECT id, username
-FROM users
-WHERE username = sqlc.arg(username) AND enabled;
-
--- name: GetProjectMemberByUsername :one
-SELECT u.id AS user_id, u.username, pm.role, pm.version, pm.created_at, pm.updated_at
-FROM project_memberships AS pm
-JOIN users AS u ON u.id = pm.user_id
-WHERE pm.project_id = sqlc.arg(project_id)
-  AND u.username = sqlc.arg(username);
-
--- name: UpsertProjectMember :one
-WITH target_user AS (
-    SELECT id, username
-    FROM users
-    WHERE username = sqlc.arg(username) AND enabled
-), changed_membership AS (
-    INSERT INTO project_memberships (project_id, user_id, role)
-    SELECT sqlc.arg(project_id), id, sqlc.arg(role)
-    FROM target_user
-    ON CONFLICT (project_id, user_id) DO UPDATE
-    SET role = EXCLUDED.role,
-        version = project_memberships.version + 1,
-        updated_at = clock_timestamp()
-    WHERE project_memberships.role <> 'admin'
-       OR EXCLUDED.role = 'admin'
-       OR EXISTS (
-           SELECT 1
-           FROM project_memberships AS another_admin
-           WHERE another_admin.project_id = project_memberships.project_id
-             AND another_admin.role = 'admin'
-             AND another_admin.user_id <> project_memberships.user_id
-       )
-    RETURNING user_id, role, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.member.updated', 'project_membership', changed_membership.user_id,
-           'Project member updated.',
-           jsonb_build_object('username', target_user.username, 'role', changed_membership.role)
-    FROM changed_membership
-    JOIN target_user ON target_user.id = changed_membership.user_id
-)
-SELECT changed_membership.user_id, target_user.username, changed_membership.role,
-       changed_membership.version, changed_membership.created_at, changed_membership.updated_at
-FROM changed_membership
-JOIN target_user ON target_user.id = changed_membership.user_id;
-
--- name: DeleteProjectMember :one
-WITH target_membership AS (
-    SELECT pm.user_id, u.username, pm.role
-    FROM project_memberships AS pm
-    JOIN users AS u ON u.id = pm.user_id
-    WHERE pm.project_id = sqlc.arg(project_id)
-      AND u.username = sqlc.arg(username)
-      AND (
-          pm.role <> 'admin'
-          OR EXISTS (
-              SELECT 1
-              FROM project_memberships AS another_admin
-              WHERE another_admin.project_id = pm.project_id
-                AND another_admin.role = 'admin'
-                AND another_admin.user_id <> pm.user_id
-          )
-      )
-), deleted_membership AS (
-    DELETE FROM project_memberships
-    WHERE project_id = sqlc.arg(project_id)
-      AND user_id = (SELECT user_id FROM target_membership)
-    RETURNING user_id
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.member.removed', 'project_membership', deleted_membership.user_id,
-           'Project member removed.', jsonb_build_object('username', target_membership.username)
-    FROM deleted_membership
-    JOIN target_membership ON target_membership.user_id = deleted_membership.user_id
-)
-SELECT target_membership.user_id, target_membership.username, target_membership.role
-FROM target_membership
-JOIN deleted_membership ON deleted_membership.user_id = target_membership.user_id;
 
 -- name: CreateProjectSecret :one
 WITH created_secret AS (
@@ -166,12 +45,6 @@ WITH created_secret AS (
     VALUES (sqlc.arg(secret_id), sqlc.arg(project_id), sqlc.arg(name), sqlc.arg(kind),
             sqlc.arg(ciphertext), sqlc.arg(nonce), sqlc.arg(key_version))
     RETURNING id, project_id, name, kind, key_version, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), project_id, sqlc.arg(actor_user_id), 'project.secret.created',
-           'project_secret', id, 'Project credential created.',
-           jsonb_build_object('name', name, 'kind', kind)
-    FROM created_secret
 )
 SELECT id, project_id, name, kind, key_version, version, created_at, updated_at
 FROM created_secret;
@@ -199,12 +72,6 @@ WITH changed_secret AS (
         updated_at = clock_timestamp()
     WHERE project_secrets.project_id = sqlc.arg(project_id) AND project_secrets.id = sqlc.arg(secret_id)
     RETURNING id, project_id, name, kind, key_version, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), changed_secret.project_id, sqlc.arg(actor_user_id), 'project.secret.updated',
-           'project_secret', changed_secret.id, 'Project credential updated.',
-           jsonb_build_object('name', changed_secret.name, 'kind', changed_secret.kind, 'rotated', sqlc.arg(rotated)::boolean)
-    FROM changed_secret
 )
 SELECT changed_secret.id, changed_secret.project_id, changed_secret.name, changed_secret.kind,
        changed_secret.key_version, changed_secret.version, changed_secret.created_at, changed_secret.updated_at
@@ -249,14 +116,6 @@ WITH changed_policy AS (
         updated_at = clock_timestamp()
     WHERE projects.id = sqlc.arg(project_id)
     RETURNING id, agent_loop_mode, agent_loop_policy_version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), changed_policy.id, sqlc.arg(actor_user_id),
-           'project.remediation_policy.updated', 'project', changed_policy.id,
-           'Project remediation policy updated.',
-           jsonb_build_object('agentLoopMode', changed_policy.agent_loop_mode,
-                              'policyVersion', changed_policy.agent_loop_policy_version)
-    FROM changed_policy
 )
 SELECT agent_loop_mode, agent_loop_policy_version
 FROM changed_policy;
@@ -351,19 +210,6 @@ WITH changed_environment AS (
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, provider, base_url, credential_secret_id, model, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project configuration updated.',
-           jsonb_build_object(
-               'environmentKey', changed_environment.environment_key,
-               'sourceKind', changed_source.kind,
-               'triggerKind', changed_trigger.kind,
-               'llmProvider', changed_llm.provider,
-               'llmModel', changed_llm.model
-           )
-    FROM changed_environment, changed_source, changed_trigger, changed_llm
 )
 SELECT changed_environment.id AS environment_id,
        changed_environment.environment_key, changed_environment.name AS environment_name,
@@ -411,24 +257,9 @@ WITH changed_trigger AS (
     WHERE project_triggers.project_id = sqlc.arg(project_id)
       AND project_triggers.kind = 'signed_webhook'
     RETURNING id, project_id, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), changed_trigger.project_id, sqlc.arg(actor_user_id),
-           'project.trigger.webhook_token', 'project_trigger', changed_trigger.id,
-           'Project webhook token updated.',
-           jsonb_build_object('rotated', sqlc.arg(rotated)::boolean)
-    FROM changed_trigger
 )
 SELECT id, version
 FROM changed_trigger;
-
--- name: ListProjectAuditEvents :many
-SELECT id, project_id, actor_user_id, action, target_type, target_id, summary, metadata, occurred_at,
-       COUNT(*) OVER() AS total_count
-FROM audit_events
-WHERE project_id = sqlc.arg(project_id)
-ORDER BY occurred_at DESC, id DESC
-LIMIT sqlc.arg(result_limit);
 
 -- name: GetProjectEnvironment :one
 SELECT id, environment_key, name, service, version
@@ -475,14 +306,7 @@ WITH changed_environment AS (
         version = project_environments.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, environment_key, name, service, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project environment configuration updated.',
-           jsonb_build_object('environmentKey', changed_environment.environment_key)
-    FROM changed_environment
- )
+)
 SELECT id, environment_key, name, service, version
 FROM changed_environment;
 
@@ -507,14 +331,7 @@ WITH changed_repository AS (
         updated_at = clock_timestamp()
     RETURNING id, remote_url, scm_provider, transport, credential_secret_id,
               production_branch, deployed_commit, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project repository configuration updated.',
-           jsonb_build_object('scmProvider', changed_repository.scm_provider, 'remoteUrl', changed_repository.remote_url)
-    FROM changed_repository
- )
+)
 SELECT id, remote_url, scm_provider, transport, credential_secret_id,
        production_branch, deployed_commit, version
 FROM changed_repository;
@@ -537,17 +354,7 @@ WITH changed_source AS (
         version = project_sources.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, kind, credential_secret_id, config, capabilities, enabled, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project collection source configuration updated.',
-           jsonb_build_object('sourceKind', changed_source.kind)
-           || CASE WHEN changed_source.kind = 'ssh' THEN
-                  jsonb_build_object('deploymentKind', COALESCE(changed_source.config->'deployment'->>'kind', 'host'))
-              ELSE '{}'::jsonb END
-    FROM changed_source
- )
+)
 SELECT id, kind, credential_secret_id, config, capabilities, enabled, version
 FROM changed_source;
 
@@ -574,17 +381,7 @@ WITH changed_trigger AS (
         updated_at = clock_timestamp()
     RETURNING id, kind, signing_secret_id, config, enabled, version,
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project trigger configuration updated.',
-           jsonb_build_object('triggerKind', changed_trigger.kind)
-           || CASE WHEN changed_trigger.kind = 'signed_webhook' THEN
-                  jsonb_build_object('provider', COALESCE(changed_trigger.config->>'provider', 'generic'))
-              ELSE '{}'::jsonb END
-    FROM changed_trigger
- )
+)
 SELECT id, kind, signing_secret_id, config, enabled, version,
        ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 FROM changed_trigger;
@@ -605,13 +402,6 @@ WITH changed_llm AS (
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
     RETURNING id, provider, base_url, credential_secret_id, model, version
-), created_audit AS (
-    INSERT INTO audit_events (id, project_id, actor_user_id, action, target_type, target_id, summary, metadata)
-    SELECT sqlc.arg(audit_id), sqlc.arg(project_id), sqlc.arg(actor_user_id),
-           'project.configuration.updated', 'project', sqlc.arg(project_id),
-           'Project LLM provider configuration updated.',
-           jsonb_build_object('llmProvider', changed_llm.provider, 'llmModel', changed_llm.model)
-    FROM changed_llm
- )
+)
 SELECT id, provider, base_url, credential_secret_id, model, version
 FROM changed_llm;

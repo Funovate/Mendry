@@ -110,8 +110,8 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list applied migrations: %v", err)
 	}
-	if len(applied) != 19 {
-		t.Fatalf("applied migration count = %d, want 19: %#v", len(applied), applied)
+	if len(applied) != 20 {
+		t.Fatalf("applied migration count = %d, want 20: %#v", len(applied), applied)
 	}
 	for index, migration := range applied {
 		if migration.Version != int64(index+1) || len(migration.Checksum) != 64 {
@@ -142,8 +142,8 @@ func resetMVPPostgreSQLSchema(ctx context.Context, pool *postgres.Pool, operatio
 func assertMVPRelations(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	t.Helper()
 	relations := []string{
-		"users", "projects", "project_environments", "project_memberships", "project_secrets",
-		"project_repositories", "project_sources", "project_triggers", "observations", "incidents", "audit_events",
+		"users", "projects", "project_environments", "project_secrets",
+		"project_repositories", "project_sources", "project_triggers", "observations", "incidents",
 	}
 	for _, relation := range relations {
 		var exists bool
@@ -153,6 +153,12 @@ func assertMVPRelations(t *testing.T, ctx context.Context, pool *postgres.Pool) 
 		}
 		if !exists {
 			t.Errorf("relation %s does not exist", relation)
+		}
+	}
+	for _, removed := range []string{"project_memberships", "audit_events"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, "SELECT to_regclass('public.' || $1) IS NOT NULL", removed).Scan(&exists); err != nil || exists {
+			t.Fatalf("removed relation %s: exists=%t error=%v", removed, exists, err)
 		}
 	}
 	var outboxExists bool
@@ -171,17 +177,15 @@ func assertSchemaComments(t *testing.T, ctx context.Context, pool *postgres.Pool
 	t.Helper()
 	expectedColumnCounts := map[string]int{
 		"fixthe_schema_migrations":     4,
-		"users":                        8,
+		"users":                        7,
 		"projects":                     7,
 		"project_environments":         8,
-		"project_memberships":          6,
 		"project_secrets":              11,
 		"project_repositories":         12,
 		"project_sources":              11,
 		"project_triggers":             13,
 		"observations":                 13,
 		"incidents":                    21,
-		"audit_events":                 9,
 		"remediation_series":           5,
 		"remediation_run":              17,
 		"remediation_decision":         11,
@@ -227,14 +231,20 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 			ID:           userID,
 			Username:     "migration-admin",
 			PasswordHash: "$2a$12$012345678901234567890u012345678901234567890123456789012",
-			Role:         "admin",
 		},
 	)
 	if err != nil {
 		t.Fatalf("create user through generated query: %v", err)
 	}
-	if user.Username != "migration-admin" || user.Role != "admin" || !user.Enabled {
+	if user.Username != "migration-admin" || !user.Enabled {
 		t.Fatalf("created user = %#v", user)
+	}
+	_, secondUserErr := authdb.New(pool).CreateUser(ctx, authdb.CreateUserParams{
+		ID:       mustUUID(t, "019ff544-405c-7d12-8f10-cb3fc579605c"),
+		Username: "second-user", PasswordHash: user.PasswordHash,
+	})
+	if secondUserErr == nil || !strings.Contains(secondUserErr.Error(), "users_single_user") {
+		t.Fatalf("second account must fail the single-user constraint: %v", secondUserErr)
 	}
 
 	projectRepository, err := projectpostgres.NewRepository(pool)
@@ -243,36 +253,13 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	}
 	project, err := projectRepository.CreateProject(ctx, projectdomain.Project{
 		ID: "019ff544-405c-7d21-9f10-cb3fc579605c", Key: "integration-project", Name: "Integration project",
-		Role: projectdomain.RoleAdmin,
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d31-9f10-cb3fc579605c")
+	})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if project.Key != "integration-project" || project.Role != projectdomain.RoleAdmin {
+	if project.Key != "integration-project" {
 		t.Fatalf("created project = %#v", project)
 	}
-	memberUser, err := authdb.New(pool).CreateUser(
-		postgres.WithOperation(ctx, "integration.auth.create_member_user"),
-		authdb.CreateUserParams{
-			ID:           mustUUID(t, "019ff544-405c-7d12-8f10-cb3fc579605c"),
-			Username:     "migration-operator",
-			PasswordHash: "$2a$12$012345678901234567890u012345678901234567890123456789012",
-			Role:         "viewer",
-		},
-	)
-	if err != nil || memberUser.Role != "viewer" {
-		t.Fatalf("create project member user = %#v, %v", memberUser, err)
-	}
-	member, err := projectRepository.UpsertMember(ctx, project.ID, memberUser.Username, projectdomain.RoleOperator,
-		"019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d38-9f10-cb3fc579605c")
-	if err != nil || member.Role != projectdomain.RoleOperator {
-		t.Fatalf("upsert project member = %#v, %v", member, err)
-	}
-	members, err := projectRepository.ListMembers(ctx, project.ID)
-	if err != nil || len(members.Items) != 2 || members.Total != 2 {
-		t.Fatalf("project members = %#v, %v", members, err)
-	}
-
 	secretIDs := []string{
 		"019ff544-405c-7d24-9f10-cb3fc579605c",
 		"019ff544-405c-7d27-9f10-cb3fc579605c",
@@ -289,7 +276,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 			Secret: projectdomain.Secret{ID: secretIDs[index], ProjectID: project.ID, Name: "integration-secret-" + string(rune('a'+index)),
 				Kind: secretKinds[index], KeyVersion: 1},
 			Ciphertext: []byte(secretMaterials[index]), Nonce: []byte("123456789012"),
-		}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d3"+string(rune('5'+index))+"-9f10-cb3fc579605c")
+		})
 		if createErr != nil || createdSecret.ID != secretIDs[index] {
 			t.Fatalf("create project secret %d = %#v, %v", index, createdSecret, createErr)
 		}
@@ -317,7 +304,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Trigger: projectdomain.Trigger{ID: "019ff544-405c-7d26-9f10-cb3fc579605c", Kind: "signed_webhook", SigningSecretID: &secretIDs[2],
 			Config: []byte(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true},
 		LLM: &projectdomain.LLMProvider{ID: "019ff544-405c-7d29-9f10-cb3fc579605c", Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretIDs[1], Model: "gpt-5.6"},
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d32-9f10-cb3fc579605c")
+	})
 	if err != nil {
 		t.Fatalf("upsert project configuration: %v", err)
 	}
@@ -334,8 +321,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 
 	renamed, err := projectRepository.UpdateProjectName(ctx, projectdomain.Project{
 		ID: project.ID, Key: project.Key, Name: "Renamed integration project", Description: project.Description,
-		Role: projectdomain.RoleAdmin,
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d61-9f10-cb3fc579605c")
+	})
 	if err != nil || renamed.Key != "integration-project" || renamed.Name != "Renamed integration project" || renamed.Version != project.Version+1 {
 		t.Fatalf("rename project = %#v, %v", renamed, err)
 	}
@@ -350,14 +336,13 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Source:      reloadedAfterRename.Source,
 		Trigger:     reloadedAfterRename.Trigger,
 		LLM:         reloadedAfterRename.LLM,
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d65-9f10-cb3fc579605c")
+	})
 	if err != nil || syncedConfiguration.Environment.Name != renamed.Name {
 		t.Fatalf("align environment name = %#v, %v", syncedConfiguration, err)
 	}
 	finalName, err := projectRepository.UpdateProjectName(ctx, projectdomain.Project{
 		ID: project.ID, Key: project.Key, Name: "Final integration project", Description: project.Description,
-		Role: projectdomain.RoleAdmin,
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d64-9f10-cb3fc579605c")
+	})
 	if err != nil || finalName.Key != project.Key {
 		t.Fatalf("second rename = %#v, %v", finalName, err)
 	}
@@ -377,7 +362,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Secret: projectdomain.Secret{ID: loadedSecret.ID, ProjectID: project.ID, Name: "integration-secret-renamed",
 			Kind: loadedSecret.Kind, KeyVersion: loadedSecret.KeyVersion},
 		Ciphertext: loadedSecret.Ciphertext, Nonce: loadedSecret.Nonce,
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d62-9f10-cb3fc579605c", false)
+	})
 	if err != nil || nameOnly.ID != loadedSecret.ID || nameOnly.Kind != loadedSecret.Kind ||
 		nameOnly.Name != "integration-secret-renamed" || nameOnly.KeyVersion != loadedSecret.KeyVersion ||
 		nameOnly.Version != loadedSecret.Version+1 {
@@ -392,7 +377,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Secret: projectdomain.Secret{ID: loadedSecret.ID, ProjectID: project.ID, Name: "integration-secret-renamed",
 			Kind: loadedSecret.Kind, KeyVersion: 2},
 		Ciphertext: []byte("rotated-git-material"), Nonce: []byte("abcdefghijkl"),
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d63-9f10-cb3fc579605c", true)
+	})
 	if err != nil || rotated.ID != loadedSecret.ID || rotated.Kind != loadedSecret.Kind || rotated.KeyVersion != 2 ||
 		rotated.Version != nameOnly.Version+1 {
 		t.Fatalf("rotated secret = %#v, %v", rotated, err)
@@ -442,7 +427,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		OccurrenceCount:     1,
 		HostCount:           1,
 		NotificationSummary: "Lifecycle default",
-	}, "019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d33-9f10-cb3fc579605c", nil)
+	}, nil)
 	if err != nil {
 		t.Fatalf("create incident through repository: %v", err)
 	}
@@ -460,8 +445,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 	}
 
 	updated, err := incidentRepository.UpdateStatus(ctx, project.ID, incident.Number, incidentdomain.StatusRecovered,
-		incident.LifecycleGeneration, incident.DeployedCommit,
-		"019ff544-405c-7d10-8f10-cb3fc579605c", "019ff544-405c-7d34-9f10-cb3fc579605c", nil)
+		incident.LifecycleGeneration, incident.DeployedCommit, nil)
 	if err != nil {
 		t.Fatalf("update incident through repository: %v", err)
 	}
@@ -471,8 +455,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 
 	otherProject, err := projectRepository.CreateProject(ctx, projectdomain.Project{
 		ID: "019ff544-405c-7d51-9f10-cb3fc579605c", Key: "other-integration-project", Name: "Other integration project",
-		Role: projectdomain.RoleAdmin,
-	}, "019ff544-405c-7d12-8f10-cb3fc579605c", "019ff544-405c-7d52-9f10-cb3fc579605c")
+	})
 	if err != nil {
 		t.Fatalf("create isolation project: %v", err)
 	}
@@ -490,20 +473,6 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		Attributes: []byte(`{}`),
 	}); !errors.Is(err, observationapplication.ErrSourceNotFound) {
 		t.Fatalf("cross-project observation create error = %v", err)
-	}
-	auditEvents, err := projectRepository.ListAuditEvents(ctx, project.ID, 20)
-	if err != nil || len(auditEvents.Items) < 9 {
-		t.Fatalf("audit events = %#v, %v", auditEvents, err)
-	}
-	assertProjectUpdateAudits(t, auditEvents.Items)
-	auditJSON, err := json.Marshal(auditEvents.Items)
-	if err != nil {
-		t.Fatalf("marshal audit events: %v", err)
-	}
-	for _, material := range secretMaterials {
-		if strings.Contains(string(auditJSON), material) {
-			t.Fatalf("audit events disclosed encrypted material: %s", auditJSON)
-		}
 	}
 }
 
@@ -529,45 +498,5 @@ func integrationPostgresConfiguration(connectionURL string) config.PostgreSQL {
 		MaxConnIdleTime:    time.Minute,
 		HealthCheckPeriod:  30 * time.Second,
 		SlowQueryThreshold: 500 * time.Millisecond,
-	}
-}
-
-func assertProjectUpdateAudits(t *testing.T, events []projectdomain.AuditEvent) {
-	t.Helper()
-	var renamed, secretUpdated int
-	for _, event := range events {
-		switch event.Action {
-		case "project.renamed":
-			renamed++
-			assertJSONObjectKeys(t, event.Metadata, "projectKey")
-		case "project.secret.updated":
-			secretUpdated++
-			assertJSONObjectKeys(t, event.Metadata, "name", "kind", "rotated")
-		}
-		payload := string(event.Metadata)
-		for _, material := range []string{"encrypted-git-material", "encrypted-source-material", "encrypted-webhook-material", "rotated-git-material"} {
-			if strings.Contains(payload, material) {
-				t.Fatalf("audit metadata disclosed secret material: %s", payload)
-			}
-		}
-	}
-	if renamed != 2 || secretUpdated != 2 {
-		t.Fatalf("update audit counts renamed=%d secretUpdated=%d events=%#v", renamed, secretUpdated, events)
-	}
-}
-
-func assertJSONObjectKeys(t *testing.T, raw []byte, keys ...string) {
-	t.Helper()
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatalf("decode audit metadata %s: %v", raw, err)
-	}
-	if len(payload) != len(keys) {
-		t.Fatalf("audit metadata keys = %#v, want %v", payload, keys)
-	}
-	for _, key := range keys {
-		if _, ok := payload[key]; !ok {
-			t.Fatalf("audit metadata missing %q: %#v", key, payload)
-		}
 	}
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, messageFromError, type DockerContainer, type ListResult, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
@@ -41,9 +41,7 @@ export function ConfigurationEditorPage() {
   const secrets = useQuery({
     queryKey: queryKeys.secrets(project.key),
     queryFn: ({ signal }) => api.listSecrets(project.key, signal),
-    enabled: project.capabilities.manageConfiguration,
   });
-  if (!project.capabilities.manageConfiguration) return <Navigate to={`/projects/${encodeURIComponent(project.key)}/configuration`} replace />;
   if (current.isPending || secrets.isPending) return <LoadingState label="Loading configuration editor" />;
   if (current.isError) return <PageError message={messageFromError(current.error)} onRetry={() => void current.refetch()} />;
   if (secrets.isError) return <PageError message={messageFromError(secrets.error)} onRetry={() => void secrets.refetch()} />;

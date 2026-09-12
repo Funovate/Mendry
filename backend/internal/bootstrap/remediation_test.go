@@ -26,11 +26,11 @@ const (
 type fakeManualProjectAccess struct{}
 
 func (fakeManualProjectAccess) ResolveAccess(context.Context, authdomain.User, string) (projectdomain.Project, error) {
-	return projectdomain.Project{ID: bootstrapProjectID, Key: "payments", Role: projectdomain.RoleViewer}, nil
+	return projectdomain.Project{ID: bootstrapProjectID, Key: "payments"}, nil
 }
 
 func (fakeManualProjectAccess) RequireIncidentWrite(context.Context, authdomain.User, string) (projectdomain.Project, error) {
-	return projectdomain.Project{ID: bootstrapProjectID, Key: "payments", Role: projectdomain.RoleOperator}, nil
+	return projectdomain.Project{ID: bootstrapProjectID, Key: "payments"}, nil
 }
 
 type fakeManualIncidentLookup struct{}
@@ -94,7 +94,7 @@ func (fakeBootstrapAuthService) Login(context.Context, string, []byte, string) (
 }
 
 func (fakeBootstrapAuthService) Authenticate(context.Context, string) (authdomain.User, error) {
-	return authdomain.User{ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Enabled: true, Role: authdomain.RoleViewer}, nil
+	return authdomain.User{ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Enabled: true}, nil
 }
 
 func (fakeBootstrapAuthService) Logout(context.Context, string) error { return nil }

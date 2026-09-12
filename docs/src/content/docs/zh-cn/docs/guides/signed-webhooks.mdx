@@ -14,8 +14,8 @@ sources:
 ## 配置
 
 1. 将 `MENDRY_PUBLIC_URL` 设置为外部可访问的 API origin。
-2. 以项目管理员身份保存 `signed_webhook` trigger。
-3. 只从管理员响应复制返回的 `inboundUrl`。
+2. 登录后保存 `signed_webhook` trigger。
+3. 从配置响应复制返回的 `inboundUrl`。
 4. 让发送端提交不超过 API body limit 的 UTF-8 文本或 JSON。
 
 ## 发送
@@ -66,7 +66,7 @@ certificate body 或原始 SNS envelope。若 inbound URL 泄露，应立即轮�
 
 ## 轮换
 
-项目管理员通过 `POST /api/v1/projects/{projectKey}/configuration/webhook-token` 轮换 token。轮换会使旧 token 失效，并写入有界 audit metadata。应立即更新发送端，不要把新旧 token 写入日志或工单。
+登录用户通过 `POST /api/v1/projects/{projectKey}/configuration/webhook-token` 轮换 token。轮换会使旧 token 失效。应立即更新发送端，不要把新旧 token 写入日志或工单。
 
 ## 安全行为
 

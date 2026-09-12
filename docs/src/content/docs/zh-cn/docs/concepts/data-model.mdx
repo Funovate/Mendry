@@ -45,10 +45,9 @@ Run state 为 `queued`、`running`、`waiting`、`succeeded`、`failed` 与 `can
 
 | 记录                                | 用途                                                                    |
 | ----------------------------------- | ----------------------------------------------------------------------- |
-| User 与 membership                  | 登录身份、系统角色与 project-scoped authority                           |
+| 登录账号                            | 唯一登录身份，可访问全部项目                                            |
 | Project configuration 与 credential | 事故 connector、加密 secret、repository、trigger 与 provider setting    |
 | Observation 与 Incident             | 项目范围 event stream 与分组后的 operational condition                  |
 | Remediation run 与 evidence         | 针对 incident generation 的 diagnosis、plan、provenance 与 review state |
-| Audit event                         | 管理与 lifecycle write metadata                                         |
 
 PostgreSQL 继续作为这些应用记录的 source of truth；Redis 只保存可丢弃的 digest-keyed 登录 Session。这些依赖描述事故 Service，而不是中立 Harness domain。

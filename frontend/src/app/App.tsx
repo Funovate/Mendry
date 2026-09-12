@@ -1,12 +1,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AuditPage } from "../features/audit/AuditPage";
 import { AuthenticatedRoute } from "../features/auth/AuthenticatedRoute";
 import { LoginPage } from "../features/auth/LoginPage";
 import { ConfigurationEditorPage } from "../features/configuration/ConfigurationEditorPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { IncidentsPage } from "../features/incidents/IncidentsPage";
-import { MembersPage } from "../features/members/MembersPage";
 import { ObservationsPage } from "../features/observations/ObservationsPage";
 import { CreateProjectPage, HomeRedirect, ProjectDirectoryPage } from "../features/projects/ProjectDirectoryPage";
 import { ProjectRoute } from "../features/projects/ProjectRoute";
@@ -31,8 +29,6 @@ export default function App() {
           <Route path="observations" element={<ObservationsPage />} />
           <Route path="configuration" element={<ConfigurationPage />} />
           <Route path="configuration/edit" element={<ConfigurationEditorPage />} />
-          <Route path="members" element={<MembersPage />} />
-          <Route path="audit" element={<AuditPage />} />
         </Route>
       </Route>
     </Route>

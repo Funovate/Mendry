@@ -29,14 +29,13 @@ type fakeRepository struct {
 	updated     domain.Status
 	generation  int64
 	commit      string
-	actorID     string
 	error       error
 	lookupErr   error
 	remediation *RemediationRequest
 }
 
-func (f *fakeRepository) Create(_ context.Context, incident domain.Incident, actorID, _ string, remediation *RemediationRequest) (domain.Incident, error) {
-	f.created, f.projectID, f.actorID = incident, incident.ProjectID, actorID
+func (f *fakeRepository) Create(_ context.Context, incident domain.Incident, remediation *RemediationRequest) (domain.Incident, error) {
+	f.created, f.projectID = incident, incident.ProjectID
 	f.remediation = remediation
 	if f.error != nil {
 		return domain.Incident{}, f.error
@@ -61,7 +60,7 @@ func (f *fakeRepository) GetByFingerprint(_ context.Context, projectID, fingerpr
 	}
 	return f.incidents[0], nil
 }
-func (f *fakeRepository) RecordOccurrence(_ context.Context, projectID, fingerprint string, lastSeen time.Time, _ string) (domain.Incident, error) {
+func (f *fakeRepository) RecordOccurrence(_ context.Context, projectID, fingerprint string, lastSeen time.Time) (domain.Incident, error) {
 	f.projectID, f.fingerprint, f.lastSeen = projectID, fingerprint, lastSeen
 	if f.error != nil {
 		return domain.Incident{}, f.error
@@ -76,8 +75,8 @@ func (f *fakeRepository) List(_ context.Context, projectID string, _ int32) (Lis
 	f.projectID = projectID
 	return ListResult{Items: f.incidents, Total: int64(len(f.incidents))}, f.error
 }
-func (f *fakeRepository) UpdateStatus(_ context.Context, projectID string, number int64, status domain.Status, generation int64, commit, actorID, _ string, remediation *RemediationRequest) (domain.Incident, error) {
-	f.projectID, f.number, f.updated, f.generation, f.commit, f.actorID = projectID, number, status, generation, commit, actorID
+func (f *fakeRepository) UpdateStatus(_ context.Context, projectID string, number int64, status domain.Status, generation int64, commit string, remediation *RemediationRequest) (domain.Incident, error) {
+	f.projectID, f.number, f.updated, f.generation, f.commit = projectID, number, status, generation, commit
 	f.remediation = remediation
 	if f.error != nil {
 		return domain.Incident{}, f.error
@@ -90,7 +89,6 @@ func (f *fakeRepository) UpdateStatus(_ context.Context, projectID string, numbe
 }
 
 type fakeProjects struct {
-	role  projectdomain.Role
 	error error
 }
 
@@ -98,17 +96,10 @@ func (f *fakeProjects) ResolveAccess(context.Context, authdomain.User, string) (
 	if f.error != nil {
 		return projectdomain.Project{}, f.error
 	}
-	return projectdomain.Project{ID: testProjectID, Key: "payments", Role: f.role}, nil
+	return projectdomain.Project{ID: testProjectID, Key: "payments"}, nil
 }
 func (f *fakeProjects) RequireIncidentWrite(ctx context.Context, user authdomain.User, key string) (projectdomain.Project, error) {
-	project, err := f.ResolveAccess(ctx, user, key)
-	if err != nil {
-		return projectdomain.Project{}, err
-	}
-	if !project.CanWriteIncidents() {
-		return projectdomain.Project{}, projectapplication.ErrForbidden
-	}
-	return project, nil
+	return f.ResolveAccess(ctx, user, key)
 }
 
 type fakeBaseline struct {
@@ -138,18 +129,18 @@ func (f *fakeTrigger) Emit(_ context.Context, req RemediationRequest) error {
 	return f.err
 }
 
-func TestCreateUsesResolvedProjectAndProjectRole(t *testing.T) {
+func TestCreateUsesResolvedProject(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.FixedZone("offset", 8*60*60))
 	repository := &fakeRepository{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, nil)
-	user := authdomain.User{ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Enabled: true, Role: authdomain.RoleViewer}
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, nil)
+	user := authdomain.User{ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Enabled: true}
 	created, err := service.Create(context.Background(), user, "payments", CreateInput{
 		Title: " PostgreSQL latency ", Fingerprint: " pg:latency ", SourceID: "019ff544-405c-7d23-9f10-cb3fc579605c",
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if created.Number != 2049 || repository.projectID != testProjectID || repository.actorID != user.ID ||
+	if created.Number != 2049 || repository.projectID != testProjectID ||
 		repository.created.Title != "PostgreSQL latency" || repository.created.Status != domain.StatusOpen ||
 		repository.created.Priority != domain.PriorityInfo || repository.created.OccurrenceCount != 1 ||
 		repository.created.HostCount != 1 || repository.created.NotificationSummary != "Lifecycle default" ||
@@ -157,18 +148,13 @@ func TestCreateUsesResolvedProjectAndProjectRole(t *testing.T) {
 		repository.created.LifecycleGeneration != 1 || repository.created.DeployedCommit != testCommitA {
 		t.Fatalf("created = %#v, repository input = %#v", created, repository.created)
 	}
-
-	service = newTestService(t, repository, &fakeProjects{role: projectdomain.RoleViewer}, now, nil, nil)
-	if _, err := service.Create(context.Background(), user, "payments", CreateInput{}); !errors.Is(err, projectapplication.ErrForbidden) {
-		t.Fatalf("project viewer Create() error = %v", err)
-	}
 }
 
 func TestCreateRejectsInvalidAggregateBeforePersistence(t *testing.T) {
 	repository := &fakeRepository{}
 	identifierCalls := 0
 	service, err := NewService(Options{
-		Repository: repository, Projects: &fakeProjects{role: projectdomain.RoleOperator},
+		Repository: repository, Projects: &fakeProjects{},
 		Baseline: &fakeBaseline{commit: testCommitA}, Remediation: &fakeTrigger{},
 		NewIncidentID: func() (string, error) { identifierCalls++; return testIncidentID, nil }, Now: time.Now,
 	})
@@ -186,13 +172,13 @@ func TestCreateRejectsInvalidAggregateBeforePersistence(t *testing.T) {
 
 func TestReadAndStatusUpdateAreProjectScoped(t *testing.T) {
 	repository := &fakeRepository{incidents: []domain.Incident{{Number: 2049, Status: domain.StatusOpen, LifecycleGeneration: 1, DeployedCommit: testCommitA}}}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), nil, nil)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), nil, nil)
 	user := authdomain.User{ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Enabled: true}
 	if _, err := service.Get(context.Background(), user, "payments", "INC-2049"); err != nil || repository.projectID != testProjectID || repository.number != 2049 {
 		t.Fatalf("Get() project = %q number = %d error = %v", repository.projectID, repository.number, err)
 	}
 	if _, err := service.UpdateStatus(context.Background(), user, "payments", "INC-2049", "Recovered"); err != nil ||
-		repository.projectID != testProjectID || repository.updated != domain.StatusRecovered || repository.actorID != user.ID {
+		repository.projectID != testProjectID || repository.updated != domain.StatusRecovered {
 		t.Fatalf("UpdateStatus() project = %q status = %q error = %v", repository.projectID, repository.updated, err)
 	}
 	if _, err := service.UpdateStatus(context.Background(), user, "payments", "2049", "Recovered"); !errors.Is(err, ErrInvalidInput) {
@@ -205,7 +191,7 @@ func TestReadAndStatusUpdateAreProjectScoped(t *testing.T) {
 
 func TestListUsesProjectAccessAndNormalizesEmptyResult(t *testing.T) {
 	repository := &fakeRepository{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleViewer}, time.Now(), nil, nil)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), nil, nil)
 	incidents, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", DefaultListLimit)
 	if err != nil || incidents.Items == nil || len(incidents.Items) != 0 || incidents.Total != 0 || repository.projectID != testProjectID {
 		t.Fatalf("List() = %#v, %v", incidents, err)
@@ -221,7 +207,7 @@ func TestProjectAccessAndRepositoryErrorsKeepCategories(t *testing.T) {
 	if _, err := service.Get(context.Background(), user, "hidden", "INC-2049"); !errors.Is(err, projectapplication.ErrNotFound) {
 		t.Fatalf("project error = %v", err)
 	}
-	service = newTestService(t, &fakeRepository{incidents: []domain.Incident{{}}, error: ErrNotFound}, &fakeProjects{role: projectdomain.RoleViewer}, time.Now(), nil, nil)
+	service = newTestService(t, &fakeRepository{incidents: []domain.Incident{{}}, error: ErrNotFound}, &fakeProjects{}, time.Now(), nil, nil)
 	if _, err := service.Get(context.Background(), user, "payments", "INC-2049"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("repository error = %v", err)
 	}
@@ -241,7 +227,7 @@ func TestCreateEmitsAutomaticRemediationForP1AndP2Only(t *testing.T) {
 	} {
 		repository := &fakeRepository{}
 		trigger := &fakeTrigger{}
-		service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, &fakeBaseline{commit: testCommitA}, trigger)
+		service := newTestService(t, repository, &fakeProjects{}, now, &fakeBaseline{commit: testCommitA}, trigger)
 		created, err := service.Create(context.Background(), user, "payments", CreateInput{
 			Title: "latency", Fingerprint: "pg:" + tc.priority, SourceID: "019ff544-405c-7d23-9f10-cb3fc579605c", Priority: tc.priority,
 		})
@@ -277,7 +263,7 @@ func TestCreateEmitsAutomaticRemediationForP1AndP2Only(t *testing.T) {
 func TestCreateFingerprintConflictDoesNotEmitTwice(t *testing.T) {
 	repository := &fakeRepository{error: ErrConflict}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), nil, trigger)
 	_, err := service.Create(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", CreateInput{
 		Title: "latency", Fingerprint: "pg:latency", SourceID: "019ff544-405c-7d23-9f10-cb3fc579605c", Priority: "P2",
 	})
@@ -292,7 +278,7 @@ func TestUpdateStatusReopenIncrementsGenerationAndEmitsP2(t *testing.T) {
 		LifecycleGeneration: 1, DeployedCommit: testCommitA,
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), &fakeBaseline{commit: testCommitB}, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), &fakeBaseline{commit: testCommitB}, trigger)
 	updated, err := service.UpdateStatus(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", "INC-2049", "Open")
 	if err != nil {
 		t.Fatalf("reopen UpdateStatus() error = %v", err)
@@ -318,7 +304,7 @@ func TestUpdateStatusRecoverDoesNotIncrementOrEmit(t *testing.T) {
 		LifecycleGeneration: 1, DeployedCommit: testCommitA,
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), &fakeBaseline{commit: testCommitB}, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), &fakeBaseline{commit: testCommitB}, trigger)
 	updated, err := service.UpdateStatus(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", "INC-2049", "Recovered")
 	if err != nil {
 		t.Fatalf("recover UpdateStatus() error = %v", err)
@@ -334,7 +320,7 @@ func TestUpdateStatusReopenInfoIncrementsWithoutEmit(t *testing.T) {
 		LifecycleGeneration: 1, DeployedCommit: testCommitA,
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), &fakeBaseline{commit: testCommitA}, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), &fakeBaseline{commit: testCommitA}, trigger)
 	updated, err := service.UpdateStatus(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", "INC-2049", "Open")
 	if err != nil || updated.LifecycleGeneration != 2 || len(trigger.calls) != 0 {
 		t.Fatalf("info reopen updated = %#v, err = %v, emits = %d", updated, err, len(trigger.calls))
@@ -347,7 +333,7 @@ func TestUpdateStatusReopenSameCommitKeepsIncrementedGeneration(t *testing.T) {
 		LifecycleGeneration: 1, DeployedCommit: testCommitA,
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, time.Now(), &fakeBaseline{commit: testCommitA}, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, time.Now(), &fakeBaseline{commit: testCommitA}, trigger)
 	updated, err := service.UpdateStatus(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", "INC-2049", "Open")
 	if err != nil || updated.LifecycleGeneration != 2 || updated.DeployedCommit != testCommitA || len(trigger.calls) != 1 {
 		t.Fatalf("same-commit reopen = %#v, err = %v, emits = %d", updated, err, len(trigger.calls))
@@ -379,7 +365,7 @@ func TestIngestInboundPersistsBeforeAsyncRemediation(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	trigger := &fakeTrigger{started: started, release: release}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, trigger)
 
 	type ingestResult struct {
 		incident domain.Incident
@@ -406,8 +392,8 @@ func TestIngestInboundPersistsBeforeAsyncRemediation(t *testing.T) {
 	if result.err != nil || !result.inserted || result.incident.Priority != domain.PriorityP2 || result.incident.Status != domain.StatusOpen {
 		t.Fatalf("IngestInbound() = %#v", result)
 	}
-	if repository.actorID != "" || repository.remediation == nil || len(trigger.calls) != 1 || trigger.calls[0].Reason != RemediationReasonAutomatic {
-		t.Fatalf("actor=%q remediation=%#v emits=%#v", repository.actorID, repository.remediation, trigger.calls)
+	if repository.remediation == nil || len(trigger.calls) != 1 || trigger.calls[0].Reason != RemediationReasonAutomatic {
+		t.Fatalf("remediation=%#v emits=%#v", repository.remediation, trigger.calls)
 	}
 }
 
@@ -415,7 +401,7 @@ func TestIngestInboundEvidenceFailurePreservesIncidentWithoutRemediation(t *test
 	now := time.Date(2026, 8, 19, 11, 41, 44, 0, time.UTC)
 	repository := &fakeRepository{lookupErr: ErrNotFound}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, trigger)
 	evidenceErr := errors.New("evidence writer unavailable")
 	created, inserted, err := service.IngestInboundWithEvidence(
 		context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
@@ -446,7 +432,7 @@ func TestIngestInboundAnalysisOnlyPropagatesToEveryAutomaticEmission(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			started := make(chan struct{}, 1)
 			trigger := &fakeTrigger{started: started}
-			service := newTestService(t, test.repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+			service := newTestService(t, test.repository, &fakeProjects{}, now, nil, trigger)
 			_, _, err := service.IngestInboundAnalysisOnlyWithEvidence(
 				context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
 				"AWS CloudWatch alarm", "aws-cloudwatch:v1:fingerprint", now,
@@ -477,7 +463,7 @@ func TestIngestInboundBumpsOpenWithoutSecondEmit(t *testing.T) {
 		OccurrenceCount: 1, LastSeen: now.Add(-time.Hour),
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, trigger)
 	updated, inserted, err := service.IngestInbound(context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c", "【告警】测试信息", "【告警】测试信息", now)
 	if err != nil || inserted || updated.OccurrenceCount != 2 || len(trigger.calls) != 0 {
 		t.Fatalf("bump = %#v inserted=%t emits=%d err=%v", updated, inserted, len(trigger.calls), err)
@@ -494,7 +480,7 @@ func TestIngestInboundWithEvidenceGatesRepeatedOpenAfterEvidence(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	trigger := &fakeTrigger{started: started, release: release}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, trigger)
 	evidenceDone := make(chan struct{})
 	updated, inserted, err := service.IngestInboundWithEvidence(
 		context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c",
@@ -528,7 +514,7 @@ func TestIngestInboundDoesNotReopenClosed(t *testing.T) {
 		InternalID: testIncidentID, Number: 2049, Status: domain.StatusClosed, Priority: domain.PriorityP2, OccurrenceCount: 3,
 	}}}
 	trigger := &fakeTrigger{}
-	service := newTestService(t, repository, &fakeProjects{role: projectdomain.RoleOperator}, now, nil, trigger)
+	service := newTestService(t, repository, &fakeProjects{}, now, nil, trigger)
 	current, inserted, err := service.IngestInbound(context.Background(), testProjectID, "019ff544-405c-7d23-9f10-cb3fc579605c", "closed", "closed", now)
 	if err != nil || inserted || current.Status != domain.StatusClosed || current.OccurrenceCount != 3 || len(trigger.calls) != 0 {
 		t.Fatalf("closed ingest = %#v inserted=%t emits=%d err=%v", current, inserted, len(trigger.calls), err)

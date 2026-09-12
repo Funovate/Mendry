@@ -62,7 +62,7 @@ func TestStoreHashesTokenAndRoundTripsSession(t *testing.T) {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 	session := application.Session{User: domain.User{
-		ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Username: "admin", Role: domain.RoleAdmin, Enabled: true,
+		ID: "019ff544-405c-7d10-8f10-cb3fc579605c", Username: "admin", Enabled: true,
 	}, ExpiresAt: now.Add(time.Hour)}
 	token, err := store.Create(context.Background(), session)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestStoreHashesTokenAndRoundTripsSession(t *testing.T) {
 	}
 
 	loaded, err := store.Get(context.Background(), token)
-	if err != nil || loaded.User.Username != "admin" || loaded.User.Role != domain.RoleAdmin {
+	if err != nil || loaded.User.Username != "admin" {
 		t.Fatalf("Get() = %#v, %v", loaded, err)
 	}
 	if err := store.Delete(context.Background(), token); err != nil {

@@ -13,7 +13,7 @@ sources:
 
 ## 配置 trigger
 
-以项目管理员身份保存 `signed_webhook` trigger，并在版本化 trigger 配置中选择 provider `tencent_cls`。配置 `MENDRY_PUBLIC_URL` 后，将生成的入站 URL 填入 CLS 告警 callback 地址。请始终保护 URL token。
+登录后保存 `signed_webhook` trigger，并在版本化 trigger 配置中选择 provider `tencent_cls`。配置 `MENDRY_PUBLIC_URL` 后，将生成的入站 URL 填入 CLS 告警 callback 地址。请始终保护 URL token。
 
 Callback 必须使用受支持的 media type 和有效腾讯回调结构。未知、禁用、不完整或格式错误的 token 配置都返回相同的 not-found 边界。
 

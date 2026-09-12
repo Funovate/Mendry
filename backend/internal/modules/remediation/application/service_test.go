@@ -137,7 +137,7 @@ func TestContinueRemediationCreatesTheNextAttemptWithOptimisticPredecessor(t *te
 		State: domain.RunStateFailed, ContextVersion: 7, Version: 4,
 	}}}
 	service := newManualServiceWithReviews(t,
-		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 		lookup, trigger, reviews,
 	)
 
@@ -170,7 +170,7 @@ func TestContinueRemediationUsesBackgroundQueueWhenAvailable(t *testing.T) {
 		State: domain.RunStateFailed, ContextVersion: 7, Version: 4,
 	}}}
 	service := newManualServiceWithReviews(t,
-		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 		lookup, trigger, reviews,
 	)
 
@@ -198,7 +198,7 @@ func TestContinueRemediationEnforcesManualEligibilityAndConcurrency(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			trigger := &fakeTriggerStarter{continueRun: domain.Run{RunID: "run-2", SeriesID: "series-1", AttemptNumber: 2}}
 			service := newManualServiceWithReviews(t,
-				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 				&fakeIncidentLookup{identity: application.IncidentIdentity{
 					ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
 				}},
@@ -227,7 +227,7 @@ func TestContinueRemediationEnforcesManualEligibilityAndConcurrency(t *testing.T
 
 	trigger := &fakeTriggerStarter{continueRun: domain.Run{RunID: "run-3", SeriesID: "series-1", AttemptNumber: 3}}
 	service := newManualServiceWithReviews(t,
-		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 		&fakeIncidentLookup{identity: application.IncidentIdentity{
 			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
 		}},
@@ -362,7 +362,7 @@ func TestGetRemediationAllowsViewerAndStripsSecrets(t *testing.T) {
 		}},
 		SuggestedDiff: "diff --git a/auth/token.go b/auth/token.go\n+apiKey := os.Getenv(\"APP_TOKEN\")\n+Authorization: Bearer sk-secretvalue\n+value: \"plain-secret\"\n+remote: https://alice:plain-secret@example.test/repo.git\n",
 	}}
-	projects := &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleViewer}}
+	projects := &fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}}
 	service := newManualServiceWithReviews(t, projects,
 		&fakeIncidentLookup{identity: application.IncidentIdentity{
 			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
@@ -370,7 +370,7 @@ func TestGetRemediationAllowsViewerAndStripsSecrets(t *testing.T) {
 		&fakeTriggerStarter{},
 		reviews,
 	)
-	review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "viewer", Role: authdomain.RoleViewer}, "payments", "INC-2049")
+	review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "viewer"}, "payments", "INC-2049")
 	if err != nil {
 		t.Fatalf("GetRemediation() error = %v", err)
 	}
@@ -408,7 +408,7 @@ func TestGetRemediationComputesContinuationAvailabilityAndHistory(t *testing.T) 
 		},
 	}}
 	service := newManualServiceWithReviews(t,
-		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleOperator}},
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 		&fakeIncidentLookup{identity: application.IncidentIdentity{
 			ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
 		}},
@@ -438,7 +438,7 @@ func TestGetRemediationManualSuggestionIsEmptyWithoutDecisionOrAction(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := newManualServiceWithReviews(t,
-				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID, Role: projectdomain.RoleViewer}},
+				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
 				&fakeIncidentLookup{identity: application.IncidentIdentity{
 					ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123",
 				}},
@@ -451,7 +451,7 @@ func TestGetRemediationManualSuggestionIsEmptyWithoutDecisionOrAction(t *testing
 					Decisions: test.decisions,
 				}},
 			)
-			review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "viewer", Role: authdomain.RoleViewer}, "payments", "INC-2049")
+			review, err := service.GetRemediation(context.Background(), authdomain.User{ID: "viewer"}, "payments", "INC-2049")
 			if err != nil {
 				t.Fatalf("GetRemediation() error = %v", err)
 			}

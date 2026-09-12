@@ -115,7 +115,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{
-		Service: authService, UserCreator: authService,
+		Service:      authService,
 		SecureCookie: apiConfig.Common.Environment == "staging" || apiConfig.Common.Environment == "production", Now: time.Now,
 	})
 	if err != nil {

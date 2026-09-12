@@ -23,9 +23,6 @@ type service interface {
 	ListProjects(context.Context, authdomain.User, int32) (application.ListResult[domain.Project], error)
 	GetProject(context.Context, authdomain.User, string) (domain.Project, error)
 	UpdateProjectName(context.Context, authdomain.User, string, string) (domain.Project, error)
-	ListMembers(context.Context, authdomain.User, string) (application.ListResult[domain.Member], error)
-	UpsertMember(context.Context, authdomain.User, string, string, string) (domain.Member, error)
-	DeleteMember(context.Context, authdomain.User, string, string) (domain.Member, error)
 	CreateSecret(context.Context, authdomain.User, string, string, string, []byte) (domain.Secret, error)
 	UpdateSecret(context.Context, authdomain.User, string, string, string, []byte) (domain.Secret, error)
 	ListSecrets(context.Context, authdomain.User, string) (application.ListResult[domain.Secret], error)
@@ -43,7 +40,6 @@ type service interface {
 	ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error)
 	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
 	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
-	ListAuditEvents(context.Context, authdomain.User, string, int32) (application.ListResult[domain.AuditEvent], error)
 }
 
 type HandlerOptions struct {
@@ -68,9 +64,6 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.createProject)))
 	mux.Handle("GET /api/v1/projects/{projectKey}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getProject)))
 	mux.Handle("PATCH /api/v1/projects/{projectKey}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.updateProject)))
-	mux.Handle("GET /api/v1/projects/{projectKey}/members", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.listMembers)))
-	mux.Handle("PUT /api/v1/projects/{projectKey}/members/{username}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putMember)))
-	mux.Handle("DELETE /api/v1/projects/{projectKey}/members/{username}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.deleteMember)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/secrets", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.listSecrets)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/secrets", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.createSecret)))
 	mux.Handle("PATCH /api/v1/projects/{projectKey}/secrets/{secretId}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.updateSecret)))
@@ -83,7 +76,6 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects/{projectKey}/repository/refs", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeRepositoryRefs)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/models", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMModels)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/chat", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMChat)))
-	mux.Handle("GET /api/v1/projects/{projectKey}/audit-events", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.listAuditEvents)))
 }
 
 type createProjectRequest struct {
@@ -94,10 +86,6 @@ type createProjectRequest struct {
 
 type updateProjectRequest struct {
 	Name string `json:"name"`
-}
-
-type memberRequest struct {
-	Role string `json:"role"`
 }
 
 type secretRequest struct {
@@ -208,31 +196,13 @@ type triggerRequest struct {
 }
 
 type projectResponse struct {
-	ID           string               `json:"id"`
-	Key          string               `json:"key"`
-	Name         string               `json:"name"`
-	Description  string               `json:"description"`
-	Role         domain.Role          `json:"role"`
-	Capabilities capabilitiesResponse `json:"capabilities"`
-	Version      int64                `json:"version"`
-	CreatedAt    time.Time            `json:"createdAt"`
-	UpdatedAt    time.Time            `json:"updatedAt"`
-}
-
-type capabilitiesResponse struct {
-	Read           bool `json:"read"`
-	WriteIncidents bool `json:"writeIncidents"`
-	ManageMembers  bool `json:"manageMembers"`
-	ManageConfig   bool `json:"manageConfiguration"`
-}
-
-type memberResponse struct {
-	UserID    string      `json:"userId"`
-	Username  string      `json:"username"`
-	Role      domain.Role `json:"role"`
-	Version   int64       `json:"version"`
-	CreatedAt time.Time   `json:"createdAt"`
-	UpdatedAt time.Time   `json:"updatedAt"`
+	ID          string    `json:"id"`
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Version     int64     `json:"version"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type secretResponse struct {
@@ -324,17 +294,6 @@ type webhookTokenResponse struct {
 	InboundURL string `json:"inboundUrl"`
 }
 
-type auditEventResponse struct {
-	ID          string          `json:"id"`
-	ActorUserID *string         `json:"actorUserId"`
-	Action      string          `json:"action"`
-	TargetType  string          `json:"targetType"`
-	TargetID    *string         `json:"targetId"`
-	Summary     string          `json:"summary"`
-	Metadata    json.RawMessage `json:"metadata"`
-	OccurredAt  time.Time       `json:"occurredAt"`
-}
-
 func (h *Handler) listProjects(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	limit, err := listLimit(request)
 	if err != nil {
@@ -403,52 +362,6 @@ func (h *Handler) updateProject(writer nethttp.ResponseWriter, request *nethttp.
 		return
 	}
 	writeJSON(writer, request, nethttp.StatusOK, mapProject(project))
-}
-
-func (h *Handler) listMembers(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	principal, ok := currentUser(request)
-	if !ok {
-		return
-	}
-	members, err := h.service.ListMembers(request.Context(), principal, request.PathValue("projectKey"))
-	if err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	response := make([]memberResponse, 0, len(members.Items))
-	for _, member := range members.Items {
-		response = append(response, mapMember(member))
-	}
-	writeListJSON(writer, request, nethttp.StatusOK, response, members.Total)
-}
-
-func (h *Handler) putMember(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	var payload memberRequest
-	if !decodeJSON(writer, request, &payload) {
-		return
-	}
-	principal, ok := currentUser(request)
-	if !ok {
-		return
-	}
-	member, err := h.service.UpsertMember(request.Context(), principal, request.PathValue("projectKey"), request.PathValue("username"), payload.Role)
-	if err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	writeJSON(writer, request, nethttp.StatusOK, mapMember(member))
-}
-
-func (h *Handler) deleteMember(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	principal, ok := currentUser(request)
-	if !ok {
-		return
-	}
-	if _, err := h.service.DeleteMember(request.Context(), principal, request.PathValue("projectKey"), request.PathValue("username")); err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	writer.WriteHeader(nethttp.StatusNoContent)
 }
 
 func (h *Handler) listSecrets(writer nethttp.ResponseWriter, request *nethttp.Request) {
@@ -738,40 +651,9 @@ func (h *Handler) rotateWebhookToken(writer nethttp.ResponseWriter, request *net
 	writeJSON(writer, request, nethttp.StatusOK, webhookTokenResponse{InboundURL: inboundURL})
 }
 
-func (h *Handler) listAuditEvents(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	limit, err := listLimit(request)
-	if err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	principal, ok := currentUser(request)
-	if !ok {
-		return
-	}
-	events, err := h.service.ListAuditEvents(request.Context(), principal, request.PathValue("projectKey"), limit)
-	if err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	response := make([]auditEventResponse, 0, len(events.Items))
-	for _, event := range events.Items {
-		response = append(response, auditEventResponse{ID: event.ID, ActorUserID: event.ActorUserID, Action: event.Action,
-			TargetType: event.TargetType, TargetID: event.TargetID, Summary: event.Summary,
-			Metadata: event.Metadata, OccurredAt: event.OccurredAt})
-	}
-	writeListJSON(writer, request, nethttp.StatusOK, response, events.Total)
-}
-
 func mapProject(project domain.Project) projectResponse {
 	return projectResponse{ID: project.ID, Key: project.Key, Name: project.Name, Description: project.Description,
-		Role: project.Role, Capabilities: capabilitiesResponse{Read: true, WriteIncidents: project.CanWriteIncidents(),
-			ManageMembers: project.CanAdminister(), ManageConfig: project.CanAdminister()},
 		Version: project.Version, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt}
-}
-
-func mapMember(member domain.Member) memberResponse {
-	return memberResponse{UserID: member.UserID, Username: member.Username, Role: member.Role, Version: member.Version,
-		CreatedAt: member.CreatedAt, UpdatedAt: member.UpdatedAt}
 }
 
 func mapRepositoryRefs(refs application.RepositoryRefs) repositoryRefsResponse {
@@ -898,16 +780,12 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Project request is invalid."})
 	case errors.Is(err, application.ErrNotFound):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusNotFound, Code: "project_not_found", Message: "Project was not found."})
-	case errors.Is(err, application.ErrMemberNotFound):
-		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusNotFound, Code: "member_not_found", Message: "Project member was not found."})
 	case errors.Is(err, application.ErrConfigurationNotFound):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusNotFound, Code: "configuration_not_found", Message: "Project configuration was not found."})
 	case errors.Is(err, application.ErrForbidden):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusForbidden, Code: "forbidden", Message: "You do not have permission to perform this action."})
 	case errors.Is(err, application.ErrConflict):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusConflict, Code: "project_conflict", Message: "Project resource already exists."})
-	case errors.Is(err, application.ErrMemberChangeRejected):
-		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusConflict, Code: "member_change_rejected", Message: "The project must retain an administrator."})
 	case errors.Is(err, application.ErrGitUnreachable):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "git_unreachable", Message: "The Git remote could not be read."})
 	case errors.Is(err, application.ErrLLMUnreachable):

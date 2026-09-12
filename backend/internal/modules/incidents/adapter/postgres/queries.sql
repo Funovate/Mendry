@@ -22,14 +22,6 @@ WITH created_incident AS (
               fingerprint, status, priority, source, first_seen, last_seen,
               occurrence_count, host_count, muted, notification_summary,
               lifecycle_generation, deployed_commit, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT sqlc.arg(audit_id), project_id, sqlc.narg(actor_user_id), 'incident.created',
-           'incident', id, 'Incident created.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM created_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,
@@ -100,15 +92,6 @@ WITH changed_incident AS (
               incident.notification_summary, incident.lifecycle_generation,
               incident.deployed_commit, incident.version,
               incident.created_at, incident.updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT sqlc.arg(audit_id), project_id, sqlc.narg(actor_user_id),
-           'incident.occurrence.recorded', 'incident', id,
-           'Incident occurrence recorded.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM changed_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,
@@ -134,14 +117,6 @@ WITH changed_incident AS (
               incident.notification_summary, incident.lifecycle_generation,
               incident.deployed_commit, incident.version,
               incident.created_at, incident.updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT sqlc.arg(audit_id), project_id, sqlc.arg(actor_user_id), 'incident.status.updated',
-           'incident', id, 'Incident status updated.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM changed_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,

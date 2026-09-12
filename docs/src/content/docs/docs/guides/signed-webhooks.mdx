@@ -17,8 +17,8 @@ an HMAC secret to save or receive a webhook.
 ## Configure
 
 1. Set `MENDRY_PUBLIC_URL` to the externally reachable API origin.
-2. Save a `signed_webhook` trigger as a project administrator.
-3. Copy the returned `inboundUrl` only from an administrator response.
+2. Save a `signed_webhook` trigger after signing in.
+3. Copy the returned `inboundUrl` from the configuration response.
 4. Configure the sender to post UTF-8 text or JSON no larger than the API body limit.
 
 ## Send
@@ -74,9 +74,9 @@ certificate body, or raw SNS envelope. Rotate the inbound URL if it is exposed.
 
 ## Rotate
 
-Project administrators rotate the token through
+The logged-in user rotates the token through
 `POST /api/v1/projects/{projectKey}/configuration/webhook-token`. Rotation
-invalidates the old token and emits bounded audit metadata. Update the sender
+invalidates the old token . Update the sender
 immediately; do not log or paste either token into tickets.
 
 ## Security behavior

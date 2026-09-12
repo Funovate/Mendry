@@ -65,7 +65,7 @@ export function LoginPage() {
               {submitting ? <><LoaderCircle className="spin" size={17} />Signing in…</> : <>Sign in<ArrowRight className="login-submit-arrow" size={17} aria-hidden="true" /></>}
             </button>
           </form>
-          <div className="login-access-note"><LockKeyhole size={15} /><p>Access is managed by your administrator.<br />Use your Mendry account to continue.</p></div>
+          <div className="login-access-note"><LockKeyhole size={15} /><p>Sign in to your Mendry instance.<br />Your account manages all projects.</p></div>
         </div>
       </section>
     </main>

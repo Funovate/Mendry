@@ -1128,41 +1128,8 @@ func (s *RunStore) GetLatestForIncident(ctx context.Context, incidentID string, 
 	return s.Get(ctx, uuidString(latest.ID))
 }
 
-// Notify 通过 run→series→incident 连接写入系统 actor 的 audit_events。
-// metadata 只允许 runId/state/fixability/kind，禁止 prompt、diff、凭据和原始日志。
-func (s *RunStore) Notify(ctx context.Context, n application.TerminalNotification) error {
-	rid, err := parseRunID(n.RunID)
-	if err != nil {
-		return err
-	}
-	auditID, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("allocate audit id: %w", err)
-	}
-	metadata, err := json.Marshal(application.NotificationMetadata(n))
-	if err != nil {
-		return fmt.Errorf("encode notification metadata: %w", err)
-	}
-	summary := strings.TrimSpace(n.Summary)
-	if summary == "" {
-		summary = "Remediation reached a reviewable outcome."
-	}
-	if utf8.RuneCountInString(summary) > 240 {
-		summary = string([]rune(summary)[:240])
-	}
-	affected, err := remediationdb.New(s.db).CreateRemediationAuditEvent(ctx, remediationdb.CreateRemediationAuditEventParams{
-		AuditID:  pgtype.UUID{Bytes: auditID, Valid: true},
-		Action:   n.Kind,
-		Summary:  summary,
-		Metadata: metadata,
-		RunID:    rid,
-	})
-	if err != nil {
-		return fmt.Errorf("create remediation audit event: %w", err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("create remediation audit event: run %s not found", n.RunID)
-	}
+// Notify intentionally does not persist terminal events in the single-user system.
+func (s *RunStore) Notify(context.Context, application.TerminalNotification) error {
 	return nil
 }
 

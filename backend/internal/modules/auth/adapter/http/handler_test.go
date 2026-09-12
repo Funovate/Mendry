@@ -55,7 +55,7 @@ func (f *fakeService) CreateUser(_ context.Context, _ domain.User, username stri
 	if f.createError != nil {
 		return domain.User{}, f.createError
 	}
-	f.createdUser = domain.User{ID: "user-2", Username: username, Role: domain.RoleViewer, Enabled: true}
+	f.createdUser = domain.User{ID: "user-2", Username: username, Enabled: true}
 	return f.createdUser, nil
 }
 
@@ -63,7 +63,7 @@ func TestLoginSetsSecureSessionCookieAndReturnsSafeUser(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
 	service := &fakeService{loginResult: application.LoginResult{
-		User:  domain.User{ID: "user-1", Username: "admin", Role: domain.RoleAdmin, Enabled: true},
+		User:  domain.User{ID: "user-1", Username: "admin", Enabled: true},
 		Token: "new-session-token", ExpiresAt: expiresAt,
 	}}
 	handler := newHandlerAt(t, service, true, func() time.Time { return now })
@@ -86,7 +86,7 @@ func TestLoginSetsSecureSessionCookieAndReturnsSafeUser(t *testing.T) {
 		t.Fatalf("cookies = %#v", cookies)
 	}
 	if strings.Contains(response.Body.String(), "secret-password") || strings.Contains(response.Body.String(), "new-session-token") ||
-		!strings.Contains(response.Body.String(), `"role":"admin"`) {
+		!strings.Contains(response.Body.String(), `"username":"admin"`) || strings.Contains(response.Body.String(), `"role"`) {
 		t.Fatalf("body = %q", response.Body.String())
 	}
 }
@@ -118,7 +118,7 @@ func TestCurrentUserRequiresSessionAndReturnsPrincipal(t *testing.T) {
 	}
 
 	service.authError = nil
-	service.authUser = domain.User{ID: "user-2", Username: "viewer", Role: domain.RoleViewer, Enabled: true}
+	service.authUser = domain.User{ID: "user-2", Username: "viewer", Enabled: true}
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	request.AddCookie(&http.Cookie{Name: authhttp.SessionCookieName, Value: "valid-token"})
 	response = httptest.NewRecorder()
@@ -198,85 +198,13 @@ func TestLogoutIsIdempotentAndClearsCookie(t *testing.T) {
 	}
 }
 
-func TestRoleMiddlewareDeniesViewerAndAllowsOperator(t *testing.T) {
-	service := &fakeService{authUser: domain.User{ID: "user-1", Username: "viewer", Role: domain.RoleViewer, Enabled: true}}
-	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: service})
-	if err != nil {
-		t.Fatalf("NewHandler() error = %v", err)
-	}
-	protected := authHandler.RequireRoles([]domain.Role{domain.RoleAdmin, domain.RoleOperator}, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusNoContent)
-	}))
-	request := httptest.NewRequest(http.MethodPost, "/protected", nil)
-	request.AddCookie(&http.Cookie{Name: authhttp.SessionCookieName, Value: "valid-token"})
-	response := httptest.NewRecorder()
-	protected.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("viewer status = %d", response.Code)
-	}
-
-	service.authUser.Role = domain.RoleOperator
-	response = httptest.NewRecorder()
-	protected.ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("operator status = %d", response.Code)
-	}
-}
-
-func TestSystemAdminCreatesLocalUserWithoutReturningPassword(t *testing.T) {
-	service := &fakeService{authUser: domain.User{ID: "admin-1", Username: "admin", Role: domain.RoleAdmin, Enabled: true}}
-	handler := newHandler(t, service, false)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(`{"username":"operator.user","password":"long-enough-password"}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(&http.Cookie{Name: authhttp.SessionCookieName, Value: "valid-token"})
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusCreated || service.createdUser.Username != "operator.user" || string(service.password) != "long-enough-password" {
-		t.Fatalf("response = %d %q, created = %#v", response.Code, response.Body.String(), service.createdUser)
-	}
-	if strings.Contains(response.Body.String(), "long-enough-password") || !strings.Contains(response.Body.String(), `"role":"viewer"`) {
-		t.Fatalf("body = %q", response.Body.String())
-	}
-
-	service.authUser.Role = domain.RoleViewer
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("viewer status = %d, body = %q", response.Code, response.Body.String())
-	}
-}
-
-func TestCreateLocalUserMapsValidationAndConflict(t *testing.T) {
-	service := &fakeService{authUser: domain.User{ID: "admin-1", Role: domain.RoleAdmin, Enabled: true}}
-	handler := newHandler(t, service, false)
-	for _, test := range []struct {
-		err    error
-		status int
-		code   string
-	}{
-		{err: application.ErrInvalidInput, status: http.StatusBadRequest, code: "invalid_request"},
-		{err: application.ErrUserConflict, status: http.StatusConflict, code: "user_conflict"},
-	} {
-		service.createError = test.err
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(`{"username":"operator.user","password":"long-enough-password"}`))
-		request.Header.Set("Content-Type", "application/json")
-		request.AddCookie(&http.Cookie{Name: authhttp.SessionCookieName, Value: "valid-token"})
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		if response.Code != test.status || !strings.Contains(response.Body.String(), `"code":"`+test.code+`"`) {
-			t.Fatalf("error %v response = %d %q", test.err, response.Code, response.Body.String())
-		}
-	}
-}
-
 func newHandler(t *testing.T, service *fakeService, secure bool) http.Handler {
 	return newHandlerAt(t, service, secure, time.Now)
 }
 
 func newHandlerAt(t *testing.T, service *fakeService, secure bool, now func() time.Time) http.Handler {
 	t.Helper()
-	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: service, UserCreator: service, SecureCookie: secure, Now: now})
+	authHandler, err := authhttp.NewHandler(authhttp.HandlerOptions{Service: service, SecureCookie: secure, Now: now})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}

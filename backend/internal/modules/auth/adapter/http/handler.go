@@ -24,14 +24,9 @@ type service interface {
 	Logout(context.Context, string) error
 }
 
-type userCreator interface {
-	CreateUser(context.Context, domain.User, string, []byte) (domain.User, error)
-}
-
 // HandlerOptions 声明认证 HTTP adapter 的 application 依赖和 cookie policy。
 type HandlerOptions struct {
 	Service      service
-	UserCreator  userCreator
 	SecureCookie bool
 	Now          func() time.Time
 }
@@ -39,7 +34,6 @@ type HandlerOptions struct {
 // Handler 负责认证 DTO、错误映射和 Session cookie，不实现 credential 规则。
 type Handler struct {
 	service      service
-	userCreator  userCreator
 	secureCookie bool
 	now          func() time.Time
 }
@@ -51,7 +45,7 @@ func NewHandler(options HandlerOptions) (*Handler, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Handler{service: options.Service, userCreator: options.UserCreator, secureCookie: options.SecureCookie, now: options.Now}, nil
+	return &Handler{service: options.Service, secureCookie: options.SecureCookie, now: options.Now}, nil
 }
 
 // Register 注册登录、退出和当前用户 endpoint。
@@ -59,9 +53,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
 	mux.Handle("GET /api/v1/auth/me", h.RequireAuthentication(http.HandlerFunc(h.me)))
-	if h.userCreator != nil {
-		mux.Handle("POST /api/v1/users", h.RequireRoles([]domain.Role{domain.RoleAdmin}, http.HandlerFunc(h.createUser)))
-	}
 }
 
 type loginRequest struct {
@@ -69,15 +60,9 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-type createUserRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 type userResponse struct {
-	ID       string      `json:"id"`
-	Username string      `json:"username"`
-	Role     domain.Role `json:"role"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
 }
 
 func (h *Handler) login(writer http.ResponseWriter, request *http.Request) {
@@ -129,31 +114,6 @@ func (h *Handler) me(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func (h *Handler) createUser(writer http.ResponseWriter, request *http.Request) {
-	principal, ok := CurrentUser(request.Context())
-	if !ok {
-		writeApplicationError(writer, request, application.ErrUnauthenticated)
-		return
-	}
-	var payload createUserRequest
-	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
-		httpserver.WriteError(writer, request, *decodeError)
-		return
-	}
-	password := []byte(payload.Password)
-	payload.Password = ""
-	defer clear(password)
-
-	created, err := h.userCreator.CreateUser(request.Context(), principal, payload.Username, password)
-	if err != nil {
-		writeApplicationError(writer, request, err)
-		return
-	}
-	if err := httpserver.WriteJSON(writer, http.StatusCreated, mapUser(created)); err != nil {
-		httpserver.WriteInternalError(writer, request, err)
-	}
-}
-
 // RequireAuthentication 验证 Session cookie，并把 Principal 放入 request context。
 func (h *Handler) RequireAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -167,23 +127,6 @@ func (h *Handler) RequireAuthentication(next http.Handler) http.Handler {
 		ctx := context.WithValue(request.Context(), principalContextKey{}, user)
 		next.ServeHTTP(writer, request.WithContext(ctx))
 	})
-}
-
-// RequireRoles 同时执行 Session 验证和 HTTP 角色拒绝；业务用例仍须独立授权。
-func (h *Handler) RequireRoles(allowed []domain.Role, next http.Handler) http.Handler {
-	authorized := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		user, ok := CurrentUser(request.Context())
-		if !ok {
-			writeApplicationError(writer, request, application.ErrUnauthenticated)
-			return
-		}
-		if err := application.RequireRoles(user, allowed...); err != nil {
-			writeApplicationError(writer, request, err)
-			return
-		}
-		next.ServeHTTP(writer, request)
-	})
-	return h.RequireAuthentication(authorized)
 }
 
 // CurrentUser 返回认证 middleware 注入的 Principal。
@@ -223,7 +166,7 @@ func sessionToken(request *http.Request) string {
 }
 
 func mapUser(user domain.User) userResponse {
-	return userResponse{ID: user.ID, Username: user.Username, Role: user.Role}
+	return userResponse{ID: user.ID, Username: user.Username}
 }
 
 func preventCaching(writer http.ResponseWriter) {
@@ -238,10 +181,6 @@ func writeApplicationError(writer http.ResponseWriter, request *http.Request, er
 		})
 	case errors.Is(err, application.ErrUnauthenticated), errors.Is(err, application.ErrSessionNotFound):
 		httpserver.WriteError(writer, request, unauthenticatedError())
-	case errors.Is(err, application.ErrForbidden):
-		httpserver.WriteError(writer, request, httpserver.Error{
-			Status: http.StatusForbidden, Code: "forbidden", Message: "You do not have permission to perform this action.",
-		})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: http.StatusBadRequest, Code: "invalid_request", Message: "The request is invalid.",

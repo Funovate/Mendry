@@ -13,14 +13,3 @@ func TestNormalizeUsername(t *testing.T) {
 		}
 	}
 }
-
-func TestParseRole(t *testing.T) {
-	for _, value := range []string{"admin", "operator", "viewer"} {
-		if role, err := ParseRole(value); err != nil || string(role) != value {
-			t.Fatalf("ParseRole(%q) = %q, %v", value, role, err)
-		}
-	}
-	if _, err := ParseRole("owner"); err == nil {
-		t.Fatal("ParseRole(owner) error = nil")
-	}
-}

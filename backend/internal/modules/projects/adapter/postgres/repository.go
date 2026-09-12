@@ -29,22 +29,13 @@ func NewRepository(database projectdb.DBTX) (*Repository, error) {
 	return &Repository{queries: projectdb.New(database)}, nil
 }
 
-func (r *Repository) CreateProject(ctx context.Context, project domain.Project, actorUserID, auditID string) (domain.Project, error) {
+func (r *Repository) CreateProject(ctx context.Context, project domain.Project) (domain.Project, error) {
 	projectID, err := uuidParameter(project.ID, "project")
-	if err != nil {
-		return domain.Project{}, err
-	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Project{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
 	if err != nil {
 		return domain.Project{}, err
 	}
 	row, err := r.queries.CreateProject(platformpostgres.WithOperation(ctx, "project.create"), projectdb.CreateProjectParams{
 		ProjectID: projectID, ProjectKey: project.Key, Name: project.Name, Description: project.Description,
-		ActorUserID: actorID, AuditID: auditUUID,
 	})
 	if projectConflict(err) {
 		return domain.Project{}, application.ErrConflict
@@ -52,24 +43,18 @@ func (r *Repository) CreateProject(ctx context.Context, project domain.Project, 
 	if err != nil {
 		return domain.Project{}, newRepositoryError("insert project", err)
 	}
-	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
+	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Version, row.CreatedAt, row.UpdatedAt)
 }
 
-func (r *Repository) ListProjects(ctx context.Context, userID string, systemAdmin bool, limit int32) (application.ListResult[domain.Project], error) {
-	userUUID, err := uuidParameter(userID, "user")
-	if err != nil {
-		return application.ListResult[domain.Project]{}, err
-	}
-	rows, err := r.queries.ListProjectsForUser(platformpostgres.WithOperation(ctx, "project.list"), projectdb.ListProjectsForUserParams{
-		SystemAdmin: systemAdmin, UserID: userUUID, ResultLimit: limit,
-	})
+func (r *Repository) ListProjects(ctx context.Context, limit int32) (application.ListResult[domain.Project], error) {
+	rows, err := r.queries.ListProjects(platformpostgres.WithOperation(ctx, "project.list"), limit)
 	if err != nil {
 		return application.ListResult[domain.Project]{}, newRepositoryError("list projects", err)
 	}
 	projects := make([]domain.Project, 0, len(rows))
 	var total int64
 	for _, row := range rows {
-		project, err := mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
+		project, err := mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Version, row.CreatedAt, row.UpdatedAt)
 		if err != nil {
 			return application.ListResult[domain.Project]{}, fmt.Errorf("map listed project: %w", err)
 		}
@@ -79,114 +64,25 @@ func (r *Repository) ListProjects(ctx context.Context, userID string, systemAdmi
 	return application.ListResult[domain.Project]{Items: projects, Total: total}, nil
 }
 
-func (r *Repository) ResolveProject(ctx context.Context, projectKey, userID string, systemAdmin bool) (domain.Project, error) {
-	userUUID, err := uuidParameter(userID, "user")
-	if err != nil {
-		return domain.Project{}, err
-	}
-	row, err := r.queries.GetProjectAccess(platformpostgres.WithOperation(ctx, "project.resolve_access"), projectdb.GetProjectAccessParams{
-		SystemAdmin: systemAdmin, UserID: userUUID, ProjectKey: projectKey,
-	})
+func (r *Repository) ResolveProject(ctx context.Context, projectKey string) (domain.Project, error) {
+	row, err := r.queries.GetProject(platformpostgres.WithOperation(ctx, "project.resolve"), projectKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Project{}, application.ErrNotFound
 	}
 	if err != nil {
-		return domain.Project{}, newRepositoryError("resolve project access", err)
+		return domain.Project{}, newRepositoryError("resolve project", err)
 	}
-	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
-}
-
-func (r *Repository) ListMembers(ctx context.Context, projectID string) (application.ListResult[domain.Member], error) {
-	projectUUID, err := uuidParameter(projectID, "project")
-	if err != nil {
-		return application.ListResult[domain.Member]{}, err
-	}
-	rows, err := r.queries.ListProjectMembers(platformpostgres.WithOperation(ctx, "project.member.list"), projectUUID)
-	if err != nil {
-		return application.ListResult[domain.Member]{}, newRepositoryError("list project members", err)
-	}
-	members := make([]domain.Member, 0, len(rows))
-	var total int64
-	for _, row := range rows {
-		member, err := mapMember(row.UserID, row.Username, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
-		if err != nil {
-			return application.ListResult[domain.Member]{}, fmt.Errorf("map listed project member: %w", err)
-		}
-		members = append(members, member)
-		total = row.TotalCount
-	}
-	return application.ListResult[domain.Member]{Items: members, Total: total}, nil
-}
-
-func (r *Repository) UpsertMember(ctx context.Context, projectID, username string, role domain.Role, actorUserID, auditID string) (domain.Member, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
-	if err != nil {
-		return domain.Member{}, err
-	}
-	if _, err := r.queries.GetEnabledProjectUser(platformpostgres.WithOperation(ctx, "project.member.get_enabled_user"), username); errors.Is(err, pgx.ErrNoRows) {
-		return domain.Member{}, application.ErrMemberNotFound
-	} else if err != nil {
-		return domain.Member{}, newRepositoryError("query project member user", err)
-	}
-	row, err := r.queries.UpsertProjectMember(platformpostgres.WithOperation(ctx, "project.member.upsert"), projectdb.UpsertProjectMemberParams{
-		Username: username, ProjectID: params.projectID, Role: string(role), AuditID: params.auditID, ActorUserID: params.actorID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Member{}, application.ErrMemberChangeRejected
-	}
-	if err != nil {
-		return domain.Member{}, newRepositoryError("upsert project member", err)
-	}
-	return mapMember(row.UserID, row.Username, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
-}
-
-func (r *Repository) DeleteMember(ctx context.Context, projectID, username, actorUserID, auditID string) (domain.Member, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
-	if err != nil {
-		return domain.Member{}, err
-	}
-	existing, err := r.queries.GetProjectMemberByUsername(platformpostgres.WithOperation(ctx, "project.member.get"), projectdb.GetProjectMemberByUsernameParams{
-		ProjectID: params.projectID, Username: username,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Member{}, application.ErrMemberNotFound
-	}
-	if err != nil {
-		return domain.Member{}, newRepositoryError("query project member", err)
-	}
-	row, err := r.queries.DeleteProjectMember(platformpostgres.WithOperation(ctx, "project.member.delete"), projectdb.DeleteProjectMemberParams{
-		ProjectID: params.projectID, Username: username, AuditID: params.auditID, ActorUserID: params.actorID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Member{}, application.ErrMemberChangeRejected
-	}
-	if err != nil {
-		return domain.Member{}, newRepositoryError("delete project member", err)
-	}
-	role, err := domain.ParseRole(row.Role)
-	if err != nil {
-		return domain.Member{}, fmt.Errorf("map deleted project member role: %w", err)
-	}
-	return domain.Member{UserID: uuidString(row.UserID), Username: row.Username, Role: role, Version: existing.Version,
-		CreatedAt: existing.CreatedAt.Time.UTC(), UpdatedAt: existing.UpdatedAt.Time.UTC()}, nil
+	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Version, row.CreatedAt, row.UpdatedAt)
 }
 
 // UpdateProjectName 原子更新项目名；仅当环境名仍等于旧项目名时同步 environment。
-func (r *Repository) UpdateProjectName(ctx context.Context, project domain.Project, actorUserID, auditID string) (domain.Project, error) {
+func (r *Repository) UpdateProjectName(ctx context.Context, project domain.Project) (domain.Project, error) {
 	projectID, err := uuidParameter(project.ID, "project")
 	if err != nil {
 		return domain.Project{}, err
 	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Project{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Project{}, err
-	}
 	row, err := r.queries.UpdateProjectName(platformpostgres.WithOperation(ctx, "project.rename"), projectdb.UpdateProjectNameParams{
-		Role: string(project.Role), ProjectID: projectID, Name: project.Name, AuditID: auditUUID, ActorUserID: actorID,
+		ProjectID: projectID, Name: project.Name,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Project{}, application.ErrNotFound
@@ -194,10 +90,10 @@ func (r *Repository) UpdateProjectName(ctx context.Context, project domain.Proje
 	if err != nil {
 		return domain.Project{}, newRepositoryError("update project name", err)
 	}
-	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Role, row.Version, row.CreatedAt, row.UpdatedAt)
+	return mapProject(row.ID, row.ProjectKey, row.Name, row.Description, row.Version, row.CreatedAt, row.UpdatedAt)
 }
 
-func (r *Repository) CreateSecret(ctx context.Context, encrypted domain.EncryptedSecret, actorUserID, auditID string) (domain.Secret, error) {
+func (r *Repository) CreateSecret(ctx context.Context, encrypted domain.EncryptedSecret) (domain.Secret, error) {
 	secretID, err := uuidParameter(encrypted.ID, "project secret")
 	if err != nil {
 		return domain.Secret{}, err
@@ -206,18 +102,9 @@ func (r *Repository) CreateSecret(ctx context.Context, encrypted domain.Encrypte
 	if err != nil {
 		return domain.Secret{}, err
 	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Secret{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Secret{}, err
-	}
 	row, err := r.queries.CreateProjectSecret(platformpostgres.WithOperation(ctx, "project.secret.create"), projectdb.CreateProjectSecretParams{
 		SecretID: secretID, ProjectID: projectID, Name: encrypted.Name, Kind: string(encrypted.Kind),
 		Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce, KeyVersion: encrypted.KeyVersion,
-		AuditID: auditUUID, ActorUserID: actorID,
 	})
 	if secretConflict(err) {
 		return domain.Secret{}, application.ErrConflict
@@ -228,8 +115,8 @@ func (r *Repository) CreateSecret(ctx context.Context, encrypted domain.Encrypte
 	return mapSecret(row.ID, row.ProjectID, row.Name, row.Kind, row.KeyVersion, row.Version, row.CreatedAt, row.UpdatedAt)
 }
 
-// UpdateSecret 原地更新凭据 metadata，并写入仅含 name/kind/rotated 的审计事件。
-func (r *Repository) UpdateSecret(ctx context.Context, encrypted domain.EncryptedSecret, actorUserID, auditID string, rotated bool) (domain.Secret, error) {
+// UpdateSecret 原地更新凭据 metadata 和密文。
+func (r *Repository) UpdateSecret(ctx context.Context, encrypted domain.EncryptedSecret) (domain.Secret, error) {
 	secretID, err := uuidParameter(encrypted.ID, "project secret")
 	if err != nil {
 		return domain.Secret{}, err
@@ -238,17 +125,9 @@ func (r *Repository) UpdateSecret(ctx context.Context, encrypted domain.Encrypte
 	if err != nil {
 		return domain.Secret{}, err
 	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Secret{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Secret{}, err
-	}
 	row, err := r.queries.UpdateProjectSecret(platformpostgres.WithOperation(ctx, "project.secret.update"), projectdb.UpdateProjectSecretParams{
 		Name: encrypted.Name, Ciphertext: encrypted.Ciphertext, Nonce: encrypted.Nonce, KeyVersion: encrypted.KeyVersion,
-		ProjectID: projectID, SecretID: secretID, AuditID: auditUUID, ActorUserID: actorID, Rotated: rotated,
+		ProjectID: projectID, SecretID: secretID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Secret{}, application.ErrInvalidInput
@@ -433,13 +312,13 @@ func (r *Repository) getRemediationPolicy(ctx context.Context, projectID pgtype.
 	return policy, nil
 }
 
-func (r *Repository) UpsertRemediationPolicy(ctx context.Context, projectID string, policy domain.RemediationPolicy, actorUserID, auditID string) (domain.RemediationPolicy, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertRemediationPolicy(ctx context.Context, projectID string, policy domain.RemediationPolicy) (domain.RemediationPolicy, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.RemediationPolicy{}, err
 	}
 	row, err := r.queries.UpsertProjectRemediationPolicy(platformpostgres.WithOperation(ctx, "project.configuration.remediation_policy.upsert"), projectdb.UpsertProjectRemediationPolicyParams{
-		ProjectID: params.projectID, AgentLoopMode: string(policy.AgentLoopMode), AuditID: params.auditID, ActorUserID: params.actorID,
+		ProjectID: params.projectID, AgentLoopMode: string(policy.AgentLoopMode),
 	})
 	if err != nil {
 		return domain.RemediationPolicy{}, newRepositoryError("upsert project remediation policy", err)
@@ -447,8 +326,8 @@ func (r *Repository) UpsertRemediationPolicy(ctx context.Context, projectID stri
 	return domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(row.AgentLoopMode), Version: row.AgentLoopPolicyVersion}, nil
 }
 
-func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, environment domain.Environment, actorUserID, auditID string) (domain.Environment, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, environment domain.Environment) (domain.Environment, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.Environment{}, err
 	}
@@ -458,7 +337,7 @@ func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, en
 	}
 	row, err := r.queries.UpsertProjectEnvironment(platformpostgres.WithOperation(ctx, "project.configuration.environment.upsert"), projectdb.UpsertProjectEnvironmentParams{
 		EnvironmentID: environmentID, ProjectID: params.projectID, EnvironmentKey: environment.Key, EnvironmentName: environment.Name,
-		Service: environment.Service, AuditID: params.auditID, ActorUserID: params.actorID,
+		Service: environment.Service,
 	})
 	if configurationConflict(err) {
 		return domain.Environment{}, application.ErrConflict
@@ -469,8 +348,8 @@ func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, en
 	return mapEnvironmentRow(projectdb.GetProjectEnvironmentRow{ID: row.ID, EnvironmentKey: row.EnvironmentKey, Name: row.Name, Service: row.Service, Version: row.Version})
 }
 
-func (r *Repository) UpsertRepository(ctx context.Context, projectID string, repository domain.Repository, actorUserID, auditID string) (domain.Repository, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertRepository(ctx context.Context, projectID string, repository domain.Repository) (domain.Repository, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.Repository{}, err
 	}
@@ -481,7 +360,7 @@ func (r *Repository) UpsertRepository(ctx context.Context, projectID string, rep
 	row, err := r.queries.UpsertProjectRepository(platformpostgres.WithOperation(ctx, "project.configuration.repository.upsert"), projectdb.UpsertProjectRepositoryParams{
 		RepositoryID: repositoryID, ProjectID: params.projectID, RemoteUrl: repository.RemoteURL, ScmProvider: repository.SCMProvider,
 		RepositoryTransport: repository.Transport, CredentialSecretID: optionalUUID(repository.CredentialSecretID),
-		ProductionBranch: repository.ProductionBranch, DeployedCommit: repository.DeployedCommit, AuditID: params.auditID, ActorUserID: params.actorID,
+		ProductionBranch: repository.ProductionBranch, DeployedCommit: repository.DeployedCommit,
 	})
 	if configurationReferenceConflict(err) {
 		return domain.Repository{}, application.ErrInvalidInput
@@ -495,8 +374,8 @@ func (r *Repository) UpsertRepository(ctx context.Context, projectID string, rep
 	return mapRepositoryRow(projectdb.GetProjectRepositoryRow{ID: row.ID, RemoteUrl: row.RemoteUrl, ScmProvider: row.ScmProvider, Transport: row.Transport, CredentialSecretID: row.CredentialSecretID, ProductionBranch: row.ProductionBranch, DeployedCommit: row.DeployedCommit, Version: row.Version})
 }
 
-func (r *Repository) UpsertSource(ctx context.Context, projectID, environmentID string, source domain.Source, actorUserID, auditID string) (domain.Source, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertSource(ctx context.Context, projectID, environmentID string, source domain.Source) (domain.Source, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.Source{}, err
 	}
@@ -511,7 +390,7 @@ func (r *Repository) UpsertSource(ctx context.Context, projectID, environmentID 
 	row, err := r.queries.UpsertProjectSource(platformpostgres.WithOperation(ctx, "project.configuration.source.upsert"), projectdb.UpsertProjectSourceParams{
 		SourceID: sourceID, ProjectID: params.projectID, EnvironmentID: environmentUUID, SourceKind: source.Kind,
 		CredentialSecretID: optionalUUID(source.CredentialSecretID), SourceConfig: source.Config, SourceCapabilities: source.Capabilities,
-		SourceEnabled: source.Enabled, AuditID: params.auditID, ActorUserID: params.actorID,
+		SourceEnabled: source.Enabled,
 	})
 	if configurationReferenceConflict(err) {
 		return domain.Source{}, application.ErrInvalidInput
@@ -525,8 +404,8 @@ func (r *Repository) UpsertSource(ctx context.Context, projectID, environmentID 
 	return mapSourceRow(projectdb.GetProjectSourceRow{ID: row.ID, Kind: row.Kind, CredentialSecretID: row.CredentialSecretID, Config: row.Config, Capabilities: row.Capabilities, Enabled: row.Enabled, Version: row.Version})
 }
 
-func (r *Repository) UpsertTrigger(ctx context.Context, projectID, environmentID string, trigger domain.Trigger, actorUserID, auditID string) (domain.Trigger, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertTrigger(ctx context.Context, projectID, environmentID string, trigger domain.Trigger) (domain.Trigger, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.Trigger{}, err
 	}
@@ -545,7 +424,6 @@ func (r *Repository) UpsertTrigger(ctx context.Context, projectID, environmentID
 		TriggerID: triggerID, ProjectID: params.projectID, EnvironmentID: environmentUUID, TriggerKind: trigger.Kind,
 		SigningSecretID: optionalUUID(trigger.SigningSecretID), TriggerConfig: trigger.Config, TriggerEnabled: trigger.Enabled,
 		IngressTokenHash: trigger.IngressTokenHash, IngressTokenCiphertext: trigger.IngressTokenCiphertext, IngressTokenNonce: trigger.IngressTokenNonce,
-		AuditID: params.auditID, ActorUserID: params.actorID,
 	})
 	if configurationReferenceConflict(err) {
 		return domain.Trigger{}, application.ErrInvalidInput
@@ -559,8 +437,8 @@ func (r *Repository) UpsertTrigger(ctx context.Context, projectID, environmentID
 	return mapTriggerRow(projectdb.GetProjectTriggerRow{ID: row.ID, Kind: row.Kind, SigningSecretID: row.SigningSecretID, Config: row.Config, Enabled: row.Enabled, Version: row.Version, IngressTokenHash: row.IngressTokenHash, IngressTokenCiphertext: row.IngressTokenCiphertext, IngressTokenNonce: row.IngressTokenNonce})
 }
 
-func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, provider domain.LLMProvider, actorUserID, auditID string) (domain.LLMProvider, error) {
-	params, err := r.memberMutationParameters(projectID, actorUserID, auditID)
+func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, provider domain.LLMProvider) (domain.LLMProvider, error) {
+	params, err := r.projectParameters(projectID)
 	if err != nil {
 		return domain.LLMProvider{}, err
 	}
@@ -574,7 +452,7 @@ func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, pr
 	}
 	row, err := r.queries.UpsertProjectLLMProvider(platformpostgres.WithOperation(ctx, "project.configuration.llm.upsert"), projectdb.UpsertProjectLLMProviderParams{
 		LlmID: llmID, ProjectID: params.projectID, LlmProvider: provider.Provider, LlmBaseUrl: provider.BaseURL,
-		LlmCredentialSecretID: credentialID, LlmModel: provider.Model, AuditID: params.auditID, ActorUserID: params.actorID,
+		LlmCredentialSecretID: credentialID, LlmModel: provider.Model,
 	})
 	if configurationReferenceConflict(err) {
 		return domain.LLMProvider{}, application.ErrInvalidInput
@@ -588,7 +466,7 @@ func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, pr
 	return mapLLMRow(projectdb.GetProjectLLMProviderRow{ID: row.ID, Provider: row.Provider, BaseUrl: row.BaseUrl, CredentialSecretID: row.CredentialSecretID, Model: row.Model, Version: row.Version})
 }
 
-func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, configuration domain.Configuration, actorUserID, auditID string) (domain.Configuration, error) {
+func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, configuration domain.Configuration) (domain.Configuration, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
 	if err != nil {
 		return domain.Configuration{}, err
@@ -620,14 +498,6 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 	if err != nil {
 		return domain.Configuration{}, err
 	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Configuration{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Configuration{}, err
-	}
 	row, err := r.queries.UpsertProjectConfiguration(platformpostgres.WithOperation(ctx, "project.configuration.upsert"), projectdb.UpsertProjectConfigurationParams{
 		EnvironmentID: environmentID, ProjectID: projectUUID, EnvironmentKey: configuration.Environment.Key,
 		EnvironmentName: configuration.Environment.Name, Service: configuration.Environment.Service,
@@ -643,8 +513,7 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		TriggerEnabled:   configuration.Trigger.Enabled,
 		IngressTokenHash: configuration.Trigger.IngressTokenHash, IngressTokenCiphertext: configuration.Trigger.IngressTokenCiphertext,
 		IngressTokenNonce: configuration.Trigger.IngressTokenNonce,
-		AuditID:           auditUUID, ActorUserID: actorID,
-		LlmID: llmID, LlmProvider: configuration.LLM.Provider, LlmBaseUrl: configuration.LLM.BaseURL,
+		LlmID:             llmID, LlmProvider: configuration.LLM.Provider, LlmBaseUrl: configuration.LLM.BaseURL,
 		LlmCredentialSecretID: llmSecretID, LlmModel: configuration.LLM.Model,
 	})
 	if configurationReferenceConflict(err) {
@@ -717,7 +586,7 @@ func webhookIngressFromRow(row projectdb.LookupWebhookTokenRow) (application.Web
 	return ingress, nil
 }
 
-func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, hash, ciphertext, nonce []byte, actorUserID, auditID string, rotated bool) error {
+func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, hash, ciphertext, nonce []byte) error {
 	if err := domain.ValidateWebhookTokenColumns(hash, ciphertext, nonce); err != nil {
 		return application.ErrInvalidInput
 	}
@@ -725,17 +594,9 @@ func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, h
 	if err != nil {
 		return err
 	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return err
-	}
 	if _, err := r.queries.UpdateWebhookToken(platformpostgres.WithOperation(ctx, "project.webhook.update_token"), projectdb.UpdateWebhookTokenParams{
 		IngressTokenHash: hash, IngressTokenCiphertext: ciphertext, IngressTokenNonce: nonce,
-		ProjectID: projectUUID, AuditID: auditUUID, ActorUserID: actorID, Rotated: rotated,
+		ProjectID: projectUUID,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		return application.ErrConfigurationNotFound
 	} else if err != nil {
@@ -744,47 +605,14 @@ func (r *Repository) UpdateWebhookToken(ctx context.Context, projectID string, h
 	return nil
 }
 
-func (r *Repository) ListAuditEvents(ctx context.Context, projectID string, limit int32) (application.ListResult[domain.AuditEvent], error) {
+type projectParams struct{ projectID pgtype.UUID }
+
+func (r *Repository) projectParameters(projectID string) (projectParams, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
 	if err != nil {
-		return application.ListResult[domain.AuditEvent]{}, err
+		return projectParams{}, err
 	}
-	rows, err := r.queries.ListProjectAuditEvents(platformpostgres.WithOperation(ctx, "project.audit.list"), projectdb.ListProjectAuditEventsParams{
-		ProjectID: projectUUID, ResultLimit: limit,
-	})
-	if err != nil {
-		return application.ListResult[domain.AuditEvent]{}, newRepositoryError("list project audit events", err)
-	}
-	events := make([]domain.AuditEvent, 0, len(rows))
-	var total int64
-	for _, row := range rows {
-		if !row.ID.Valid || !row.OccurredAt.Valid || !json.Valid(row.Metadata) {
-			return application.ListResult[domain.AuditEvent]{}, fmt.Errorf("project audit row has invalid generated values")
-		}
-		events = append(events, domain.AuditEvent{ID: uuidString(row.ID), ActorUserID: optionalUUIDString(row.ActorUserID),
-			Action: row.Action, TargetType: row.TargetType, TargetID: optionalUUIDString(row.TargetID),
-			Summary: row.Summary, Metadata: row.Metadata, OccurredAt: row.OccurredAt.Time.UTC()})
-		total = row.TotalCount
-	}
-	return application.ListResult[domain.AuditEvent]{Items: events, Total: total}, nil
-}
-
-type memberMutationParams struct{ projectID, actorID, auditID pgtype.UUID }
-
-func (r *Repository) memberMutationParameters(projectID, actorUserID, auditID string) (memberMutationParams, error) {
-	projectUUID, err := uuidParameter(projectID, "project")
-	if err != nil {
-		return memberMutationParams{}, err
-	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return memberMutationParams{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return memberMutationParams{}, err
-	}
-	return memberMutationParams{projectID: projectUUID, actorID: actorID, auditID: auditUUID}, nil
+	return projectParams{projectID: projectUUID}, nil
 }
 
 type configurationRow struct {
@@ -905,32 +733,16 @@ func mapLLMRow(row projectdb.GetProjectLLMProviderRow) (domain.LLMProvider, erro
 	return provider, nil
 }
 
-func mapProject(id pgtype.UUID, key, name, description, roleValue string, version int64, createdAt, updatedAt pgtype.Timestamptz) (domain.Project, error) {
+func mapProject(id pgtype.UUID, key, name, description string, version int64, createdAt, updatedAt pgtype.Timestamptz) (domain.Project, error) {
 	if !id.Valid || !createdAt.Valid || !updatedAt.Valid || version <= 0 {
 		return domain.Project{}, fmt.Errorf("project row has invalid generated values")
 	}
-	role, err := domain.ParseRole(roleValue)
-	if err != nil {
-		return domain.Project{}, fmt.Errorf("map project role: %w", err)
-	}
-	project := domain.Project{ID: uuidString(id), Key: key, Name: name, Description: description, Role: role, Version: version,
+	project := domain.Project{ID: uuidString(id), Key: key, Name: name, Description: description, Version: version,
 		CreatedAt: createdAt.Time.UTC(), UpdatedAt: updatedAt.Time.UTC()}
 	if err := domain.ValidateProject(project); err != nil {
 		return domain.Project{}, fmt.Errorf("validate project row: %w", err)
 	}
 	return project, nil
-}
-
-func mapMember(id pgtype.UUID, username, roleValue string, version int64, createdAt, updatedAt pgtype.Timestamptz) (domain.Member, error) {
-	if !id.Valid || !createdAt.Valid || !updatedAt.Valid || version <= 0 {
-		return domain.Member{}, fmt.Errorf("project member row has invalid generated values")
-	}
-	role, err := domain.ParseRole(roleValue)
-	if err != nil {
-		return domain.Member{}, fmt.Errorf("map project member role: %w", err)
-	}
-	return domain.Member{UserID: uuidString(id), Username: username, Role: role, Version: version,
-		CreatedAt: createdAt.Time.UTC(), UpdatedAt: updatedAt.Time.UTC()}, nil
 }
 
 func mapSecret(id, projectID pgtype.UUID, name, kindValue string, keyVersion int32, version int64, createdAt, updatedAt pgtype.Timestamptz) (domain.Secret, error) {

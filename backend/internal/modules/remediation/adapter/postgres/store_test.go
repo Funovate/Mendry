@@ -127,7 +127,6 @@ func mustIncident(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 			{`DELETE FROM incidents WHERE id = $1`, []any{incidentID}},
 			{`DELETE FROM project_sources WHERE id = $1`, []any{sourceID}},
 			{`DELETE FROM project_environments WHERE id = $1`, []any{envID}},
-			{`DELETE FROM audit_events WHERE project_id = $1`, []any{projectID}},
 			{`DELETE FROM projects WHERE id = $1`, []any{projectID}},
 		}
 		for _, c := range cleanups {

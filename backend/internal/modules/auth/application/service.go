@@ -12,7 +12,6 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthenticated    = errors.New("authentication required")
-	ErrForbidden          = errors.New("operation forbidden")
 	ErrInvalidInput       = errors.New("invalid authentication input")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrUserConflict       = errors.New("user already exists")
@@ -97,36 +96,6 @@ func NewService(options Options) (*Service, error) {
 		now:               options.Now,
 		newUserID:         options.NewUserID,
 	}, nil
-}
-
-// CreateUser 只允许系统管理员创建本地登录账号。新账号的系统角色固定为 viewer，
-// 项目内权限必须通过 project membership 独立授予。
-func (s *Service) CreateUser(ctx context.Context, principal domain.User, username string, password []byte) (domain.User, error) {
-	if err := RequireRoles(principal, domain.RoleAdmin); err != nil {
-		return domain.User{}, err
-	}
-	normalized, err := domain.NormalizeUsername(username)
-	if err != nil || len(password) < minimumPasswordBytes || len(password) > maximumPasswordBytes {
-		return domain.User{}, ErrInvalidInput
-	}
-	passwordHash, err := s.passwords.Hash(password)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("hash local user password: %w", err)
-	}
-	id, err := s.newUserID()
-	if err != nil {
-		return domain.User{}, fmt.Errorf("generate local user ID: %w", err)
-	}
-	created, err := s.users.Create(ctx, Account{User: domain.User{
-		ID: id, Username: normalized, Role: domain.RoleViewer, Enabled: true,
-	}, PasswordHash: passwordHash})
-	if err != nil {
-		if errors.Is(err, ErrUserConflict) {
-			return domain.User{}, ErrUserConflict
-		}
-		return domain.User{}, fmt.Errorf("create local user: %w", err)
-	}
-	return created, nil
 }
 
 // Login 使用相同的公开错误处理未知用户、停用用户和错误密码。
@@ -240,7 +209,7 @@ func (s *Bootstrapper) BootstrapAdmin(ctx context.Context, username string, pass
 		return domain.User{}, false, fmt.Errorf("generate bootstrap administrator ID: %w", err)
 	}
 	created, err := s.users.Create(ctx, Account{User: domain.User{
-		ID: id, Username: normalized, Role: domain.RoleAdmin, Enabled: true,
+		ID: id, Username: normalized, Enabled: true,
 	}, PasswordHash: passwordHash})
 	if err == nil {
 		return created, true, nil
@@ -258,23 +227,10 @@ func (s *Bootstrapper) BootstrapAdmin(ctx context.Context, username string, pass
 }
 
 func existingAdmin(user domain.User) (domain.User, bool, error) {
-	if user.Role != domain.RoleAdmin || !user.Enabled {
+	if !user.Enabled {
 		return domain.User{}, false, ErrUserConflict
 	}
 	return user, false, nil
-}
-
-// RequireRoles 在 application 用例边界执行授权，供后续事故写操作复用。
-func RequireRoles(user domain.User, allowed ...domain.Role) error {
-	if !user.Enabled {
-		return ErrUnauthenticated
-	}
-	for _, role := range allowed {
-		if user.Role == role {
-			return nil
-		}
-	}
-	return ErrForbidden
 }
 
 func boundedPassword(password []byte) []byte {

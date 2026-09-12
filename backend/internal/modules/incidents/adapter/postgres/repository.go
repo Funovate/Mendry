@@ -49,7 +49,7 @@ func NewRepository(database transactor) (*Repository, error) {
 	return &Repository{queries: incidentdb.New(database), database: database}, nil
 }
 
-func (r *Repository) Create(ctx context.Context, incident domain.Incident, actorUserID, auditID string, remediation *application.RemediationRequest) (domain.Incident, error) {
+func (r *Repository) Create(ctx context.Context, incident domain.Incident, remediation *application.RemediationRequest) (domain.Incident, error) {
 	incidentID, err := uuidParameter(incident.InternalID, "incident")
 	if err != nil {
 		return domain.Incident{}, err
@@ -61,14 +61,6 @@ func (r *Repository) Create(ctx context.Context, incident domain.Incident, actor
 	sourceID, err := uuidParameter(incident.SourceID, "project source")
 	if err != nil {
 		return domain.Incident{}, application.ErrInvalidInput
-	}
-	actorID, err := optionalUUIDParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Incident{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Incident{}, err
 	}
 	if remediation != nil {
 		if r.database == nil {
@@ -86,7 +78,7 @@ func (r *Repository) Create(ctx context.Context, incident domain.Incident, actor
 			FirstSeen: timeParameter(incident.FirstSeen), LastSeen: timeParameter(incident.LastSeen),
 			OccurrenceCount: incident.OccurrenceCount, HostCount: incident.HostCount, Muted: incident.Muted,
 			NotificationSummary: incident.NotificationSummary, LifecycleGeneration: incident.LifecycleGeneration,
-			DeployedCommit: incident.DeployedCommit, AuditID: auditUUID, ActorUserID: actorID,
+			DeployedCommit: incident.DeployedCommit,
 		})
 		if err != nil {
 			return domain.Incident{}, err
@@ -105,7 +97,7 @@ func (r *Repository) Create(ctx context.Context, incident domain.Incident, actor
 		FirstSeen: timeParameter(incident.FirstSeen), LastSeen: timeParameter(incident.LastSeen),
 		OccurrenceCount: incident.OccurrenceCount, HostCount: incident.HostCount, Muted: incident.Muted,
 		NotificationSummary: incident.NotificationSummary, LifecycleGeneration: incident.LifecycleGeneration,
-		DeployedCommit: incident.DeployedCommit, AuditID: auditUUID, ActorUserID: actorID,
+		DeployedCommit: incident.DeployedCommit,
 	})
 }
 
@@ -192,19 +184,13 @@ func (r *Repository) GetByFingerprint(ctx context.Context, projectID, fingerprin
 	return mapIncident(incidentRowFromFingerprint(row))
 }
 
-func (r *Repository) RecordOccurrence(ctx context.Context, projectID, fingerprint string, lastSeen time.Time, auditID string) (domain.Incident, error) {
+func (r *Repository) RecordOccurrence(ctx context.Context, projectID, fingerprint string, lastSeen time.Time) (domain.Incident, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
 	if err != nil {
 		return domain.Incident{}, err
 	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
-	if err != nil {
-		return domain.Incident{}, err
-	}
-	// 公开 webhook 入站没有 Session，audit actor 必须显式为空；零值 UUID 对应 SQL narg。
 	row, err := r.queries.RecordIncidentOccurrence(platformpostgres.WithOperation(ctx, "incident.record_occurrence"), incidentdb.RecordIncidentOccurrenceParams{
-		LastSeen: timeParameter(lastSeen), ProjectID: projectUUID, Fingerprint: fingerprint, AuditID: auditUUID,
-		ActorUserID: pgtype.UUID{},
+		LastSeen: timeParameter(lastSeen), ProjectID: projectUUID, Fingerprint: fingerprint,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Incident{}, application.ErrNotFound
@@ -239,22 +225,14 @@ func (r *Repository) List(ctx context.Context, projectID string, limit int32) (a
 	return application.ListResult{Items: incidents, Total: total}, nil
 }
 
-func (r *Repository) UpdateStatus(ctx context.Context, projectID string, number int64, status domain.Status, generation int64, deployedCommit, actorUserID, auditID string, remediation *application.RemediationRequest) (domain.Incident, error) {
+func (r *Repository) UpdateStatus(ctx context.Context, projectID string, number int64, status domain.Status, generation int64, deployedCommit string, remediation *application.RemediationRequest) (domain.Incident, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
-	if err != nil {
-		return domain.Incident{}, err
-	}
-	actorID, err := uuidParameter(actorUserID, "actor user")
-	if err != nil {
-		return domain.Incident{}, err
-	}
-	auditUUID, err := uuidParameter(auditID, "audit event")
 	if err != nil {
 		return domain.Incident{}, err
 	}
 	params := incidentdb.UpdateIncidentStatusParams{
 		Status: string(status), LifecycleGeneration: generation, DeployedCommit: deployedCommit,
-		ProjectID: projectUUID, IncidentNumber: number, AuditID: auditUUID, ActorUserID: actorID,
+		ProjectID: projectUUID, IncidentNumber: number,
 	}
 	if remediation != nil {
 		if r.database == nil {

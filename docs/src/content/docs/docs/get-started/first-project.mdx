@@ -10,8 +10,8 @@ sources:
 
 **Availability: preview**
 
-A project owns its memberships, configuration, credentials, observations,
-incidents, remediation records, and audit events.
+A project owns its configuration, credentials, observations,
+incidents, and remediation records.
 
 ## 1. Sign in
 
@@ -31,8 +31,7 @@ curl -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects
 ```
 
-The creator receives project `admin` access. System and project roles are
-separate.
+The logged-in user can manage every project.
 
 ## 3. Save an environment and enabled source
 
@@ -64,8 +63,7 @@ curl -X PUT -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/trigger
 ```
 
-The first saved `signed_webhook` receives a random inbound token. Only a project
-administrator can read or rotate the complete inbound URL. Set
+The first saved `signed_webhook` receives a random inbound token. The logged-in user can read or rotate the complete inbound URL. Set
 `MENDRY_PUBLIC_URL` so the API can derive that URL.
 
 The full configuration read additionally requires a repository component. The

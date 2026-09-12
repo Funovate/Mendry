@@ -1,10 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, GitBranch, LoaderCircle, LockKeyhole, Plus } from "lucide-react";
+import { ArrowRight, Check, GitBranch, LoaderCircle, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import brandLogo from "../../assets/mendry-logo-horizontal.svg";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { api, messageFromError, type ListResult, type Project } from "../../api";
-import { useCurrentUser } from "../../app/context";
 import { useProjectsQuery } from "../../app/queries";
 import { queryKeys } from "../../app/query";
 import { ErrorNotice, LoadingState } from "../../shared/ui";
@@ -34,21 +33,18 @@ function CreateProjectForm({ onCancel }: { onCancel: () => void }) {
 }
 
 export function ProjectDirectoryPage() {
-  const user = useCurrentUser();
   const projects = useProjectsQuery();
   const navigate = useNavigate();
   if (projects.isPending) return <LoadingState label="Loading projects" />;
   if (projects.isError) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Projects unavailable</h1></div></header><ErrorNotice message={messageFromError(projects.error)} onRetry={() => void projects.refetch()} /></main>;
 
-  if (projects.data.items.length === 0) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>No accessible projects</h1></div></header>{user.role === "admin" ? <section className="empty-projects"><GitBranch size={25} /><h2>Create the first project</h2><button className="primary-button" type="button" onClick={() => navigate("/projects/new")}><Plus size={16} />Create project</button></section> : <section className="empty-projects"><LockKeyhole size={25} /><h2>No project membership</h2><p>Ask a project administrator to add your username to a project.</p></section>}</main>;
+  if (projects.data.items.length === 0) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>No projects</h1></div></header><section className="empty-projects"><GitBranch size={25} /><h2>Create the first project</h2><button className="primary-button" type="button" onClick={() => navigate("/projects/new")}><Plus size={16} />Create project</button></section></main>;
 
-  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Switch projects</h1></div></header><div className="project-list">{projects.data.items.map((project) => <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/incidents`}><span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span><span><strong>{project.name}</strong><small>{project.key} · {project.role}</small></span><ArrowRight size={18} /></Link>)}{user.role === "admin" && <button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}><span>+</span><div><strong>Create project</strong></div><ArrowRight size={18} /></button>}</div></main>;
+  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Switch projects</h1></div></header><div className="project-list">{projects.data.items.map((project) => <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/incidents`}><span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span><span><strong>{project.name}</strong><small>{project.key}</small></span><ArrowRight size={18} /></Link>)}<button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}><span>+</span><div><strong>Create project</strong></div><ArrowRight size={18} /></button></div></main>;
 }
 
 export function CreateProjectPage() {
-  const user = useCurrentUser();
   const navigate = useNavigate();
-  if (user.role !== "admin") return <Navigate to="/projects" replace />;
 
   return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Create project</h1></div></header><CreateProjectForm onCancel={() => navigate("/projects")} /></main>;
 }

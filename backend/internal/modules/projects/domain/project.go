@@ -15,32 +15,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type Role string
-
-const (
-	RoleAdmin    Role = "admin"
-	RoleOperator Role = "operator"
-	RoleViewer   Role = "viewer"
-)
-
 type Project struct {
 	ID          string
 	Key         string
 	Name        string
 	Description string
-	Role        Role
 	Version     int64
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-}
-
-type Member struct {
-	UserID    string
-	Username  string
-	Role      Role
-	Version   int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 type SecretKind string
@@ -107,7 +89,7 @@ type Trigger struct {
 	Config          json.RawMessage
 	Enabled         bool
 	Version         int64
-	// InboundURL 仅项目管理员读取 signed_webhook 时由 application 填入完整公开地址。
+	// InboundURL 登录用户读取 signed_webhook 时由 application 填入完整公开地址。
 	InboundURL string
 	// IngressTokenHash / Ciphertext / Nonce 是 trigger 行上的入站 token 材料，
 	// 不得进入 HTTP JSON；仅 persistence 与 application 揭示路径使用。
@@ -169,17 +151,6 @@ type ConfigurationDraft struct {
 	Remediation *RemediationPolicy
 }
 
-type AuditEvent struct {
-	ID          string
-	ActorUserID *string
-	Action      string
-	TargetType  string
-	TargetID    *string
-	Summary     string
-	Metadata    json.RawMessage
-	OccurredAt  time.Time
-}
-
 var (
 	projectKeyPattern     = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}[a-z0-9]$`)
 	environmentKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
@@ -215,28 +186,12 @@ func NormalizeProjectKey(value string) (string, error) {
 	return key, nil
 }
 
-func ParseRole(value string) (Role, error) {
-	role := Role(value)
-	switch role {
-	case RoleAdmin, RoleOperator, RoleViewer:
-		return role, nil
-	default:
-		return "", fmt.Errorf("unknown project role")
-	}
-}
-
-func (p Project) CanWriteIncidents() bool { return p.Role == RoleAdmin || p.Role == RoleOperator }
-func (p Project) CanAdminister() bool     { return p.Role == RoleAdmin }
-
 func ValidateProject(project Project) error {
 	if _, err := NormalizeProjectKey(project.Key); err != nil {
 		return err
 	}
 	if !bounded(project.Name, 1, 120) || len(project.Description) > 1000 {
 		return fmt.Errorf("project name or description is invalid")
-	}
-	if _, err := ParseRole(string(project.Role)); err != nil {
-		return err
 	}
 	return nil
 }
@@ -674,8 +629,8 @@ func validSSHSourceFields(host string, port int, user, projectFolder, logPath, m
 		bounded(projectFolder, 1, 2048) && bounded(logPath, 1, 2048) && oneOf(mode, "tail", "snapshot")
 }
 
-// ValidateSSHContainerProbe 校验 admin-only Docker inventory probe 的连接草稿。
-// probe 只接受项目管理员提供的已保存 SSH credential reference，不接受远端命令。
+// ValidateSSHContainerProbe 校验 authenticated Docker inventory probe 的连接草稿。
+// probe 只接受登录用户提供的已保存 SSH credential reference，不接受远端命令。
 func ValidateSSHContainerProbe(host string, port int, user, credentialSecretID string) error {
 	if !bounded(host, 1, 255) || strings.ContainsAny(host, "\r\n") ||
 		port < 1 || port > 65535 || !bounded(user, 1, 128) || strings.ContainsAny(user, "\r\n") ||

@@ -10,7 +10,7 @@ sources:
 
 **可用性：preview**
 
-项目拥有自己的成员、配置、凭据、观测记录、事故、修复记录和审计事件。
+项目拥有自己的配置、凭据、观测记录、事故和修复记录。
 
 ## 1. 登录
 
@@ -30,7 +30,7 @@ curl -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects
 ```
 
-创建者获得项目 `admin` 权限。系统角色与项目角色彼此独立。
+登录用户可管理所有项目。
 
 ## 3. 保存 environment 与已启用 source
 
@@ -59,7 +59,7 @@ curl -X PUT -b /tmp/mendry-cookie.txt \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/trigger
 ```
 
-首次保存 `signed_webhook` 时会生成随机入站 token。只有项目管理员能读取或轮换完整入站 URL。请设置 `MENDRY_PUBLIC_URL`，使 API 能生成该 URL。
+首次保存 `signed_webhook` 时会生成随机入站 token。登录用户可读取或轮换完整入站 URL。请设置 `MENDRY_PUBLIC_URL`，使 API 能生成该 URL。
 
 完整配置读取还要求 repository 组件。Webhook 路径本身使用已保存的 environment、enabled source 与 trigger。在启用依赖 Git 基线的修复前，请阅读[配置参考](/zh-cn/docs/reference/configuration/)。
 

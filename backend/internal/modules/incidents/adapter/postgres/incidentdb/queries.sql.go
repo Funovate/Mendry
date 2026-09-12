@@ -28,14 +28,6 @@ WITH created_incident AS (
               fingerprint, status, priority, source, first_seen, last_seen,
               occurrence_count, host_count, muted, notification_summary,
               lifecycle_generation, deployed_commit, version, created_at, updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT $18, project_id, $19, 'incident.created',
-           'incident', id, 'Incident created.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM created_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,
@@ -62,8 +54,6 @@ type CreateIncidentParams struct {
 	NotificationSummary string
 	LifecycleGeneration int64
 	DeployedCommit      string
-	AuditID             pgtype.UUID
-	ActorUserID         pgtype.UUID
 }
 
 type CreateIncidentRow struct {
@@ -109,8 +99,6 @@ func (q *Queries) CreateIncident(ctx context.Context, arg CreateIncidentParams) 
 		arg.NotificationSummary,
 		arg.LifecycleGeneration,
 		arg.DeployedCommit,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i CreateIncidentRow
 	err := row.Scan(
@@ -527,15 +515,6 @@ WITH changed_incident AS (
               incident.notification_summary, incident.lifecycle_generation,
               incident.deployed_commit, incident.version,
               incident.created_at, incident.updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT $4, project_id, $5,
-           'incident.occurrence.recorded', 'incident', id,
-           'Incident occurrence recorded.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM changed_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,
@@ -548,8 +527,6 @@ type RecordIncidentOccurrenceParams struct {
 	LastSeen    pgtype.Timestamptz
 	ProjectID   pgtype.UUID
 	Fingerprint string
-	AuditID     pgtype.UUID
-	ActorUserID pgtype.UUID
 }
 
 type RecordIncidentOccurrenceRow struct {
@@ -577,13 +554,7 @@ type RecordIncidentOccurrenceRow struct {
 }
 
 func (q *Queries) RecordIncidentOccurrence(ctx context.Context, arg RecordIncidentOccurrenceParams) (RecordIncidentOccurrenceRow, error) {
-	row := q.db.QueryRow(ctx, recordIncidentOccurrence,
-		arg.LastSeen,
-		arg.ProjectID,
-		arg.Fingerprint,
-		arg.AuditID,
-		arg.ActorUserID,
-	)
+	row := q.db.QueryRow(ctx, recordIncidentOccurrence, arg.LastSeen, arg.ProjectID, arg.Fingerprint)
 	var i RecordIncidentOccurrenceRow
 	err := row.Scan(
 		&i.ID,
@@ -629,14 +600,6 @@ WITH changed_incident AS (
               incident.notification_summary, incident.lifecycle_generation,
               incident.deployed_commit, incident.version,
               incident.created_at, incident.updated_at
-), created_audit AS (
-    INSERT INTO audit_events (
-        id, project_id, actor_user_id, action, target_type, target_id, summary, metadata
-    )
-    SELECT $6, project_id, $7, 'incident.status.updated',
-           'incident', id, 'Incident status updated.',
-           jsonb_build_object('incidentNumber', incident_number, 'status', status)
-    FROM changed_incident
 )
 SELECT id, project_id, environment_id, source_id, incident_number, title,
        fingerprint, status, priority, source, first_seen, last_seen,
@@ -651,8 +614,6 @@ type UpdateIncidentStatusParams struct {
 	DeployedCommit      string
 	ProjectID           pgtype.UUID
 	IncidentNumber      int64
-	AuditID             pgtype.UUID
-	ActorUserID         pgtype.UUID
 }
 
 type UpdateIncidentStatusRow struct {
@@ -686,8 +647,6 @@ func (q *Queries) UpdateIncidentStatus(ctx context.Context, arg UpdateIncidentSt
 		arg.DeployedCommit,
 		arg.ProjectID,
 		arg.IncidentNumber,
-		arg.AuditID,
-		arg.ActorUserID,
 	)
 	var i UpdateIncidentStatusRow
 	err := row.Scan(
