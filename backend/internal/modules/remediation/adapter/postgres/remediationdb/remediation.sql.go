@@ -315,7 +315,7 @@ INSERT INTO remediation_run (
     (SELECT agent_loop_mode FROM remediation_run WHERE id = $3),
     (SELECT agent_loop_policy_version FROM remediation_run WHERE id = $3)
 )
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at
 `
 
 type CreateRemediationNextRunParams struct {
@@ -364,6 +364,7 @@ func (q *Queries) CreateRemediationNextRun(ctx context.Context, arg CreateRemedi
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }
@@ -446,7 +447,7 @@ FROM remediation_series AS series
 JOIN incidents AS incident ON incident.id = series.incident_id
 JOIN projects AS project ON project.id = incident.project_id
 WHERE series.id = $1
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at
 `
 
 type CreateRemediationRunParams struct {
@@ -495,6 +496,7 @@ func (q *Queries) CreateRemediationRun(ctx context.Context, arg CreateRemediatio
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }
@@ -728,7 +730,7 @@ func (q *Queries) GetLatestRemediationObservationForIncident(ctx context.Context
 }
 
 const getLatestRemediationPlanningCheckpoint = `-- name: GetLatestRemediationPlanningCheckpoint :one
-SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable, run.agent_loop_mode, run.agent_loop_policy_version, run.analysis_only
+SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable, run.agent_loop_mode, run.agent_loop_policy_version, run.analysis_only, run.state_entered_at
 FROM remediation_run AS run
 WHERE run.series_id = $1
   AND run.context_version = $2
@@ -780,6 +782,7 @@ func (q *Queries) GetLatestRemediationPlanningCheckpoint(ctx context.Context, ar
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }
@@ -1169,7 +1172,7 @@ func (q *Queries) GetRemediationPlansByRunID(ctx context.Context, runID pgtype.U
 }
 
 const getRemediationRun = `-- name: GetRemediationRun :one
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only FROM remediation_run WHERE id = $1
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at FROM remediation_run WHERE id = $1
 `
 
 func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (RemediationRun, error) {
@@ -1202,6 +1205,7 @@ func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (Remedi
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }
@@ -1222,7 +1226,7 @@ func (q *Queries) GetRemediationRunProject(ctx context.Context, runID pgtype.UUI
 }
 
 const getRemediationRunsBySeriesID = `-- name: GetRemediationRunsBySeriesID :many
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only FROM remediation_run
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at FROM remediation_run
 WHERE series_id = $1
 ORDER BY attempt_number ASC
 `
@@ -1263,6 +1267,7 @@ func (q *Queries) GetRemediationRunsBySeriesID(ctx context.Context, seriesID pgt
 			&i.AgentLoopMode,
 			&i.AgentLoopPolicyVersion,
 			&i.AnalysisOnly,
+			&i.StateEnteredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1467,7 +1472,7 @@ SET model_calls = model_calls + $2,
     repository_bytes = repository_bytes + $10,
     version = version + 1
 WHERE id = $1
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at
 `
 
 type IncrementRunCountersParams struct {
@@ -1524,6 +1529,7 @@ func (q *Queries) IncrementRunCounters(ctx context.Context, arg IncrementRunCoun
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }
@@ -1948,7 +1954,7 @@ SET state = $2,
     retryable = CASE WHEN $3::boolean THEN $6::boolean ELSE false END,
     version = version + 1
 WHERE id = $1 AND version = $4
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at
 `
 
 type UpdateRemediationRunStateParams struct {
@@ -1997,6 +2003,7 @@ func (q *Queries) UpdateRemediationRunState(ctx context.Context, arg UpdateRemed
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
 	)
 	return i, err
 }

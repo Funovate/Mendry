@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { overviewFixture } from "./overview-fixtures";
 
 const now = "2026-08-13T08:00:00Z";
 
@@ -243,6 +244,8 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (!authenticated) return error(401, "unauthenticated", "Authentication is required.");
 
+    if (path.endsWith("/overview") && method === "GET") return json(overviewFixture([]));
+    if (path.endsWith("/overview/tasks") && method === "GET") return json([]);
     if (path === "/api/v1/projects" && method === "GET") return json(projects);
     if (path === "/api/v1/projects" && method === "POST") {
       const input = body as { key: string; name: string; description: string };
@@ -442,13 +445,14 @@ test("requires a server session and logs in through the real auth route", async 
   await page.getByLabel("Username").fill("operator");
   await page.getByLabel("Password").fill("correct-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: /Incidents/ })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   expect(state.writes).toContainEqual({ method: "POST", path: "/api/v1/auth/login", body: { username: "operator", password: "correct-password" } });
 });
 
 test("loads project-owned configuration, events, and incidents", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
+  await page.getByRole("link", { name: "Incidents", exact: true }).click();
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Event stream" }).click();
@@ -576,6 +580,7 @@ test("distinguishes an existing project with no configuration from an empty proj
 test("persists credentials, configuration, and incident lifecycle", async ({ page }) => {
   const state = await mockApi(page);
   await page.goto("/");
+  await page.getByRole("link", { name: "Incidents", exact: true }).click();
 
   await page.getByText("Validator locale fr is not registered", { exact: true }).click();
   await page.getByLabel("Incident status", { exact: true }).selectOption("Recovered");
@@ -934,7 +939,9 @@ test("keeps project data isolated while switching projects", async ({ page }) =>
 
   await page.getByRole("button", { name: "Project Real Estate API" }).click();
   await page.getByRole("link", { name: /Payments API/ }).click();
-  await expect(page).toHaveURL(/\/projects\/payments\/incidents$/);
+  await expect(page).toHaveURL(/\/projects\/payments\/overview$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
+  await page.getByRole("link", { name: "Incidents", exact: true }).click();
   await expect(page.getByText("Payment capture timed out", { exact: true })).toBeVisible();
   await expect(page.getByText("Validator locale fr is not registered", { exact: true })).toHaveCount(0);
 });

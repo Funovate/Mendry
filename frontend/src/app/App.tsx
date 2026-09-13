@@ -5,6 +5,7 @@ import { LoginPage } from "../features/auth/LoginPage";
 import { ConfigurationEditorPage } from "../features/configuration/ConfigurationEditorPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { IncidentsPage } from "../features/incidents/IncidentsPage";
+import { OverviewPage } from "../features/overview/OverviewPage";
 import { ObservationsPage } from "../features/observations/ObservationsPage";
 import { CreateProjectPage, HomeRedirect, ProjectDirectoryPage } from "../features/projects/ProjectDirectoryPage";
 import { ProjectRoute } from "../features/projects/ProjectRoute";
@@ -23,7 +24,8 @@ export default function App() {
       <Route path="projects/new" element={<CreateProjectPage />} />
       <Route path="projects/:projectKey" element={<ProjectRoute />}>
         <Route element={<AppShell />}>
-          <Route index element={<Navigate to="incidents" replace />} />
+          <Route index element={<Navigate to="overview" replace />} />
+          <Route path="overview" element={<OverviewPage />} />
           <Route path="incidents" element={<IncidentsPage />} />
           <Route path="incidents/:incidentId" element={<IncidentsPage />} />
           <Route path="observations" element={<ObservationsPage />} />

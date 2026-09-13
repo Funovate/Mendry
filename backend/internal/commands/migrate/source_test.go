@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 20 {
-		t.Fatalf("migration count = %d, want 20", len(migrations))
+	if len(migrations) != 21 {
+		t.Fatalf("migration count = %d, want 21", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {

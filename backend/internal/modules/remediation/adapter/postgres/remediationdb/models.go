@@ -301,6 +301,8 @@ type RemediationRun struct {
 	AgentLoopPolicyVersion int64
 	// Immutable execution constraint inherited by continuation attempts; true permits diagnosis and proposed solutions but forbids patch, validation, publication, repair, and deployment effects.
 	AnalysisOnly bool
+	// Time the current state was entered; NULL for legacy runs until their next state transition.
+	StateEnteredAt pgtype.Timestamptz
 }
 
 // 一次事故在固定 lifecycle_generation 与 deployed_commit 下的 remediation 系列；唯一键阻止同一基线重复建根 run。

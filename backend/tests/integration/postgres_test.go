@@ -110,8 +110,8 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list applied migrations: %v", err)
 	}
-	if len(applied) != 20 {
-		t.Fatalf("applied migration count = %d, want 20: %#v", len(applied), applied)
+	if len(applied) != 21 {
+		t.Fatalf("applied migration count = %d, want 21: %#v", len(applied), applied)
 	}
 	for index, migration := range applied {
 		if migration.Version != int64(index+1) || len(migration.Checksum) != 64 {
@@ -126,6 +126,7 @@ func TestPostgreSQLMigrationsFromEmptyHistory(t *testing.T) {
 
 func resetMVPPostgreSQLSchema(ctx context.Context, pool *postgres.Pool, operation string) error {
 	for _, table := range []string{
+		"remediation_token_usage", "overview_collection",
 		"remediation_lifecycle_effect", "remediation_tool_invocation", "remediation_artifact", "remediation_plan",
 		"remediation_decision", "remediation_run", "remediation_series",
 		"audit_events", "incidents", "observations", "project_triggers", "project_sources",
@@ -133,6 +134,11 @@ func resetMVPPostgreSQLSchema(ctx context.Context, pool *postgres.Pool, operatio
 		"project_environments", "projects", "users", "fixthe_schema_migrations",
 	} {
 		if _, err := pool.Exec(postgres.WithOperation(ctx, operation), "DROP TABLE IF EXISTS "+table); err != nil {
+			return err
+		}
+	}
+	for _, function := range []string{"overview_run_state_time", "overview_record_token_usage"} {
+		if _, err := pool.Exec(postgres.WithOperation(ctx, operation), "DROP FUNCTION IF EXISTS "+function+"()"); err != nil {
 			return err
 		}
 	}

@@ -23,6 +23,9 @@ import (
 	observationhttp "mendry/backend/internal/modules/observations/adapter/http"
 	observationpostgres "mendry/backend/internal/modules/observations/adapter/postgres"
 	observationapplication "mendry/backend/internal/modules/observations/application"
+	overviewhttp "mendry/backend/internal/modules/overview/adapter/http"
+	overviewpostgres "mendry/backend/internal/modules/overview/adapter/postgres"
+	overviewapplication "mendry/backend/internal/modules/overview/application"
 	projectgit "mendry/backend/internal/modules/projects/adapter/git"
 	projecthttp "mendry/backend/internal/modules/projects/adapter/http"
 	projectopenai "mendry/backend/internal/modules/projects/adapter/openai"
@@ -380,7 +383,21 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 
+	overviewRepository, err := overviewpostgres.NewRepository(postgresPool)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout, err)
+	}
+	overviewService, err := overviewapplication.NewService(overviewRepository, projectService)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout, err)
+	}
+	overviewHandler, err := overviewhttp.NewHandler(overviewService, authHandler)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout, err)
+	}
+
 	mux := http.NewServeMux()
+	overviewHandler.Register(mux)
 	systemHandler := systemhttp.NewHandler(systemService)
 	systemHandler.Register(mux)
 	authHandler.Register(mux)

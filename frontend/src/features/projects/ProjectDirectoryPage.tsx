@@ -22,7 +22,7 @@ function CreateProjectForm({ onCancel }: { onCancel: () => void }) {
         items: [...(current?.items ?? []), project],
         total: (current?.total ?? 0) + 1,
       }));
-      navigate(`/projects/${encodeURIComponent(project.key)}/incidents`, { replace: true });
+      navigate(`/projects/${encodeURIComponent(project.key)}/overview`, { replace: true });
     },
   });
   const submit = (event: FormEvent) => {
@@ -40,7 +40,7 @@ export function ProjectDirectoryPage() {
 
   if (projects.data.items.length === 0) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>No projects</h1></div></header><section className="empty-projects"><GitBranch size={25} /><h2>Create the first project</h2><button className="primary-button" type="button" onClick={() => navigate("/projects/new")}><Plus size={16} />Create project</button></section></main>;
 
-  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Switch projects</h1></div></header><div className="project-list">{projects.data.items.map((project) => <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/incidents`}><span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span><span><strong>{project.name}</strong><small>{project.key}</small></span><ArrowRight size={18} /></Link>)}<button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}><span>+</span><div><strong>Create project</strong></div><ArrowRight size={18} /></button></div></main>;
+  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Switch projects</h1></div></header><div className="project-list">{projects.data.items.map((project) => <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/overview`}><span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span><span><strong>{project.name}</strong><small>{project.key}</small></span><ArrowRight size={18} /></Link>)}<button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}><span>+</span><div><strong>Create project</strong></div><ArrowRight size={18} /></button></div></main>;
 }
 
 export function CreateProjectPage() {
@@ -53,5 +53,5 @@ export function HomeRedirect() {
   const projects = useProjectsQuery();
   if (projects.isPending) return <LoadingState label="Loading projects" />;
   if (projects.isError || projects.data.items.length === 0) return <Navigate to="/projects" replace />;
-  return <Navigate to={`/projects/${encodeURIComponent(projects.data.items[0].key)}/incidents`} replace />;
+  return <Navigate to={`/projects/${encodeURIComponent(projects.data.items[0].key)}/overview`} replace />;
 }
