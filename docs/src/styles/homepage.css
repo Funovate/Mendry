@@ -1024,6 +1024,12 @@ html[data-theme="dark"] .home-recovery-icon {
   padding-top: 2rem !important;
   border-top: 1px solid var(--home-line);
 }
+.home-traits li {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  column-gap: 0.8rem;
+  align-items: center;
+}
 .home-trait-symbol {
   color: var(--home-amber-ink);
   font-size: 1.35rem;
@@ -1031,9 +1037,10 @@ html[data-theme="dark"] .home-recovery-icon {
 .home-traits h3 {
   font-size: 0.95rem;
   font-weight: 550;
-  margin-top: 0.8rem;
+  margin: 0;
 }
 .home-traits p {
+  grid-column: 2;
   color: var(--home-copy);
   font-size: 0.8rem;
   line-height: 1.8;
@@ -1293,17 +1300,7 @@ html[data-theme="dark"] .home-recovery-icon {
     gap: 1.5rem;
     margin-top: 2.5rem !important;
   }
-  .home-traits li {
-    display: grid;
-    grid-template-columns: 1.5rem 1fr;
-    column-gap: 0.8rem;
-    align-items: center;
-  }
-  .home-traits h3 {
-    margin: 0;
-  }
   .home-traits p {
-    grid-column: 2;
     margin-top: 0.2rem;
   }
   .home-start > h2 {
