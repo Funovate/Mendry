@@ -83,14 +83,17 @@ export function SourceStep({
   saveError?: unknown;
 }) {
   return <section>
-    <div className="setup-card-title"><FileSearch size={20} /><div><h2>Collection source</h2><p>Configure one read-only source.</p></div></div>
-    <div className="source-form">
-      <label>Source type<select aria-label="Source type" value={sourceKind} onChange={(event) => onSourceKindChange(event.target.value as SourceKind)}>
-        <option value="cloud">Cloud logs</option>
-        <option value="mcp">MCP</option>
-        <option value="ssh">SSH logs</option>
-      </select></label>
+    <div className="setup-card-title">
+      <div className="setup-card-icon">
+        <FileSearch size={18} />
+      </div>
+      <h2>Collection source</h2>
     </div>
+    <label>Source type<select aria-label="Source type" value={sourceKind} onChange={(event) => onSourceKindChange(event.target.value as SourceKind)}>
+      <option value="cloud">Cloud logs</option>
+      <option value="mcp">MCP</option>
+      <option value="ssh">SSH logs</option>
+    </select></label>
     <CredentialField
       label="Source credential reference" value={sourceCredentialId} onChange={setSourceCredentialId} secrets={knownSecrets}
       createLabelPrefix="Source" allowedCreateKinds={SOURCE_CREDENTIAL_KINDS[sourceKind]} onCreate={createCredential}
@@ -127,18 +130,21 @@ export function SourceStep({
         <option value="docker">Docker</option>
       </select></label>
       {sshDeploymentKind === "docker" && <div className="docker-container-picker">
-        <div className="setup-section-actions">
-          <button className="secondary-button" type="button" onClick={onRefreshDockerContainers} disabled={refreshingDockerContainers} title="Refresh Docker containers">
-            {refreshingDockerContainers ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
-            Refresh containers
-          </button>
-        </div>
-        <label>Docker container<select aria-label="Docker container" value={sshContainerName} onChange={(event) => setSshContainerName(event.target.value)} disabled={refreshingDockerContainers}>
-          <option value="">Select a returned container</option>
-          {dockerContainers.map((container) => <option key={container.name} value={container.name}>
-            {container.name} · {container.image} · {container.state} · {container.status}
-          </option>)}
-        </select></label>
+        <label>
+          Docker container
+          <div className="form-input-action-row">
+            <select aria-label="Docker container" value={sshContainerName} onChange={(event) => setSshContainerName(event.target.value)} disabled={refreshingDockerContainers}>
+              <option value="">Select a returned container</option>
+              {dockerContainers.map((container) => <option key={container.name} value={container.name}>
+                {container.name} · {container.image} · {container.state} · {container.status}
+              </option>)}
+            </select>
+            <button className="secondary-button" type="button" onClick={onRefreshDockerContainers} disabled={refreshingDockerContainers} title="Refresh Docker containers">
+              {refreshingDockerContainers ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+              <span>Refresh</span>
+            </button>
+          </div>
+        </label>
         {dockerContainerError !== undefined && dockerContainerError !== null && <p className="credential-field-error" role="alert">{messageFromError(dockerContainerError)}</p>}
         {dockerContainers.length === 0 && !refreshingDockerContainers && <p className="field-hint">Refresh the inventory to choose a running, restarting, or stopped container.</p>}
       </div>}

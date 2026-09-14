@@ -1,54 +1,138 @@
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, Cpu, FileSearch, GitBranch, Layers, Webhook } from "lucide-react";
 import type { ProjectConfigurationDraft } from "../../../api";
 
 export function ReviewStep({ configuration, inboundUrl }: { configuration: ProjectConfigurationDraft; inboundUrl?: string | null }) {
   const triggerUrl = inboundUrl ?? configuration.trigger?.inboundUrl;
-  return <section>
-    <div className="setup-card-title"><CircleHelp size={20} /><div><h2>Review</h2><p>Review the saved state of each configuration component.</p></div></div>
-    <div className="review-summary">
-      <div>
-        <h3>Environment</h3>
-        <dl>
-          <dt>Key</dt><dd>{configuration.environment?.key ?? "Not saved"}</dd>
-          <dt>Name</dt><dd>{configuration.environment?.name ?? "Not saved"}</dd>
-          <dt>Service</dt><dd>{configuration.environment?.service || "No service"}</dd>
-        </dl>
+
+  return (
+    <section>
+      <div className="setup-card-title">
+        <div className="setup-card-icon">
+          <CircleHelp size={18} />
+        </div>
+        <h2>Review</h2>
       </div>
-      <div>
-        <h3>Git repository</h3>
-        <dl>
-          <dt>Remote</dt><dd>{configuration.repository?.remoteUrl ?? "Not saved"}</dd>
-          <dt>SCM provider</dt><dd>{configuration.repository?.scmProvider ?? "Not saved"}</dd>
-          <dt>Transport</dt><dd>{configuration.repository?.transport ?? "Not saved"}</dd>
-          <dt>Credential</dt><dd>{configuration.repository?.credentialSecretId || "No credential"}</dd>
-          <dt>Production branch</dt><dd>{configuration.repository?.productionBranch ?? "Not saved"}</dd>
-          <dt>Deployed commit</dt><dd>{configuration.repository?.deployedCommit ?? "Not saved"}</dd>
-        </dl>
+
+      <div className="review-summary-grid">
+        {/* Environment */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <Layers size={16} />
+            <h3>Environment</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Key</span>
+              <code>{configuration.environment?.key ?? "Not saved"}</code>
+            </div>
+            <div className="review-row">
+              <span>Name</span>
+              <strong>{configuration.environment?.name ?? "Not saved"}</strong>
+            </div>
+            <div className="review-row">
+              <span>Service</span>
+              <code>{configuration.environment?.service || "No service"}</code>
+            </div>
+          </div>
+        </div>
+
+        {/* Git repository */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <GitBranch size={16} />
+            <h3>Git repository</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Remote</span>
+              <code>{configuration.repository?.remoteUrl ?? "Not saved"}</code>
+            </div>
+            <div className="review-row">
+              <span>Provider</span>
+              <span>{configuration.repository?.scmProvider ?? "generic"} ({configuration.repository?.transport?.toUpperCase() ?? "HTTPS"})</span>
+            </div>
+            <div className="review-row">
+              <span>Baseline</span>
+              <span>
+                {configuration.repository?.productionBranch ? (
+                  <>
+                    <strong>{configuration.repository.productionBranch}</strong>
+                    {configuration.repository.deployedCommit && (
+                      <> @ <code>{configuration.repository.deployedCommit.slice(0, 7)}</code></>
+                    )}
+                  </>
+                ) : (
+                  "Not saved"
+                )}
+              </span>
+            </div>
+            <div className="review-row">
+              <span>Credential</span>
+              <span>{configuration.repository?.credentialSecretId ? "Credential linked" : "No credential"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Collection source */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <FileSearch size={16} />
+            <h3>Collection source</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Kind</span>
+              <strong>{configuration.source?.kind ?? "Not saved"}</strong>
+            </div>
+            <div className="review-row">
+              <span>Credential</span>
+              <span>{configuration.source?.credentialSecretId ? "Credential linked" : "No credential"}</span>
+            </div>
+            <div className="review-row">
+              <span>Capabilities</span>
+              <span>{configuration.source?.capabilities.join(", ") || "None selected"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Trigger */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <Webhook size={16} />
+            <h3>Trigger</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Kind</span>
+              <strong>{configuration.trigger?.kind ?? "Not saved"}</strong>
+            </div>
+            {configuration.trigger?.kind === "signed_webhook" && triggerUrl && (
+              <div className="review-row">
+                <span>Inbound URL</span>
+                <code>{triggerUrl}</code>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* LLM provider */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <Cpu size={16} />
+            <h3>LLM provider</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Provider</span>
+              <strong>{configuration.llm?.provider ?? "Not configured"}</strong>
+            </div>
+            <div className="review-row">
+              <span>Model</span>
+              <code>{configuration.llm?.model ?? "Not configured"}</code>
+            </div>
+          </div>
+        </div>
       </div>
-      <div>
-        <h3>Collection source</h3>
-        <dl>
-          <dt>Kind</dt><dd>{configuration.source?.kind ?? "Not saved"}</dd>
-          <dt>Credential</dt><dd>{configuration.source?.credentialSecretId || "No credential"}</dd>
-          <dt>Capabilities</dt><dd>{configuration.source?.capabilities.join(", ") || "None selected"}</dd>
-        </dl>
-      </div>
-      <div>
-        <h3>Trigger</h3>
-        <dl>
-          <dt>Kind</dt><dd>{configuration.trigger?.kind ?? "Not saved"}</dd>
-          {configuration.trigger?.kind === "signed_webhook" && triggerUrl && <>
-            <dt>Inbound URL</dt><dd>{triggerUrl}</dd>
-          </>}
-        </dl>
-      </div>
-      <div>
-        <h3>LLM provider</h3>
-        <dl>
-          <dt>Provider</dt><dd>{configuration.llm?.provider ?? "Not configured"}</dd>
-          <dt>Model</dt><dd>{configuration.llm?.model ?? "Not configured"}</dd>
-        </dl>
-      </div>
-    </div>
-  </section>;
+    </section>
+  );
 }

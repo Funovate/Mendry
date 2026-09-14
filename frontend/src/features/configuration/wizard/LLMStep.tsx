@@ -45,7 +45,12 @@ export function LLMStep({
   const options = model && !models.includes(model) ? [model, ...models] : models;
 
   return <section>
-    <div className="setup-card-title"><BrainCircuit size={20} /><div><h2>LLM provider</h2><p>OpenAI-compatible Chat Completions need a base URL, encrypted API key, and a model selected from the provider list.</p></div></div>
+    <div className="setup-card-title">
+      <div className="setup-card-icon">
+        <BrainCircuit size={18} />
+      </div>
+      <h2>LLM provider</h2>
+    </div>
     <label>Provider<input aria-label="LLM provider" value="openai" readOnly /></label>
     <label>Base URL<input aria-label="LLM base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com" /></label>
     <CredentialField
@@ -54,21 +59,22 @@ export function LLMStep({
       creating={creatingCredential} createError={createCredentialError}
       onUpdate={updateCredential} updating={updatingCredential} updateError={updateCredentialError}
     />
-    <div className="source-form">
-      <label>Model<select aria-label="LLM model" value={model} required onChange={(event) => setModel(event.target.value)}>
-        <option value="">{options.length ? "Select a model" : "Load models first"}</option>
-        {options.map((id) => <option value={id} key={id}>{id}</option>)}
-      </select></label>
-      <button className="secondary-button" type="button" disabled={loadingModels || !credentialId || !baseUrl.trim()} onClick={onLoadModels}>
-        {loadingModels ? <LoaderCircle className="spin" size={16} /> : <BrainCircuit size={16} />}Load models
-      </button>
-    </div>
-    <div className="source-form">
-      <button className="secondary-button" type="button" disabled={testingChat || !credentialId || !baseUrl.trim() || !model.trim()} onClick={onTestChat}>
-        {testingChat ? <LoaderCircle className="spin" size={16} /> : <BrainCircuit size={16} />}Test with hi
-      </button>
-      {chatReady && <p className="setup-footer-saved" role="status">Chat probe succeeded.</p>}
-    </div>
+    <label>
+      Model
+      <div className="form-input-action-row">
+        <select aria-label="LLM model" value={model} required onChange={(event) => setModel(event.target.value)}>
+          <option value="">{options.length ? "Select a model" : "Load models first"}</option>
+          {options.map((id) => <option value={id} key={id}>{id}</option>)}
+        </select>
+        <button className="secondary-button" type="button" disabled={loadingModels || !credentialId || !baseUrl.trim()} onClick={onLoadModels}>
+          {loadingModels ? <LoaderCircle className="spin" size={15} /> : <BrainCircuit size={15} />}Load models
+        </button>
+        <button className="secondary-button" type="button" disabled={testingChat || !credentialId || !baseUrl.trim() || !model.trim()} onClick={onTestChat}>
+          {testingChat ? <LoaderCircle className="spin" size={15} /> : <BrainCircuit size={15} />}Test with hi
+        </button>
+      </div>
+    </label>
+    {chatReady && <p className="setup-footer-saved" role="status">Chat probe succeeded.</p>}
     {loadModelsError !== undefined && loadModelsError !== null && <p className="credential-field-error">{messageFromError(loadModelsError)}</p>}
     {testChatError !== undefined && testChatError !== null && <p className="credential-field-error">{messageFromError(testChatError)}</p>}
     <div className="setup-section-actions">

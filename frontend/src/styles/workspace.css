@@ -3,10 +3,10 @@
 .project-directory {
   --color-canvas: #ffffff;
   --color-surface: #ffffff;
-  --color-surface-muted: #f3f0e7;
-  --color-border: #dedfd5;
-  --color-border-soft: #e9e8df;
-  --color-accent-soft: #edf1e8;
+  --color-surface-muted: #f6f8f6;
+  --color-border: #e2e7e3;
+  --color-border-soft: #edf2ee;
+  --color-accent-soft: #eaf2ee;
   --color-heading: #17281f;
   --color-ink: #17281f;
   --color-text: #34483d;
@@ -141,10 +141,80 @@
 .app-shell .setup-view { padding: 36px; background: var(--color-canvas); }
 .app-shell .setup-header { margin-bottom: 32px; }
 .app-shell .real-config-form > section { padding: 28px; border-color: var(--color-border-soft); }
-.app-shell .wizard-step-tab { border-color: transparent; background: transparent; border-radius: 0; border-bottom: 2px solid transparent; }
-.app-shell .wizard-step-tab.active { border-color: transparent; border-bottom-color: #17281f; color: #17281f; background: transparent; }
-.app-shell .wizard-step-tab:hover { border-bottom-color: var(--color-border); }
-.app-shell .real-config-form label { font-weight: 600; }
+.app-shell .wizard-steps { display: flex; align-items: center; gap: 6px; max-width: 900px; margin: 0 auto 24px; padding: 4px; background: var(--color-surface-muted, #f2f5f2); border: 1px solid var(--color-border); border-radius: 10px; }
+.app-shell .wizard-step-tab { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; color: var(--color-muted); background: transparent; border: 0; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 150ms ease; flex: 1 1 auto; justify-content: center; }
+.app-shell .wizard-step-tab:hover { color: var(--color-heading); background: rgba(255, 255, 255, 0.75); border-radius: 7px; }
+.app-shell .wizard-step-tab.active { color: var(--color-heading); background: #ffffff; border-radius: 7px; box-shadow: 0 1px 3px rgba(23, 40, 31, 0.08), 0 1px 2px rgba(23, 40, 31, 0.04); }
+.app-shell .setup-card-title,
+.app-shell .config-card-title-group {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.app-shell .setup-card-title h2,
+.app-shell .config-card-title-group h2 {
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 16px !important;
+  font-weight: 650 !important;
+  line-height: 1.2 !important;
+  display: flex !important;
+  align-items: center !important;
+}
+.app-shell .setup-card-title .setup-card-icon,
+.app-shell .config-card-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 8px !important;
+  flex-shrink: 0 !important;
+  line-height: 0 !important;
+}
+.app-shell .real-config-form label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.app-shell .real-config-form :is(input:not([type="checkbox"]), select) {
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 12px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  background: #ffffff !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-control, 8px) !important;
+  color: var(--color-ink) !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+.app-shell .real-config-form textarea {
+  min-height: 88px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  background: #ffffff !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-control, 8px) !important;
+  color: var(--color-ink) !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  resize: vertical !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+.app-shell .real-config-form :is(input:not([type="checkbox"]), select, textarea):focus {
+  border-color: var(--color-accent) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(23, 109, 82, 0.12) !important;
+}
+.app-shell .real-config-form :is(input:not([type="checkbox"]), select):disabled,
+.app-shell .real-config-form input[readonly] {
+  background: var(--color-surface-muted, #f7f9f7) !important;
+  color: var(--color-muted) !important;
+  border-color: var(--color-border) !important;
+}
 .app-shell .readonly-note { padding: 8px 10px; background: transparent; }
 .project-directory { padding-top: clamp(32px, 6vw, 80px); }
 .project-directory .directory-logo { width: 156px; height: auto; margin-bottom: 64px; }
@@ -161,19 +231,19 @@
 .project-directory .create-project-form .field-hint { font-weight: 400; }
 .project-directory .empty-projects { padding: 56px 24px; background: transparent; }
 /* Shared reading sizes also cover feature rules with fixed pixel sizes. */
-.app-shell :is(.sidebar nav a, .primary-button, .secondary-button, .text-button, .back-link, .wizard-step-tab),
+.app-shell :is(.sidebar nav a, .primary-button, .secondary-button, .text-button, .back-link),
 .project-directory :is(.primary-button, .secondary-button, .text-button, .back-link) {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
 }
-.app-shell :is(.member-form, .real-config-form) label,
+.app-shell .member-form label,
 .project-directory .create-project-form label {
   color: var(--color-text);
   font-size: 14px;
   font-weight: 600;
 }
-.app-shell :is(.member-form, .real-config-form) :is(input:not([type="checkbox"]), select, textarea),
+.app-shell .member-form :is(input:not([type="checkbox"]), select, textarea),
 .project-directory .create-project-form :is(input, textarea) {
   color: var(--color-ink);
   font-size: 16px;

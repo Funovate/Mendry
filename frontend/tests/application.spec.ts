@@ -469,7 +469,17 @@ test("loads project-owned configuration, events, and incidents", async ({ page }
   await expect(page.getByText("https://git.example.internal/platform/real-estate-api.git", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Members", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Audit", exact: true })).toHaveCount(0);
-  await expect(page.getByText("production@4f9c2b7", { exact: true })).toBeVisible();
+  const baseline = page.locator(".config-commit-group");
+  await expect(baseline.getByText("production", { exact: true })).toBeVisible();
+  await expect(baseline.getByText("4f9c2b7", { exact: true })).toBeVisible();
+  const baselineRects = await baseline.locator(":scope > *").evaluateAll((elements) =>
+    elements.map((element) => {
+      const { top, bottom, height } = element.getBoundingClientRect();
+      return { top, bottom, height };
+    }),
+  );
+  expect(baselineRects).toHaveLength(3);
+  expect(baselineRects.every((rect) => rect.top === baselineRects[0].top && rect.bottom === baselineRects[0].bottom && rect.height === 28)).toBe(true);
 
 });
 
@@ -812,7 +822,7 @@ test("the user renames a project and refreshes a derived environment name", asyn
 
   await page.getByRole("link", { name: "Configuration" }).click();
   await expect(page.locator(".topbar")).toContainText("Property Platform");
-  await expect(page.getByRole("cell", { name: "Property Platform" })).toBeVisible();
+  await expect(page.locator(".config-card").filter({ hasText: "Environment" }).getByText("Property Platform", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Project identity" })).toHaveCount(0);
   await expect(page.getByLabel("Project key")).toHaveCount(0);
 });
@@ -825,7 +835,7 @@ test("the user preserves a distinct environment name when renaming a project", a
   await page.getByRole("button", { name: "Save project name" }).click();
   await expect(page.getByRole("button", { name: "Project Property Platform" })).toBeVisible();
   await expect(page.locator(".topbar")).toContainText("Property Platform");
-  await expect(page.getByRole("cell", { name: "Production", exact: true })).toBeVisible();
+  await expect(page.locator(".config-card").filter({ hasText: "Environment" }).getByText("Production", { exact: true })).toBeVisible();
   expect(state.writes).toContainEqual({ method: "PATCH", path: "/api/v1/projects/real-estate", body: { name: "Property Platform" } });
 });
 
@@ -886,7 +896,7 @@ test("the user discovers a Docker container through the bounded source probe", a
   await expect(page.getByLabel("Docker container")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Docker container" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Refresh containers" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("option", { name: /checkout-api · registry\.example\/checkout:v1/ })).toHaveCount(1);
   await page.getByLabel("Docker container").selectOption("checkout-api");
   await expect(page.getByLabel("Docker container")).toHaveValue("checkout-api");
@@ -895,7 +905,7 @@ test("the user discovers a Docker container through the bounded source probe", a
   await expect(page.getByLabel("Docker container")).toHaveValue("");
   await expect(page.getByRole("option", { name: /checkout-api · registry\.example\/checkout:v1/ })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Refresh containers" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await page.getByLabel("Docker container").selectOption("checkout-api");
   await page.getByRole("button", { name: "Save collection source" }).click();
 

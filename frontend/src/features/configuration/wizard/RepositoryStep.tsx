@@ -54,7 +54,12 @@ export function RepositoryStep({
   };
 
   return <section>
-    <div className="setup-card-title"><GitBranch size={20} /><div><h2>Git repository</h2><p>The remote and immutable deployed commit define the production code baseline.</p></div></div>
+    <div className="setup-card-title">
+      <div className="setup-card-icon">
+        <GitBranch size={18} />
+      </div>
+      <h2>Git repository</h2>
+    </div>
     <label>Git remote URL<input aria-label="Git remote URL" value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} /></label>
     <div className="source-form">
       <label>SCM provider<select aria-label="SCM provider" value={scmProvider} onChange={(event) => setScmProvider(event.target.value as ProjectConfiguration["repository"]["scmProvider"])}>
@@ -76,18 +81,23 @@ export function RepositoryStep({
     />
     <div className="git-baseline">
       <div className="source-form">
-        <label>Production branch<select aria-label="Production branch" value={productionBranch} disabled={branches.length === 0} onChange={(event) => {
-          const selected = branches.find((branch) => branch.name === event.target.value);
-          if (selected) onSelectBranch(selected.name, selected.commit);
-        }}>
-          {branches.length === 0 && <option value="">{productionBranch || "Read from remote"}</option>}
-          {branches.map((branch) => <option value={branch.name} key={branch.name}>{branch.name}</option>)}
-        </select></label>
+        <label>
+          Production branch
+          <div className="form-input-action-row">
+            <select aria-label="Production branch" value={productionBranch} disabled={branches.length === 0} onChange={(event) => {
+              const selected = branches.find((branch) => branch.name === event.target.value);
+              if (selected) onSelectBranch(selected.name, selected.commit);
+            }}>
+              {branches.length === 0 && <option value="">{productionBranch || "Read from remote"}</option>}
+              {branches.map((branch) => <option value={branch.name} key={branch.name}>{branch.name}</option>)}
+            </select>
+            <button className="secondary-button" type="button" disabled={readingRemote || !repositorySecretId || !remoteUrl.trim()} onClick={onReadRemote}>
+              {readingRemote ? <LoaderCircle className="spin" size={15} /> : <GitBranch size={15} />}Read from remote
+            </button>
+          </div>
+        </label>
         <label>Deployed commit<input aria-label="Deployed commit" value={deployedCommit} readOnly /></label>
       </div>
-      <button className="secondary-button" type="button" disabled={readingRemote || !repositorySecretId || !remoteUrl.trim()} onClick={onReadRemote}>
-        {readingRemote ? <LoaderCircle className="spin" size={16} /> : <GitBranch size={16} />}Read from remote
-      </button>
       {readRemoteError !== undefined && readRemoteError !== null && <p className="credential-field-error">{messageFromError(readRemoteError)}</p>}
     </div>
     <div className="setup-section-actions">

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, messageFromError, type DockerContainer, type ListResult, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
@@ -23,12 +23,12 @@ function readWebhookProvider(config: Record<string, unknown> | undefined): Webho
   return provider === "tencent_cls" || provider === "aws_cloudwatch" ? provider : "generic";
 }
 
-const STEPS: { id: StepId; label: string }[] = [
-  { id: "repository", label: "Git repository" },
-  { id: "source", label: "Collection source" },
-  { id: "trigger", label: "Trigger" },
-  { id: "llm", label: "LLM provider" },
-  { id: "review", label: "Review" },
+const STEPS: { id: StepId; label: string; stepNumber: number }[] = [
+  { id: "repository", label: "Git repository", stepNumber: 1 },
+  { id: "source", label: "Collection source", stepNumber: 2 },
+  { id: "trigger", label: "Trigger", stepNumber: 3 },
+  { id: "llm", label: "LLM provider", stepNumber: 4 },
+  { id: "review", label: "Review", stepNumber: 5 },
 ];
 
 export function ConfigurationEditorPage() {
@@ -225,9 +225,13 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     clearDockerDiscovery();
   };
 
+  const currentStepIndex = STEPS.findIndex((step) => step.id === activeStep);
+  const prevStep = currentStepIndex > 0 ? STEPS[currentStepIndex - 1] : null;
+  const nextStep = currentStepIndex < STEPS.length - 1 ? STEPS[currentStepIndex + 1] : null;
+
   return <section className="setup-view">
     <div className="setup-header">
-      <button type="button" className="back-link" onClick={onCancel}><ChevronLeft size={17} />Configuration</button>
+      <button type="button" className="back-link" onClick={onCancel}><ChevronLeft size={16} />Configuration</button>
       <h1>Project configuration</h1>
     </div>
     <div className="wizard-steps" role="tablist">
@@ -235,7 +239,10 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         key={step.id} type="button" role="tab" aria-selected={activeStep === step.id}
         className={activeStep === step.id ? "wizard-step-tab active" : "wizard-step-tab"}
         onClick={() => setActiveStep(step.id)}
-      >{step.label}</button>)}
+      >
+        <span className="wizard-step-num">{step.stepNumber}</span>
+        <span className="wizard-step-name">{step.label}</span>
+      </button>)}
     </div>
     <div className="real-config-form">
       {activeStep === "repository" && <RepositoryStep
@@ -300,7 +307,41 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
       />}
       {activeStep === "review" && <ReviewStep configuration={current} inboundUrl={inboundUrl} />}
       <footer className="setup-footer">
-        <button className="secondary-button" type="button" onClick={onCancel}>Cancel</button>
+        <div className="setup-footer-left">
+          <button className="secondary-button" type="button" onClick={onCancel}>Return to configuration</button>
+        </div>
+        <div className="setup-footer-nav">
+          {prevStep && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveStep(prevStep.id)}
+            >
+              <ChevronLeft size={15} />
+              <span>{prevStep.label}</span>
+            </button>
+          )}
+          {nextStep && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveStep(nextStep.id)}
+            >
+              <span>{nextStep.label}</span>
+              <ChevronRight size={15} />
+            </button>
+          )}
+          {activeStep === "review" && (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onCancel}
+            >
+              <Check size={15} />
+              <span>Done</span>
+            </button>
+          )}
+        </div>
       </footer>
     </div>
   </section>;
