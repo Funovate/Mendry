@@ -9,4 +9,5 @@
 @import "../features/configuration/configuration.css";
 @import "./brand.css";
 @import "./workspace.css";
+@import "./workspace-brand.css";
 @import "../features/auth/login-brand.css";

@@ -14,7 +14,21 @@ export function ErrorNotice({ message, onRetry }: { message: string; onRetry?: (
 }
 
 export function PageError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return <div className="page-state"><ErrorNotice message={message} onRetry={onRetry} /></div>;
+  return (
+    <div className="page-error-state" role="alert">
+      <div className="page-error-card">
+        <CircleAlert size={28} className="page-error-icon" aria-hidden="true" />
+        <div className="page-error-content">
+          <h2>Failed to load view</h2>
+          <p>{message}</p>
+        </div>
+        <button className="primary-button" type="button" onClick={onRetry}>
+          <RefreshCw size={14} aria-hidden="true" />
+          Retry
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function StatusPill({ value }: { value: string }) {

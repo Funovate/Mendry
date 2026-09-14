@@ -77,7 +77,7 @@ function DiffViewer({ value }: { value: string }) {
   return <div className="remediation-diff-viewer">{parsed.files.map((file, index) => (
     <article className="remediation-diff-file" key={`${file.path}-${index}`}>
       <header className="remediation-diff-file-header">
-        <div><span className="eyebrow">File</span><strong>{file.path}</strong></div>
+        <div><strong>{file.path}</strong></div>
         {file.header && <code>{file.header}</code>}
       </header>
       <div className="remediation-diff-panes">
@@ -224,16 +224,21 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
           <div className="remediation-body">
             <section className="remediation-block remediation-diagnosis" aria-labelledby="remediation-diagnosis-heading">
               <div className="remediation-block-heading">
-                <div><h3 id="remediation-diagnosis-heading"><ScanSearch size={20} aria-hidden="true" />Diagnosis</h3></div>
+                <div>
+                  <h3 id="remediation-diagnosis-heading"><ScanSearch size={20} aria-hidden="true" />Diagnosis</h3>
+                  <span>AI Root-Cause Synthesis</span>
+                </div>
               </div>
               {review.diagnosis ? (
                 <>
                   <div className="diagnosis-visual-summary">
-                    <div className="diagnosis-confidence">
-                      <svg className="confidence-ring" viewBox="0 0 64 64" aria-hidden="true"><circle className="confidence-track" cx="32" cy="32" r="27" /><circle className="confidence-value" cx="32" cy="32" r="27" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, review.diagnosis.confidence * 100))} 100`} /></svg>
-                      <span className="confidence-number">{Math.round(review.diagnosis.confidence * 100)}%</span>
+                    <div className="diagnosis-overview">
+                      <div className="diagnosis-confidence">
+                        <svg className="confidence-ring" viewBox="0 0 64 64" aria-hidden="true"><circle className="confidence-track" cx="32" cy="32" r="27" /><circle className="confidence-value" cx="32" cy="32" r="27" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, review.diagnosis.confidence * 100))} 100`} /></svg>
+                        <span className="confidence-number">{Math.round(review.diagnosis.confidence * 100)}%</span>
+                      </div>
+                      <div className="diagnosis-summary"><strong><Wrench size={16} aria-hidden="true" />{review.diagnosis.fixability.replaceAll("_", " ")}</strong><span>Diagnosis confidence</span></div>
                     </div>
-                    <div className="diagnosis-summary"><strong><Wrench size={16} aria-hidden="true" />{review.diagnosis.fixability.replaceAll("_", " ")}</strong><span>Diagnosis confidence</span></div>
                     <div className="diagnosis-metric"><ScanSearch size={19} aria-hidden="true" /><strong>{review.diagnosis.evidenceRefs.length}</strong><span>Evidence references</span></div>
                     <div className="diagnosis-metric"><ListChecks size={19} aria-hidden="true" /><strong>{review.plans.length}</strong><span>Repair plans</span></div>
                   </div>

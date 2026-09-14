@@ -1,131 +1,1058 @@
-/* Keep the reading column and operational context visible without disclosures. */
-.app-shell .incident-workspace { container-type: inline-size; --incident-gutter: clamp(20px, 3vw, 40px); }
-.app-shell .incident-workspace .detail-header { position: relative; gap: 20px; padding: 24px var(--incident-gutter); }
-.app-shell .incident-workspace .detail-header > .icon-button { position: absolute; top: 20px; left: 4px; width: 28px; }
-.app-shell .incident-workspace .detail-heading h1 { margin: 6px 0 14px; font-size: 26px; line-height: 1.3; }
-.app-shell .incident-workspace .detail-meta { gap: 8px 14px; }
-.incident-timestamps { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 12px 0 0; color: var(--color-muted); font-size: 12px; }
-.incident-lifecycle { display: grid; gap: 6px; align-content: start; }
-.incident-lifecycle label { color: var(--color-muted); font-size: 12px; }
-.incident-lifecycle select { min-height: 40px; max-width: 100%; padding: 8px 32px 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-heading); font: inherit; font-size: 13px; }
-.app-shell .incident-lifecycle .readonly-note { max-width: 180px; margin: 0; padding: 0; }
-.incident-reading-area { padding: 0 var(--incident-gutter) 40px; }
-.app-shell .incident-workspace .remediation-focused { padding: 0; border: 0; }
-.app-shell .remediation-focused .remediation-review { display: block; }
-.remediation-summary-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; min-height: 76px; padding: 16px 0; }
-.app-shell .remediation-focused .remediation-summary-bar h2 { margin: 0; color: var(--color-heading); font-size: 16px; font-weight: 600; }
-.remediation-state-label { padding: 3px 9px; border: 1px solid var(--color-border-soft); border-radius: 5px; color: var(--color-muted); font-size: 12px; text-transform: capitalize; }
-.remediation-summary-bar .remediation-actions { margin-left: auto; }
-.remediation-columns { display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 36px; }
-.remediation-main { display: grid; gap: 28px; min-width: 0; }
-.app-shell .remediation-focused .remediation-body { display: block; }
-.app-shell .remediation-focused .remediation-diagnosis { border: 0; overflow: visible; }
-.app-shell .remediation-focused .remediation-block-heading { padding: 0; margin-bottom: 12px; border: 0; }
-.app-shell .remediation-focused .remediation-block-heading > div { display: flex; align-items: baseline; gap: 10px; }
-.app-shell .remediation-focused .remediation-block-heading h3 { font-size: 18px; }
-.app-shell .remediation-focused .remediation-block-heading span { margin: 0; font-size: 12px; }
-.app-shell .remediation-focused .diagnosis-summary { margin: 0 0 16px; gap: 10px; }
-.app-shell .remediation-focused .diagnosis-summary strong { color: var(--color-heading); font-size: 13px; font-weight: 600; text-transform: capitalize; }
-.app-shell .remediation-focused .diagnosis-summary span { font-size: 12px; }
-.app-shell .remediation-focused .remediation-diagnosis > .remediation-prose { max-width: none; margin: 18px 0 0; font-size: 14px; line-height: 1.8; white-space: pre-line; }
-.app-shell .remediation-focused .remediation-next-step { max-width: none; margin: 0; padding: 16px 18px; border: 0; border-left: 3px solid var(--color-accent); border-radius: 0 6px 6px 0; background: var(--color-accent-soft); color: var(--color-text); font-size: 14px; line-height: 1.75; }
-.remediation-next-step h4 { margin: 0 0 6px; color: var(--color-heading); font-size: 13px; font-weight: 600; }
-.remediation-next-step p { margin: 0; white-space: pre-line; }
-.app-shell .remediation-focused .remediation-plans,
-.app-shell .remediation-focused .remediation-diff-block { padding-top: 22px; border: 0; border-top: 1px solid var(--color-border-soft); }
-.app-shell .remediation-focused .remediation-plan-heading { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.app-shell .remediation-focused .remediation-plan-meta { justify-content: flex-start; }
-.app-shell .remediation-focused .remediation-plan-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-.app-shell .remediation-focused .remediation-plan-details { grid-template-columns: minmax(0, 1fr); padding: 0; border: 0; }
-.app-shell .remediation-focused .remediation-plan-title strong { font-size: 14px; }
-.app-shell .remediation-focused .remediation-plan-body .remediation-prose { font-size: 14px; }
-.remediation-context { display: grid; min-width: 0; gap: 24px; padding-left: 24px; border-left: 1px solid var(--color-border-soft); }
-.remediation-context section { min-width: 0; }
+/* ==========================================================================
+   Mendry Incident Workspace (Error & Remediation Review Details)
+   Refined to match the Mendry Logo & Brand Guide (Ink, Cream, Amber Kintsugi)
+   ========================================================================== */
+
+.app-shell .incident-workspace {
+  container-type: inline-size;
+  --incident-gutter: clamp(20px, 3.2vw, 44px);
+  background: #f4f1ea;
+  min-height: 100vh;
+}
+
+/* --------------------------------------------------------------------------
+   Detail Header (Top Incident Command Banner)
+   -------------------------------------------------------------------------- */
+.app-shell .incident-workspace .detail-header {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px 24px;
+  padding: 22px var(--incident-gutter) 20px;
+  background: #faf8f4;
+  border-bottom: 1px solid #ded9cb;
+}
+
+/* Amber hairline kintsugi stitch accent at the top of detail header */
+.app-shell .incident-workspace .detail-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.app-shell .incident-workspace .detail-kicker-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.app-shell .incident-workspace .incident-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 0;
+  color: #687b71;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.app-shell .incident-workspace .incident-back-link svg {
+  transition: transform 160ms ease;
+}
+
+.app-shell .incident-workspace .incident-back-link:hover {
+  color: #17281f;
+}
+
+.app-shell .incident-workspace .incident-back-link:hover svg {
+  transform: translateX(-2px);
+}
+
+.app-shell .incident-workspace .incident-back-link:focus-visible {
+  outline: 2px solid #c1893e;
+  outline-offset: 3px;
+}
+
+.app-shell .incident-workspace .detail-kicker-divider {
+  width: 1px;
+  height: 14px;
+  background: #d6d0c2;
+}
+
+.app-shell .incident-workspace .detail-heading {
+  flex: 1 1 500px;
+  min-width: 0;
+}
+
+.app-shell .incident-workspace .detail-heading .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #576b60;
+  background: #ebe7dc;
+  border: 1px solid #ded9cb;
+  border-radius: 5px;
+}
+
+.app-shell .incident-workspace .detail-heading h1 {
+  margin: 0 0 10px;
+  font-size: clamp(22px, 2.2vw, 27px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.28;
+  color: #17281f;
+}
+
+.app-shell .incident-workspace .detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+}
+
+.app-shell .incident-workspace .detail-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #4b5e54;
+  background: #ede9de;
+  border: 1px solid #ded7c8;
+  border-radius: 6px;
+}
+
+.app-shell .incident-workspace .detail-meta > span svg {
+  color: #7b8d83;
+}
+
+.incident-timestamps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 0;
+  color: #687b71;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.incident-timestamps svg {
+  color: #c1893e;
+  flex-shrink: 0;
+}
+
+.incident-timestamps span::before {
+  content: "·";
+  margin-right: 18px;
+  color: #cbd4cb;
+}
+
+/* Incident status lifecycle selector */
+.incident-lifecycle {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+}
+
+.incident-lifecycle label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #728379;
+}
+
+.incident-lifecycle select {
+  min-height: 38px;
+  max-width: 100%;
+  padding: 6px 32px 6px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #17281f;
+  background: #ffffff;
+  border: 1px solid #ded9cb;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 4%);
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.incident-lifecycle select:focus-visible {
+  border-color: #17281f;
+  box-shadow: 0 0 0 3px rgb(193 137 62 / 24%);
+  outline: none;
+}
+
+/* --------------------------------------------------------------------------
+   Reading Area & Columns
+   -------------------------------------------------------------------------- */
+.incident-reading-area {
+  padding: 0 var(--incident-gutter) 48px;
+}
+
+.app-shell .incident-workspace .remediation-focused {
+  padding: 0;
+  border: 0;
+}
+
+.app-shell .remediation-focused .remediation-review {
+  display: block;
+}
+
+.remediation-summary-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  min-height: 64px;
+  padding: 20px 0 14px;
+}
+
+.app-shell .remediation-focused .remediation-summary-bar h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #17281f;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.app-shell .remediation-focused .remediation-summary-bar h2 svg {
+  color: #c1893e;
+}
+
+.remediation-state-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1b6348;
+  background: #eaf3ec;
+  border: 1px solid #c7ded0;
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+
+.remediation-state-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c1893e;
+}
+
+.remediation-summary-bar .remediation-actions {
+  margin-left: auto;
+}
+
+.remediation-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 32px;
+}
+
+.remediation-main {
+  display: grid;
+  gap: 26px;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Diagnosis Card
+   -------------------------------------------------------------------------- */
+.app-shell .remediation-focused .remediation-diagnosis {
+  position: relative;
+  overflow: hidden;
+  padding: 26px 28px;
+  background: #ffffff;
+  border: 1px solid #ded9cb;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgb(23 40 31 / 4%);
+}
+
+/* Subtle top amber hairline gradient */
+.app-shell .remediation-focused .remediation-diagnosis::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  opacity: 0.9;
+}
+
+.app-shell .remediation-focused .remediation-block-heading {
+  padding: 0;
+  margin-bottom: 18px;
+  border: 0;
+}
+
+.app-shell .remediation-focused .remediation-block-heading > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.app-shell .remediation-focused .remediation-block-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  color: #17281f;
+  letter-spacing: -0.02em;
+}
+
+.app-shell .remediation-focused .remediation-block-heading h3 svg {
+  color: #c1893e;
+}
+
+.app-shell .remediation-focused .remediation-block-heading span {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5c6f65;
+  background: #ebe7dc;
+  border: 1px solid #ded9cb;
+  border-radius: 999px;
+}
+
+.diagnosis-visual-summary {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 4px 0 20px;
+  border-bottom: 1px solid #ede8dc;
+}
+
+.diagnosis-overview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  background: #f8f6f0;
+  border: 1px solid #e7e2d5;
+  border-radius: 8px;
+  flex: 1.25;
+  min-width: 230px;
+}
+
+.diagnosis-confidence {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+}
+
+.confidence-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 4.5;
+}
+
+.confidence-track {
+  stroke: #ebe6d8;
+}
+
+.confidence-value {
+  stroke: #c1893e;
+  stroke-linecap: round;
+}
+
+.confidence-number {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 16.5px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: #17281f;
+}
+
+.app-shell .remediation-focused .diagnosis-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 130px;
+  margin: 0;
+}
+
+.app-shell .remediation-focused .diagnosis-summary strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: #17281f;
+  text-transform: capitalize;
+}
+
+.app-shell .remediation-focused .diagnosis-summary strong svg {
+  color: #c1893e;
+}
+
+.app-shell .remediation-focused .diagnosis-summary span {
+  font-size: 11.5px;
+  color: #687b71;
+}
+
+.diagnosis-metric {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 12px 18px;
+  background: #f8f6f0;
+  border: 1px solid #e7e2d5;
+  border-radius: 8px;
+  flex: 1;
+  min-width: 130px;
+}
+
+.diagnosis-metric strong {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  color: #17281f;
+}
+
+.diagnosis-metric span {
+  font-size: 11px;
+  color: #687b71;
+}
+
+/* Recommended Next Step Box (The Golden Kintsugi Advisory) */
+.app-shell .remediation-focused .remediation-next-step {
+  position: relative;
+  max-width: none;
+  margin: 20px 0 16px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #fdfbf7 0%, #f7f3e8 100%);
+  border: 1px solid #ded3be;
+  border-left: 4px solid #c1893e;
+  border-radius: 0 8px 8px 0;
+  box-shadow: 0 2px 8px rgb(193 137 62 / 8%);
+  color: #2c4034;
+  font-size: 13.5px;
+  line-height: 1.68;
+}
+
+.remediation-next-step h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #17281f;
+}
+
+.remediation-next-step h4 svg {
+  color: #c1893e;
+}
+
+.remediation-next-step p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.app-shell .remediation-focused .remediation-diagnosis > .remediation-prose {
+  max-width: none;
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: #384d41;
+  white-space: pre-line;
+}
+
+/* --------------------------------------------------------------------------
+   Plans Section
+   -------------------------------------------------------------------------- */
+.app-shell .remediation-focused .remediation-plans {
+  padding-top: 6px;
+  border: 0;
+}
+
+.app-shell .remediation-focused .remediation-plans > ol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+  background: #ffffff;
+  border: 1px solid #ded9cb;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgb(23 40 31 / 3%);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li:hover {
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 18px rgb(23 40 31 / 6%);
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li:only-child {
+  grid-column: 1 / -1;
+}
+
+/* Recommended Plan: Enhanced Kintsugi Amber Card */
+.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended {
+  background: #fcfbf8;
+  border: 1.5px solid #c1893e;
+  box-shadow: 0 6px 22px rgb(193 137 62 / 10%), 0 1px 3px rgb(23 40 31 / 4%);
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+}
+
+.app-shell .remediation-focused .plan-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-bottom: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #17281f;
+  background: #ede7dc;
+  border: 1px solid #ded7c8;
+  border-radius: 5px;
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended .plan-number {
+  background: #17281f;
+  color: #f3f0e7;
+  border-color: rgb(193 137 62 / 36%);
+}
+
+.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended .plan-number svg {
+  color: #dfb579;
+}
+
+.app-shell .remediation-focused .remediation-plan-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.app-shell .remediation-focused .remediation-plan-title {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-shell .remediation-focused .remediation-plan-title strong {
+  font-size: 14.5px;
+  font-weight: 650;
+  line-height: 1.45;
+  color: #17281f;
+  letter-spacing: -0.015em;
+}
+
+.app-shell .remediation-focused .remediation-plan-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.app-shell .remediation-plan-meta .recommended {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #925c1b;
+  background: #fdf2de;
+  border: 1px solid #ebd3b0;
+  border-radius: 999px;
+}
+
+.app-shell .remediation-plan-meta .recommended svg {
+  color: #c1893e;
+}
+
+.app-shell .remediation-focused .remediation-plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.app-shell .remediation-focused .remediation-plan-body .remediation-prose {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #43564b;
+}
+
+.app-shell .remediation-focused .remediation-plan-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid #ede8dc;
+  font-size: 12px;
+}
+
+.app-shell .remediation-plan-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-shell .remediation-plan-files > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #728379;
+}
+
+.app-shell .remediation-plan-files ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.app-shell .remediation-plan-files code {
+  display: inline-block;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #17281f;
+  background: #ede8dc;
+  border: 1px solid #ded7c7;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+
+.app-shell .remediation-plan-rollback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  color: #5c6f65;
+  line-height: 1.55;
+}
+
+.app-shell .remediation-plan-rollback > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #728379;
+}
+
+/* --------------------------------------------------------------------------
+   Suggested Diff Block
+   -------------------------------------------------------------------------- */
+.app-shell .remediation-focused .remediation-diff-block {
+  padding-top: 6px;
+  border: 0;
+}
+
+.remediation-diff-file {
+  background: #ffffff;
+  border: 1px solid #ded9cb;
+  border-radius: 9px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgb(23 40 31 / 3%);
+}
+
+.remediation-diff-file-header {
+  padding: 10px 14px;
+  background: #f4f0e6;
+  border-bottom: 1px solid #ded9cb;
+}
+
+.remediation-diff-file-header strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 650;
+  color: #17281f;
+}
+
+.remediation-diff-pane-header {
+  padding: 6px 12px;
+  background: #faf8f4;
+  border-bottom: 1px solid #ede8dc;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5c6f65;
+}
+
+.remediation-diff-line.added {
+  background: #edf7f1;
+  color: #1b6348;
+}
+
+.remediation-diff-line.removed {
+  background: #fdedef;
+  color: #992c3a;
+}
+
+.remediation-diff-number {
+  color: #8a9d92;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* --------------------------------------------------------------------------
+   Right Column (Operational Context Cards)
+   -------------------------------------------------------------------------- */
+.remediation-context {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0;
+  border: 0;
+}
+
+.remediation-context > section {
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #ded9cb;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgb(23 40 31 / 3%);
+}
+
 .app-shell .remediation-context h3,
-.app-shell .incident-properties h3 { margin: 0 0 12px; color: var(--color-heading); font-size: 13px; font-weight: 600; }
-.remediation-context h3 span { margin-left: 6px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
-.run-version { margin: -6px 0 12px; color: var(--color-muted); font-size: 11px; }
+.app-shell .incident-properties h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  color: #17281f;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.app-shell .remediation-context h3 svg,
+.app-shell .incident-properties h3 svg {
+  color: #c1893e;
+}
+
+.remediation-context h3 span {
+  margin-left: auto;
+  padding: 2px 7px;
+  color: #5c6f65;
+  background: #ede7dc;
+  border: 1px solid #ded9cb;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.run-version {
+  display: inline-block;
+  margin: -6px 0 14px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: #576b60;
+  background: #f5f1e7;
+  border: 1px solid #ded7c7;
+  border-radius: 5px;
+}
+
 .app-shell .remediation-context .remediation-primary-facts,
-.app-shell .remediation-context .remediation-technical-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; border: 0; background: transparent; }
-.app-shell .remediation-context .remediation-technical-facts { margin-top: 8px; }
-.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; padding: 0; background: transparent; }
-.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dt { font-size: 12px; line-height: 1.6; }
-.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dd { margin: 0; font-size: 12px; line-height: 1.6; }
-.app-shell .remediation-context .remediation-loop-fact { grid-column: auto; }
-.remediation-context code { font-size: 11px; overflow-wrap: anywhere; }
-.run-context-note { margin: 14px 0 0; padding: 10px 12px; background: var(--color-surface-muted); color: var(--color-muted); font-size: 12px; line-height: 1.6; border-radius: 5px; }
-.app-shell .remediation-context .readonly-note { margin: 10px 0 0; padding: 0; font-size: 12px; }
-.app-shell .remediation-context .remediation-attempts ol { max-height: none; overflow: visible; padding: 0 0 0 14px; border-left: 1px solid var(--color-border); }
-.app-shell .remediation-context .remediation-attempts li { padding: 0 0 14px; margin-bottom: 14px; }
-.app-shell .remediation-context .remediation-attempts li:last-child { margin: 0; padding-bottom: 0; }
-.app-shell .remediation-context .attempt-details,
-.app-shell .remediation-context .attempt-label span,
-.app-shell .remediation-context .remediation-attempts li time { font-size: 11px; }
-.diagnosis-evidence ol { display: grid; gap: 8px; margin: 0; padding-left: 18px; color: var(--color-muted); font-size: 11px; }
-.app-shell .incident-properties .incident-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.app-shell .incident-properties .incident-facts > div { padding: 0; }
-.app-shell .incident-properties .incident-facts dt { font-size: 12px; }
-.app-shell .incident-properties .incident-facts dd { margin-top: 4px; font-size: 12px; }
-.incident-properties code { overflow-wrap: anywhere; font-size: 11px; }
-@container (max-width: 900px) {
-  .remediation-columns { grid-template-columns: minmax(0, 1fr); gap: 28px; }
-  .remediation-context { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--color-border-soft); }
+.app-shell .remediation-context .remediation-technical-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
+
+.app-shell .remediation-context .remediation-technical-facts {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #ede8dc;
+}
+
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  background: transparent;
+}
+
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dt {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #728379;
+}
+
+.app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #17281f;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.remediation-context code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #17281f;
+  background: #ede8dc;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #ded7c7;
+}
+
+.app-shell .remediation-context .run-context-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  background: #fbf6ec;
+  border: 1px solid #eadbc2;
+  color: #725d3b;
+  font-size: 11.5px;
+  line-height: 1.55;
+  border-radius: 6px;
+}
+
+/* Attempt history timeline */
+.app-shell .remediation-context .remediation-attempts ol {
+  position: relative;
+  max-height: none;
+  overflow: visible;
+  padding: 0 0 0 20px;
+  margin: 6px 0 0 4px;
+  border-left: 2px solid #e7e2d5;
+  list-style: none;
+}
+
+.app-shell .remediation-context .remediation-attempts li {
+  position: relative;
+  padding: 0 0 16px;
+  margin-bottom: 0;
+}
+
+.app-shell .remediation-context .remediation-attempts li:last-child {
+  padding-bottom: 0;
+}
+
+.attempt-node {
+  position: absolute;
+  top: 0;
+  left: -31px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #17281f;
+  color: #dfb579;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px #c1893e;
+}
+
+.attempt-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.attempt-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.attempt-label strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: #17281f;
+}
+
+.attempt-label span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #728379;
+}
+
+.attempt-state {
+  display: inline-block;
+  font-size: 11px;
+  color: #1b6348;
+  font-weight: 550;
+}
+
+.attempt-details {
+  font-size: 11px;
+  color: #728379;
+}
+
+.app-shell .remediation-context .remediation-attempts li time {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: #8b9c92;
+}
+
+/* Diagnosis evidence list */
+.diagnosis-evidence ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnosis-evidence li {
+  padding: 6px 10px;
+  background: #f8f6f0;
+  border: 1px solid #e5dfd2;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #2e4337;
+  overflow-wrap: anywhere;
+}
+
+/* Incident properties */
+.app-shell .incident-properties .incident-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+
+.app-shell .incident-properties .incident-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+}
+
+.app-shell .incident-properties .incident-facts dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #728379;
+}
+
+.app-shell .incident-properties .incident-facts dd {
+  margin: 0;
+  font-size: 12px;
+  color: #17281f;
+}
+
+.incident-properties code {
+  display: block;
+  padding: 8px 10px;
+  background: #f8f6f0;
+  border: 1px solid #ded9cb;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #2e4337;
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   Container Queries & Responsive Layouts
+   -------------------------------------------------------------------------- */
+@container (max-width: 860px) {
+  .remediation-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .remediation-context {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@container (max-width: 680px) {
+  .remediation-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-shell .remediation-focused .remediation-plans > ol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .diagnosis-visual-summary {
+    gap: 12px;
+  }
+  .diagnosis-overview {
+    flex-basis: 100%;
+  }
+  .diagnosis-metric {
+    flex: 1;
+    min-width: 90px;
+  }
+}
+
 @container (max-width: 540px) {
-  .app-shell .incident-workspace .detail-header { padding-top: 48px; }
-  .app-shell .incident-workspace .detail-header > .icon-button { left: 14px; top: 10px; }
-  .app-shell .incident-workspace .detail-heading { flex-basis: 100%; }
-  .app-shell .incident-workspace .detail-heading h1 { font-size: 22px; }
-  .incident-lifecycle { width: 100%; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
-  .incident-lifecycle select { justify-self: end; }
-  .remediation-context { grid-template-columns: minmax(0, 1fr); }
-  .remediation-summary-bar { padding-block: 18px; }
-  .remediation-summary-bar .remediation-actions { margin-left: 0; }
-}
-/* Visual anchors pair each graphic with the data it describes. */
-.app-shell .incident-workspace .detail-meta > span,
-.app-shell .remediation-focused :is(h2, h3, h4),
-.app-shell .remediation-plan-meta .recommended,
-.app-shell .remediation-plan-files > span,
-.app-shell .remediation-plan-rollback > span,
-.plan-number { display: flex; align-items: center; gap: 8px; }
-.incident-timestamps { align-items: center; }
-.app-shell .incident-workspace :is(h2, h3, h4) > svg { flex-shrink: 0; color: var(--color-accent); }
-.app-shell .remediation-focused .remediation-diagnosis { padding: 22px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: linear-gradient(135deg, #f5f7ef 0%, var(--color-surface) 48%); }
-.diagnosis-visual-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 8px 0 22px; }
-.diagnosis-confidence { position: relative; width: 66px; height: 66px; flex-shrink: 0; }
-.confidence-ring { width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 4; }
-.confidence-track { stroke: #dfe7d8; }
-.confidence-value { stroke: var(--color-accent); stroke-linecap: round; }
-.confidence-number { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-heading); font-size: 16px; font-weight: 700; }
-.app-shell .remediation-focused .diagnosis-summary { display: grid; gap: 5px; margin: 0; flex: 0 1 auto; min-width: 130px; }
-.app-shell .remediation-focused .diagnosis-summary strong { display: flex; align-items: center; gap: 6px; font-size: 15px; }
-.diagnosis-metric { display: grid; grid-template-columns: 20px auto; gap: 3px 8px; min-width: 112px; padding-left: 18px; border-left: 1px solid var(--color-border); }
-.diagnosis-metric svg { color: var(--color-accent); align-self: center; }
-.diagnosis-metric strong { color: var(--color-heading); font-size: 22px; line-height: 1.4; }
-.diagnosis-metric span { grid-column: 1 / -1; color: var(--color-muted); font-size: 11px; }
-.app-shell .remediation-focused .remediation-next-step { border-radius: 8px; background: #eaf0e1; }
-.app-shell .remediation-focused .remediation-plans { padding-top: 0; border: 0; }
-.app-shell .remediation-focused .remediation-plans > ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.app-shell .remediation-focused .remediation-plans > ol > li { padding: 20px; border: 1px solid var(--color-border-soft); border-radius: 10px; background: var(--color-surface); }
-.app-shell .remediation-focused .remediation-plans > ol > li:only-child { grid-column: 1 / -1; }
-.app-shell .remediation-focused .remediation-plans > ol > li.is-recommended { border-color: #cbdac1; background: #f4f7ee; box-shadow: inset 0 3px var(--color-accent); }
-.app-shell .remediation-focused .plan-number { width: fit-content; margin-bottom: 8px; padding: 5px 8px; border-radius: 5px; background: var(--color-surface-muted); color: var(--color-muted); font-size: 12px; }
-.app-shell .remediation-focused .remediation-plan-details { padding-top: 12px; border-top: 1px solid var(--color-border-soft); }
-.remediation-context { padding: 0; border: 0; gap: 16px; }
-.remediation-context > section { padding: 18px; background: #f5f4ee; border: 1px solid var(--color-border-soft); border-radius: 10px; }
-.app-shell .remediation-context h3 { margin-bottom: 16px; }
-.app-shell .remediation-context .remediation-attempts ol { margin-left: 9px; padding-left: 19px; }
-.app-shell .remediation-context .remediation-attempts li { position: relative; }
-.attempt-node { position: absolute; top: 0; left: -29px; display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #cbdac1; border-radius: 50%; background: #eaf0e1; color: var(--color-accent); }
-.app-shell .remediation-context .run-context-note { background: #ebe8df; }
-@container (max-width: 1200px) {
-  .app-shell .remediation-focused .remediation-plans > ol { grid-template-columns: minmax(0, 1fr); }
-  .diagnosis-metric { min-width: 90px; padding-left: 10px; }
-}
-@container (max-width: 540px) {
-  .app-shell .remediation-focused .remediation-diagnosis { padding: 16px; }
-  .diagnosis-visual-summary { gap: 12px; }
-  .diagnosis-metric { flex: 1; border-left: 0; padding: 10px; border-radius: 6px; background: var(--color-surface-muted); }
-  .app-shell .remediation-focused .diagnosis-summary { min-width: 140px; }
+  .app-shell .incident-workspace .detail-heading {
+    flex-basis: 100%;
+  }
 }

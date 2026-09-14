@@ -36,7 +36,9 @@ export function AppShell() {
     <div className="app-shell">
       <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="brand">
-          <img className="brand-logo" src={brandLogo} alt="Mendry" width={130} height={32} />
+          <div className="brand-header-wrap">
+            <img className="brand-logo" src={brandLogo} alt="Mendry" width={130} height={32} />
+          </div>
           <IconButton label="Close navigation" onClick={() => setMobileOpen(false)}><X size={18} /></IconButton>
         </div>
         <ProjectSwitcher key={project.key} />
@@ -48,11 +50,16 @@ export function AppShell() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <div className="user-card">
-            <div className="avatar">{user.username.slice(0, 1).toUpperCase()}</div>
-            <div><strong>{user.username}</strong></div>
+          <div className="sidebar-foot-user-row">
+            <div className="user-card">
+              <div className="avatar">{user.username.slice(0, 1).toUpperCase()}</div>
+              <div className="user-card-info">
+                <strong>{user.username}</strong>
+                <span className="user-card-role">Operator</span>
+              </div>
+            </div>
+            <IconButton label="Sign out" onClick={() => void logout()}><LogOut size={18} /></IconButton>
           </div>
-          <IconButton label="Sign out" onClick={() => void logout()}><LogOut size={18} /></IconButton>
         </div>
       </aside>
       {mobileOpen && <button type="button" className="backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}

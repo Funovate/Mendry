@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ChevronLeft, Clock3, Radio, Server, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import brandMark from "../../assets/mendry-mark-reversed.svg";
 import { api, messageFromError, type ApiIncident, type IncidentStatus, type ListResult } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
-import { ErrorNotice, IconButton, LoadingState, PageError, StatusPill } from "../../shared/ui";
+import { ErrorNotice, LoadingState, PageError, StatusPill } from "../../shared/ui";
 import { RemediationPanel } from "./RemediationPanel";
 import "./incident-workspace.css";
 
@@ -32,12 +33,18 @@ export function IncidentsPage() {
   if (incidents.isPending) return <LoadingState label="Loading incidents" />;
   if (incidents.isError) return <PageError message={messageFromError(incidents.error)} onRetry={() => void incidents.refetch()} />;
 
-  return <div className="incidents-layout"><section className={`incident-list-pane ${selected ? "with-detail" : ""}`}><div className="list-header"><div><h1>Incidents <span>{filtered.length}</span></h1></div></div><div className="filter-row"><select aria-label="Filter incident status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All</option><option>Open</option><option>Recovered</option><option>Closed</option></select></div><div className="incident-list">{filtered.map((incident) => <button type="button" className={`incident-row ${selected?.id === incident.id ? "selected" : ""}`} onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents/${encodeURIComponent(incident.id)}`)} key={incident.id}><div className="row-topline"><span className="incident-id">{incident.id}</span><span className="time">{formatDate(incident.lastSeen)}</span></div><strong>{incident.title}</strong><div className="row-meta"><StatusPill value={incident.status} /><StatusPill value={incident.priority} />{incident.muted && <span className="muted">Muted</span>}<span>{incident.occurrenceCount} events</span></div></button>)}{filtered.length === 0 && <div className="list-empty">No incidents match this project and status.</div>}</div></section>{incidentId && !selected ? <section className="empty-detail"><Activity size={28} /><h2>Incident not found</h2><p>The incident is unavailable in this project.</p><button className="secondary-button" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`, { replace: true })}>Back to incidents</button></section> : selected ? (
+  return <div className="incidents-layout"><section className={`incident-list-pane ${selected ? "with-detail" : ""}`}><div className="list-header"><div><h1>Incidents <span className="incident-count-pill">{filtered.length}</span></h1></div></div><div className="filter-row"><select aria-label="Filter incident status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>All</option><option>Open</option><option>Recovered</option><option>Closed</option></select></div><div className="incident-list">{filtered.map((incident) => <button type="button" className={`incident-row ${selected?.id === incident.id ? "selected" : ""}`} onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents/${encodeURIComponent(incident.id)}`)} key={incident.id}><div className="row-topline"><span className="incident-id">{incident.id}</span><span className="time">{formatDate(incident.lastSeen)}</span></div><strong>{incident.title}</strong><div className="row-meta"><StatusPill value={incident.status} /><StatusPill value={incident.priority} />{incident.muted && <span className="muted">Muted</span>}<span>{incident.occurrenceCount} events</span></div></button>)}{filtered.length === 0 && <div className="list-empty">No incidents match this project and status.</div>}</div></section>{incidentId && !selected ? <section className="empty-detail"><Activity size={28} /><h2>Incident not found</h2><p>The incident is unavailable in this project.</p><button className="secondary-button" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`, { replace: true })}>Back to incidents</button></section> : selected ? (
     <section className="detail incident-workspace" aria-label="Incident detail">
       <header className="detail-header">
-        <IconButton label="Back to incidents" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`)}><ChevronLeft size={18} /></IconButton>
         <div className="detail-heading">
-          <div className="eyebrow">{selected.id}</div>
+          <div className="detail-kicker-row">
+            <button className="incident-back-link" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`)}>
+              <ChevronLeft size={16} aria-hidden="true" />
+              <span>Incidents</span>
+            </button>
+            <span className="detail-kicker-divider" aria-hidden="true" />
+            <div className="eyebrow">{selected.id}</div>
+          </div>
           <h1>{selected.title}</h1>
           <div className="detail-meta">
             <StatusPill value={selected.status} /><StatusPill value={selected.priority} />
@@ -57,5 +64,31 @@ export function IncidentsPage() {
         <RemediationPanel key={selected.id} projectKey={project.key} incidentId={selected.id} generation={selected.lifecycleGeneration} fingerprint={selected.fingerprint} notificationSummary={selected.notificationSummary} />
       </div>
     </section>
-  ) : <section className="empty-detail incident-placeholder"><Activity size={28} /><h2>Select an incident</h2></section>}</div>;
+  ) : (
+    <section className="empty-detail incident-placeholder" aria-label="Select an incident">
+      <div className="incident-welcome-card">
+        <div className="welcome-art" aria-hidden="true">
+          <div className="welcome-mark-box">
+            <img src={brandMark} alt="" width={32} height={32} />
+          </div>
+        </div>
+        <h2>Select an incident</h2>
+        <p className="welcome-subtitle">
+          Choose an incident from the feed to inspect telemetry anomalies, evaluate root cause diagnosis, and review remediation plans.
+        </p>
+        <div className="welcome-stats-grid">
+          <div className="welcome-stat-card">
+            <span className="welcome-stat-label">Project</span>
+            <strong className="welcome-stat-value">{project.name}</strong>
+            <span className="welcome-stat-meta">{project.key}</span>
+          </div>
+          <div className="welcome-stat-card">
+            <span className="welcome-stat-label">Active Incidents</span>
+            <strong className="welcome-stat-value">{filtered.filter((i) => i.status === "Open").length} open</strong>
+            <span className="welcome-stat-meta">{incidents.data?.items.length ?? 0} total tracked</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )}</div>;
 }

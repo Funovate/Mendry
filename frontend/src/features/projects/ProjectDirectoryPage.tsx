@@ -36,17 +36,88 @@ export function ProjectDirectoryPage() {
   const projects = useProjectsQuery();
   const navigate = useNavigate();
   if (projects.isPending) return <LoadingState label="Loading projects" />;
-  if (projects.isError) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Projects unavailable</h1></div></header><ErrorNotice message={messageFromError(projects.error)} onRetry={() => void projects.refetch()} /></main>;
+  if (projects.isError) return (
+    <main className="project-directory">
+      <div className="project-directory-panel">
+        <div className="directory-header-top">
+          <img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={146} height={36} />
+        </div>
+        <header><div><h1>Projects unavailable</h1></div></header>
+        <ErrorNotice message={messageFromError(projects.error)} onRetry={() => void projects.refetch()} />
+      </div>
+    </main>
+  );
 
-  if (projects.data.items.length === 0) return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>No projects</h1></div></header><section className="empty-projects"><GitBranch size={25} /><h2>Create the first project</h2><button className="primary-button" type="button" onClick={() => navigate("/projects/new")}><Plus size={16} />Create project</button></section></main>;
+  if (projects.data.items.length === 0) return (
+    <main className="project-directory">
+      <div className="project-directory-panel">
+        <div className="directory-header-top">
+          <img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={146} height={36} />
+        </div>
+        <header>
+          <h1>No projects</h1>
+          <p className="project-directory-subtitle">Get started by setting up your first operational service.</p>
+        </header>
+        <section className="empty-projects">
+          <GitBranch size={26} />
+          <h2>Create the first project</h2>
+          <button className="primary-button" type="button" onClick={() => navigate("/projects/new")}>
+            <Plus size={16} />Create project
+          </button>
+        </section>
+      </div>
+    </main>
+  );
 
-  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Switch projects</h1></div></header><div className="project-list">{projects.data.items.map((project) => <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/incidents`}><span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span><span><strong>{project.name}</strong><small>{project.key}</small></span><ArrowRight size={18} /></Link>)}<button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}><span>+</span><div><strong>Create project</strong></div><ArrowRight size={18} /></button></div></main>;
+  return (
+    <main className="project-directory">
+      <div className="project-directory-panel">
+        <div className="directory-header-top">
+          <img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={146} height={36} />
+        </div>
+        <header>
+          <h1>Switch projects</h1>
+          <p className="project-directory-subtitle">Select an active workspace to manage incidents and remediation workflows.</p>
+        </header>
+        <div className="project-list">
+          {projects.data.items.map((project) => (
+            <Link className="project-row" key={project.id} to={`/projects/${encodeURIComponent(project.key)}/incidents`}>
+              <span className="project-initial">{project.name.slice(0, 1).toUpperCase()}</span>
+              <span className="project-row-copy">
+                <strong>{project.name}</strong>
+                <small>{project.key}</small>
+              </span>
+              <ArrowRight size={17} aria-hidden="true" />
+            </Link>
+          ))}
+          <button type="button" className="create-project-row" onClick={() => navigate("/projects/new")}>
+            <span className="create-project-plus">+</span>
+            <strong>Create project</strong>
+            <ArrowRight size={17} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 export function CreateProjectPage() {
   const navigate = useNavigate();
 
-  return <main className="project-directory"><img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={156} height={39} /><header><div><h1>Create project</h1></div></header><CreateProjectForm onCancel={() => navigate("/projects")} /></main>;
+  return (
+    <main className="project-directory">
+      <div className="project-directory-panel">
+        <div className="directory-header-top">
+          <img className="brand-logo directory-logo" src={brandLogo} alt="Mendry" width={146} height={36} />
+        </div>
+        <header>
+          <h1>Create project</h1>
+          <p className="project-directory-subtitle">Define the service name and key identifier for URL routing.</p>
+        </header>
+        <CreateProjectForm onCancel={() => navigate("/projects")} />
+      </div>
+    </main>
+  );
 }
 
 export function HomeRedirect() {

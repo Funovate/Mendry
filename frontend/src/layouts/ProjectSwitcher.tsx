@@ -71,9 +71,11 @@ export function ProjectSwitcher() {
 
   return <div className="project-switcher-row">
     <button type="button" className="project-switcher" aria-label={`Project ${project.name}`} onClick={() => navigate("/projects")}>
-      <span><strong>{project.name}</strong></span>
-      <ChevronsUpDown size={16} />
+      <span className="project-switcher-meta">
+        <strong>{project.name}</strong>
+      </span>
+      <ChevronsUpDown size={15} />
     </button>
-    <IconButton label="Edit project name" onClick={startEdit}><Pencil size={15} /></IconButton>
+    <IconButton label="Edit project name" onClick={startEdit}><Pencil size={14} /></IconButton>
   </div>;
 }
