@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ArrowRight, LoaderCircle } from "lucide-react";
 import brandMark from "../../assets/mendry-mark-reversed.svg";
 import brandLogo from "../../assets/mendry-logo-horizontal.svg";
 import { useState, type FormEvent } from "react";
@@ -65,7 +65,6 @@ export function LoginPage() {
               {submitting ? <><LoaderCircle className="spin" size={17} />Signing in…</> : <>Sign in<ArrowRight className="login-submit-arrow" size={17} aria-hidden="true" /></>}
             </button>
           </form>
-          <div className="login-access-note"><LockKeyhole size={15} /><p>Sign in to your Mendry instance.<br />Your account manages all projects.</p></div>
         </div>
       </section>
     </main>

@@ -72,9 +72,6 @@
   .login-entry .primary-button:is(:hover, :focus-visible, :active):not(:disabled),
   .login-entry .primary-button:is(:hover, :focus-visible, :active):not(:disabled) .login-submit-arrow { transform: none; }
 }
-.login-access-note { display: flex; align-items: flex-start; gap: 10px; padding-top: 24px; border-top: 1px solid #d6d9cf; color: #52625c; }
-.login-access-note svg { flex-shrink: 0; margin-top: 3px; }
-.login-entry .login-access-note p { font-size: 11px; line-height: 1.8; }
 @media (min-width: 1600px) { .login-story { padding-inline: 100px; } .login-art { height: 340px; } }
 @media (max-width: 1000px) { .login-story { padding-inline: 30px; gap: 40px; } }
 @media (max-width: 720px) {
