@@ -1,7 +1,7 @@
 .project-directory {
   min-height: 100vh;
   padding: 58px max(20px, calc((100vw - 880px) / 2));
-  background: #f5f7f8;
+  background: var(--color-canvas);
 }
 
 .project-directory > header {

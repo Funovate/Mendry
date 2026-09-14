@@ -8,14 +8,14 @@
    -------------------------------------------------------------------------- */
 .app-shell,
 .project-directory {
-  --color-canvas: #f4f1ea;
+  --color-canvas: #fafbf8;
   --color-surface: #ffffff;
-  --color-surface-muted: #f5f2e9;
-  --color-border: #ded9cb;
-  --color-border-soft: #e7e2d5;
+  --color-surface-muted: #f6f8f6;
+  --color-border: #e2e7e3;
+  --color-border-soft: #edf2ee;
   --color-accent: #17281f;
   --color-accent-hover: #243a2e;
-  --color-accent-soft: #eae5d8;
+  --color-accent-soft: #eaf2ee;
   --color-heading: #17281f;
   --color-ink: #17281f;
   --color-text: #3e5046;
@@ -34,7 +34,7 @@
 .app-shell {
   min-height: 100vh;
   min-height: 100svh;
-  background: #f4f1ea;
+  background: var(--color-canvas);
 }
 
 .app-shell .sidebar {
@@ -43,8 +43,8 @@
   min-height: 100vh;
   height: 100vh;
   padding: 24px 14px 18px;
-  background: #faf8f4;
-  border-right: 1px solid #ded9cb;
+  background: #ffffff;
+  border-right: 1px solid #e2e7e3;
   box-shadow: 1px 0 8px rgb(23 40 31 / 3%);
 }
 
@@ -90,15 +90,15 @@
   min-height: 48px;
   padding: 6px 8px 6px 12px;
   background: #ffffff;
-  border: 1px solid #ded9cb;
+  border: 1px solid #e2e7e3;
   border-radius: 9px;
   box-shadow: 0 1px 3px rgb(23 40 31 / 4%);
   transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
 }
 
 .app-shell .project-switcher-row:hover {
-  border-color: #b8c4ba;
-  background: #fdfdfc;
+  border-color: #17281f;
+  background: #f8faf9;
   box-shadow: 0 2px 8px rgb(23 40 31 / 6%);
 }
 
@@ -166,8 +166,8 @@
 .app-shell .project-switcher-row .icon-button:hover,
 .app-shell .project-switcher-edit .icon-button:hover:not(:disabled) {
   color: #17281f;
-  background: #ebe7dc;
-  border-color: #ded9cb;
+  background: #eaf2ee;
+  border-color: #dce3de;
 }
 
 .app-shell .project-switcher-edit input {
@@ -215,8 +215,8 @@
 
 .app-shell .sidebar nav a:hover {
   color: #17281f;
-  background: #ede9de;
-  border-color: #e2dcce;
+  background: #eaf2ee;
+  border-color: #dce3de;
 }
 
 .app-shell .sidebar nav a:hover svg {
@@ -224,9 +224,9 @@
 }
 
 .app-shell .sidebar nav a.nav-active {
-  color: #f3f0e7;
+  color: #ffffff;
   background: #17281f;
-  border: 1px solid rgb(193 137 62 / 32%);
+  border: 1px solid #17281f;
   box-shadow: 0 3px 10px rgb(23 40 31 / 14%);
   font-weight: 600;
 }
@@ -245,7 +245,7 @@
   gap: 14px;
   margin-top: auto;
   padding: 16px 4px 2px;
-  border-top: 1px solid #ded9cb;
+  border-top: 1px solid #e2e7e3;
 }
 
 .sidebar-foot-user-row {
@@ -273,8 +273,8 @@
   font-size: 12px;
   font-weight: 700;
   color: #17281f;
-  background: #eae4d5;
-  border: 1.5px solid #ded6c4;
+  background: #eaf2ee;
+  border: 1.5px solid #dce3de;
   border-radius: 50%;
 }
 
@@ -321,8 +321,8 @@
    Topbar
    -------------------------------------------------------------------------- */
 .app-shell .topbar {
-  background: #faf8f4;
-  border-bottom: 1px solid #ded9cb;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e7e3;
 }
 
 /* --------------------------------------------------------------------------
@@ -332,12 +332,12 @@
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
-  background: #f4f1ea;
+  background: var(--color-canvas);
 }
 
 .app-shell .incident-list-pane {
-  background: #faf8f4;
-  border-right: 1px solid #ded9cb;
+  background: var(--color-canvas);
+  border-right: 1px solid #e2e7e3;
   display: flex;
   flex-direction: column;
 }
@@ -366,8 +366,8 @@
   font-weight: 600;
   font-family: var(--font-mono);
   color: #17281f;
-  background: #ebe7dc;
-  border: 1px solid #ded9cb;
+  background: #f0f4f1;
+  border: 1px solid #dce2de;
   border-radius: 999px;
 }
 
@@ -383,7 +383,7 @@
   font-weight: 500;
   color: #17281f;
   background: #ffffff;
-  border: 1px solid #d4cebe;
+  border: 1px solid #d4ded6;
   border-radius: 8px;
   outline: none;
   transition: border-color 180ms ease, box-shadow 180ms ease;
@@ -391,7 +391,7 @@
 
 .app-shell .filter-row select:focus-visible {
   border-color: #17281f;
-  box-shadow: 0 0 0 3px rgb(193 137 62 / 24%);
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
 }
 
 .app-shell .incident-list {
@@ -408,7 +408,7 @@
   gap: 8px;
   padding: 16px 18px;
   background: #ffffff;
-  border: 1px solid #ded9cb;
+  border: 1px solid #e2e7e3;
   border-radius: 10px;
   box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
   text-align: left;
@@ -417,16 +417,16 @@
 }
 
 .app-shell .incident-row:hover {
-  background: #ffffff;
-  border-color: #b8c4ba;
+  background: #f6f9f7;
+  border-color: #b8c8be;
   transform: translateY(-1.5px);
   box-shadow: 0 6px 18px rgb(23 40 31 / 7%);
 }
 
 .app-shell .incident-row.selected {
-  background: #fdfdfa;
-  border-color: #c1893e;
-  box-shadow: inset 3px 0 0 #c1893e, 0 4px 16px rgb(193 137 62 / 12%);
+  background: #eaf2ee;
+  border-color: #17281f;
+  box-shadow: inset 3px 0 0 #17281f, 0 4px 14px rgb(23 40 31 / 7%);
 }
 
 .app-shell .row-topline {
@@ -532,7 +532,7 @@
   align-items: center;
   justify-content: center;
   padding: clamp(24px, 4vw, 48px);
-  background: #f4f1ea;
+  background: var(--color-canvas);
   min-height: 100vh;
 }
 
@@ -540,10 +540,10 @@
   position: relative;
   width: min(100%, 640px);
   padding: clamp(28px, 4vw, 44px);
-  background: #faf9f4;
-  border: 1px solid #ded9cb;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
   border-radius: 14px;
-  box-shadow: 0 16px 44px rgb(23 40 31 / 6%), 0 2px 8px rgb(23 40 31 / 3%);
+  box-shadow: 0 16px 44px rgb(23 40 31 / 5%), 0 2px 8px rgb(23 40 31 / 2%);
   text-align: center;
 }
 
@@ -569,8 +569,8 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #4b5e54;
-  background: #ebe7dc;
-  border: 1px solid #ded9cb;
+  background: #f0f4f1;
+  border: 1px solid #dce2de;
   border-radius: 999px;
   margin-bottom: 22px;
 }
@@ -626,7 +626,7 @@
   gap: 2px;
   padding: 12px 14px;
   background: #ffffff;
-  border: 1px solid #e0dbce;
+  border: 1px solid #e2e7e3;
   border-radius: 9px;
   box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
 }
@@ -661,13 +661,13 @@
    Incident Detail View
    -------------------------------------------------------------------------- */
 .app-shell .detail {
-  background: #ffffff;
+  background: var(--color-canvas);
 }
 
 .app-shell .detail-header {
   padding: 24px clamp(20px, 3vw, 40px) 20px;
-  background: #faf8f4;
-  border-bottom: 1px solid #ded9cb;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e7e3;
 }
 
 .app-shell .detail-heading h1 {
@@ -684,15 +684,16 @@
   font-weight: 600;
   color: #17281f;
   background: #ffffff;
-  border: 1px solid #d4cebe;
+  border: 1px solid #d4ded6;
   border-radius: 8px;
   transition: border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .app-shell .incident-lifecycle select:focus-visible {
   border-color: #17281f;
-  box-shadow: 0 0 0 3px rgb(193 137 62 / 24%);
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
 }
+
 
 /* --------------------------------------------------------------------------
    Project Directory Page (/projects, /projects/new)
@@ -705,17 +706,17 @@
   align-items: center;
   justify-content: center;
   padding: clamp(24px, 4vw, 56px) 20px;
-  background: #f3f0e7;
+  background: var(--color-canvas);
 }
 
 .project-directory-panel {
   position: relative;
   width: min(100%, 540px);
   padding: clamp(28px, 4vw, 40px);
-  background: #faf9f4;
-  border: 1px solid #ded9cb;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
   border-radius: 14px;
-  box-shadow: 0 18px 48px rgb(23 40 31 / 7%), 0 2px 8px rgb(23 40 31 / 3%);
+  box-shadow: 0 18px 48px rgb(23 40 31 / 5%), 0 2px 8px rgb(23 40 31 / 2%);
 }
 
 /* Amber hairline kintsugi stitch at the top of the directory panel */
@@ -777,7 +778,7 @@
   gap: 14px;
   padding: 16px 18px;
   background: #ffffff;
-  border: 1px solid #ded9cb;
+  border: 1px solid #e2e7e3;
   border-radius: 9px;
   box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
   text-decoration: none;
@@ -787,7 +788,7 @@
 
 .project-directory-panel .project-row:hover {
   background: #ffffff;
-  border-color: #b8c4ba;
+  border-color: #17281f;
   transform: translateY(-1.5px);
   box-shadow: 0 6px 18px rgb(23 40 31 / 7%);
 }
@@ -800,7 +801,7 @@
   place-items: center;
   font-size: 14px;
   font-weight: 700;
-  color: #f3f0e7;
+  color: #ffffff;
   background: #17281f;
   border: 1px solid rgb(193 137 62 / 36%);
   box-shadow: 0 2px 6px rgb(23 40 31 / 14%);
@@ -845,8 +846,8 @@
   width: 100%;
   padding: 14px 18px;
   margin-top: 6px;
-  background: #f7f4ea;
-  border: 1.5px dashed #c8beab;
+  background: #f8faf9;
+  border: 1.5px dashed #cfd7d1;
   border-radius: 9px;
   color: #17281f;
   cursor: pointer;
@@ -854,11 +855,11 @@
 }
 
 .project-directory-panel .create-project-row:hover {
-  background: #fcf8ee;
-  border-color: #c1893e;
+  background: #eaf2ee;
+  border-color: #17281f;
   border-style: solid;
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgb(193 137 62 / 10%);
+  box-shadow: 0 4px 14px rgb(23 40 31 / 8%);
 }
 
 .create-project-plus {
@@ -867,8 +868,8 @@
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #ebe6d8;
-  color: #c1893e;
+  background: #eaf2ee;
+  color: #17281f;
   font-size: 18px;
   font-weight: 700;
   flex-shrink: 0;
@@ -887,7 +888,7 @@
 }
 
 .project-directory-panel .create-project-row:hover svg {
-  color: #c1893e;
+  color: #17281f;
   transform: translateX(3px);
 }
 
@@ -919,7 +920,7 @@
   font-size: 13.5px;
   color: #17281f;
   background: #ffffff;
-  border: 1px solid #d0d6ca;
+  border: 1px solid #d4ded6;
   border-radius: 8px;
   outline: none;
   transition: border-color 180ms ease, box-shadow 180ms ease;
@@ -928,7 +929,7 @@
 .project-directory-panel .create-project-form input:focus-visible,
 .project-directory-panel .create-project-form textarea:focus-visible {
   border-color: #17281f;
-  box-shadow: 0 0 0 3px rgb(193 137 62 / 24%);
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
 }
 
 .project-directory-panel .create-project-form textarea {
@@ -943,7 +944,7 @@
   gap: 12px;
   margin-top: 10px;
   padding-top: 18px;
-  border-top: 1px solid #e7e2d5;
+  border-top: 1px solid #edf2ee;
 }
 
 /* --------------------------------------------------------------------------
@@ -960,7 +961,7 @@
   justify-content: center;
   gap: 8px;
   background: #17281f;
-  color: #f3f0e7;
+  color: #ffffff;
   border: 1px solid rgb(193 137 62 / 28%);
   border-radius: 8px;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 3px 12px rgb(23 40 31 / 14%);
@@ -996,18 +997,18 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: #f5f2e8;
+  background: #ffffff;
   color: #3e5046;
-  border: 1px solid #ded9cb;
+  border: 1px solid #dce2de;
   border-radius: 8px;
   cursor: pointer;
   transition: all 180ms ease;
 }
 
 .secondary-button:hover:not(:disabled) {
-  background: #ede9de;
+  background: #eaf2ee;
   color: #17281f;
-  border-color: #c9c3b2;
+  border-color: #17281f;
 }
 
 /* --------------------------------------------------------------------------

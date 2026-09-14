@@ -6,7 +6,7 @@
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   place-items: stretch;
   padding: 12px;
-  background: #f3f0e7;
+  background: #fafbf8;
 }
 
 .login-story {
@@ -204,8 +204,8 @@
   margin: 48px 0;
   padding: clamp(30px, 4vw, 42px);
   gap: 26px;
-  background: #faf9f4;
-  border: 1px solid #ded9cb;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgb(23 40 31 / 7%), 0 2px 6px rgb(23 40 31 / 3%);
 }
