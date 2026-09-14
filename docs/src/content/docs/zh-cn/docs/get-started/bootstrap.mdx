@@ -1,6 +1,6 @@
 ---
-title: 初始化管理员
-description: 迁移源码评估数据库、创建首个本地管理员并验证 API 健康状态。
+title: 初始化登录账号
+description: 迁移源码评估数据库、创建唯一的本地登录账号并验证 API 健康状态。
 availability: preview
 translationKey: bootstrap
 journeyOrder: 4
@@ -30,14 +30,14 @@ make run-migrate
 
 只有迁移命令会修改 schema，API 不会自动执行迁移。
 
-## 3. 创建首个管理员
+## 3. 创建登录账号
 
 ```bash
 MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
 make bootstrap-admin USERNAME=admin
 ```
 
-密码长度必须为 12 到 72 字节。对同一个已启用管理员重复运行是幂等的，不会替换密码哈希。
+密码长度必须为 12 到 72 字节。对同一个已启用登录账号重复运行是幂等的，不会替换密码哈希。数据库最多允许一个账号；使用不同用户名无法创建第二个登录身份。
 
 ## 4. 启动并验证 API
 

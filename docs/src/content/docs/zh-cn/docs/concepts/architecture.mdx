@@ -40,10 +40,10 @@ Foundation 层已经实现并通过聚焦测试。具体 Local、Service 与 Pro
 ## 交付模式
 
 - **Foundation：** 已实现的源码契约与共享机制。
-- **Local：** 目标为 account-free composition 与 file durability；源码进行中，walkthrough 尚未验证。
+- **Local：** 可运行且不依赖账号的源码 composition，支持持久文件 snapshot、检查、继续、操作员 resolution 与有界 MCP 示例；尚无受支持 binary 或兼容性保证。
 - **Service：** 计划中的通用 event acceptance、PostgreSQL run store、claim、cancel 与 API。
 - **Product：** 计划中的通用 run/call/artifact 视图。
-- **事故应用：** 现有项目/账号应用，逐步复用 Foundation 机制。
+- **事故应用：** 现有项目/单登录账号应用，逐步复用 Foundation 机制。
 
 这些模式共享边界，但并非都已发布。详见[产品状态](/zh-cn/docs/project/status/)。
 

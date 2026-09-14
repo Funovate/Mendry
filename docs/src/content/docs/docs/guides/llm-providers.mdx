@@ -13,10 +13,10 @@ sources:
 ## Scope: existing incident application
 
 This page documents project-scoped provider behavior in the current incident
-application. It is not the binding format for the unfinished Local Harness or
-planned generic Service. The neutral core depends only on `ModelProvider` and an
-opaque turn binding; concrete adapters and trusted composition resolve endpoint,
-model, and credentials.
+application. It is not the binding format for the Local Harness source preview
+or planned generic Service. The neutral core depends only on `ModelProvider` and
+an opaque turn binding; concrete adapters and trusted composition resolve
+endpoint, model, and credentials.
 
 Mendry supports project-scoped OpenAI-compatible provider configuration. The
 provider is optional configuration, and a failed webhook classifier call falls
@@ -50,8 +50,10 @@ commands, merge approval, deployment approval, or recovery status.
 ## Disable safely
 
 Remove or omit the project LLM provider to prevent new provider-backed analysis.
-Review in-flight activity and audit records according to your process; current
-source evaluation does not include a durable general-purpose worker queue.
+Review in-flight activity through your external operational records; the
+single-user incident application has no application audit event feed, and the
+current source evaluation does not include a durable general-purpose worker
+queue.
 
 ## Verified against
 

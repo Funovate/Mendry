@@ -12,7 +12,7 @@ const pages = [
   [
     "local-harness",
     "src/content/docs/docs/get-started/local-harness.mdx",
-    "planned",
+    "preview",
   ],
   [
     "prerequisites",

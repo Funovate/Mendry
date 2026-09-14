@@ -9,7 +9,7 @@ const journeys = [
       "Evaluate your first production incident",
       "Prerequisites",
       "Installation status",
-      "Bootstrap the administrator",
+      "Bootstrap the login identity",
       "Configure your first incident response project",
       "Review your first production incident",
     ],
@@ -29,7 +29,7 @@ const journeys = [
       "评估第一个生产问题",
       "前提条件",
       "安装状态",
-      "初始化管理员",
+      "初始化登录账号",
       "创建首个项目",
       "审阅首个事故",
     ],
@@ -69,6 +69,37 @@ for (const journey of journeys) {
     await page.goto(`${journey.prefix}/docs/get-started/install/`);
     await expect(page.locator("main")).toContainText("planned");
     await expect(page.locator("main pre")).toHaveCount(0);
+  });
+}
+
+const localHarnessCases = [
+  {
+    locale: "en",
+    path: "/docs/get-started/local-harness/",
+    heading: "Run the Local Agent Harness",
+  },
+  {
+    locale: "zh-CN",
+    path: "/zh-cn/docs/get-started/local-harness/",
+    heading: "运行本地 Agent Harness",
+  },
+];
+
+for (const pageCase of localHarnessCases) {
+  test(`${pageCase.locale} Local Harness preview publishes runnable source commands`, async ({
+    page,
+  }) => {
+    await page.goto(pageCase.path);
+    await expect(page.locator("html")).toHaveAttribute("lang", pageCase.locale);
+    await expect(
+      page.getByRole("heading", { level: 1, name: pageCase.heading }),
+    ).toBeVisible();
+    await expect(page.locator("main")).toContainText("preview");
+    await expect(page.locator("main")).toContainText(
+      "make build-agentcore-local build-mcp-workspace",
+    );
+    await expect(page.locator("main")).toContainText("agentcore-local inspect");
+    await expect(page.locator("main")).toContainText("agentcore-local resolve");
   });
 }
 

@@ -20,13 +20,13 @@ is intended for source evaluation.
 
 The current source-evaluation journey runs the incident web application from
 this repository. It requires PostgreSQL for business data, Redis for login
-sessions, a bootstrapped administrator account, and project configuration.
-Those are incident-application prerequisites, not dependencies of the neutral
-Harness contracts.
+sessions, one bootstrapped login identity, and project configuration. These are
+incident-application prerequisites, not dependencies of the neutral Harness
+contracts.
 
 1. Confirm the [incident application prerequisites](/docs/get-started/prerequisites/).
 2. Read the [installation status](/docs/get-started/install/) before choosing an environment.
-3. Run migrations and [bootstrap the administrator](/docs/get-started/bootstrap/).
+3. Run migrations and [bootstrap the login identity](/docs/get-started/bootstrap/).
 4. Create and configure the [first project](/docs/get-started/first-project/).
 5. Send a supported signal and inspect the [first incident](/docs/get-started/first-incident/).
 
@@ -35,11 +35,12 @@ customer installation.
 
 ## For developers: Local Agent Harness
 
-The separate Local path targets a JSON event executed through the shared Harness,
-with inspectable state and no PostgreSQL, Redis, or account requirement. Its
-complete walkthrough has not yet been validated for publication. See
-[Local walkthrough status](/docs/get-started/local-harness/). This development
-path has different prerequisites and readiness from the incident application.
+The separate Local path accepts a JSON event, executes it through the shared
+Harness, and writes inspectable state without PostgreSQL, Redis, or an account.
+The source preview now documents build, run, inspect, resume, and operator
+recovery commands. See [Run the Local Agent Harness](/docs/get-started/local-harness/).
+This development path has different prerequisites and release guarantees from
+the incident application.
 
 ## Extend from source
 

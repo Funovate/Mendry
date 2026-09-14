@@ -1,6 +1,6 @@
 ---
-title: Bootstrap the administrator
-description: Migrate a source-evaluation database, create the first local administrator, and verify API health.
+title: Bootstrap the login identity
+description: Migrate a source-evaluation database, create its sole local login identity, and verify API health.
 availability: preview
 translationKey: bootstrap
 journeyOrder: 4
@@ -32,7 +32,7 @@ make run-migrate
 
 Only the migration command changes schema. The API never migrates automatically.
 
-## 3. Create the first administrator
+## 3. Create the login identity
 
 ```bash
 MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
@@ -40,7 +40,9 @@ make bootstrap-admin USERNAME=admin
 ```
 
 The password must contain 12 to 72 bytes. Repeating the command for the same
-enabled administrator is idempotent and does not replace its password hash.
+enabled login identity is idempotent and does not replace its password hash.
+The database permits at most one account; using a different username cannot
+create a second login identity.
 
 ## 4. Start and verify the API
 

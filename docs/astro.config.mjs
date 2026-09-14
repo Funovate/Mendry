@@ -66,8 +66,8 @@ export default defineConfig({
             },
             {
               slug: "docs/get-started/local-harness",
-              label: "Local walkthrough status",
-              translations: { "zh-CN": "本地流程状态" },
+              label: "Run Local Harness",
+              translations: { "zh-CN": "运行本地 Harness" },
             },
             {
               slug: "docs/guides/extending-harness",
@@ -97,8 +97,8 @@ export default defineConfig({
             },
             {
               slug: "docs/get-started/bootstrap",
-              label: "Bootstrap administrator",
-              translations: { "zh-CN": "初始化管理员" },
+              label: "Bootstrap login",
+              translations: { "zh-CN": "初始化登录账号" },
             },
             {
               slug: "docs/get-started/first-project",

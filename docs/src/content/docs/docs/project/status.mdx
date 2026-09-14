@@ -25,13 +25,15 @@ Status labels describe evidence, not ambition.
 | --------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Foundation shared execution and extension contracts | preview | Implemented and focused-tested: neutral domain ports, Runner, model step, paired history, registries, policy, completion, budgets, recovery, and artifact provenance |
 | Full incident Runner migration                      | planned | Remediation uses shared model/history boundaries, while its coordinator still owns the domain loop, evidence gates, checkpoints, and tool routing                    |
-| Local input, file durability, and examples          | planned | Source is in progress; no database-free walkthrough or command smoke path has been validated for this site                                                           |
+| Local input, file durability, and examples          | preview | Source CLI supports run, inspect, resume, and operator resolution with durable file snapshots; no supported binary or compatibility guarantee                        |
 | Service generic events and durable runs             | planned | No generic event/run service contract is currently published; the incident webhook is not a generic task endpoint                                                    |
 | Product generic run and artifact views              | planned | Existing incident review screens are not generic run/call/artifact views                                                                                             |
 
-Foundation `preview` is a positive implementation status with a bounded claim:
-its report records focused tests and published APIs. It does not promote Local,
-Service, Product, or end-to-end migration to available. See [Agent Harness](/docs/concepts/agent-harness/).
+Foundation and Local `preview` are positive implementation statuses with bounded
+claims: focused tests cover the shared contracts, and the account-free Local CLI
+has a documented offline fixture smoke path. They do not promote Service,
+Product, or end-to-end incident migration to available, and they do not claim a
+supported Local release artifact. See [Agent Harness](/docs/concepts/agent-harness/).
 
 ## Existing incident application
 
@@ -42,7 +44,7 @@ prohibition on write-capable Harness extensions.
 
 | Capability                                                | Status    | Boundary                                                            |
 | --------------------------------------------------------- | --------- | ------------------------------------------------------------------- |
-| Explicit migrations and administrator bootstrap           | available | Source command; supported production package still absent           |
+| Explicit migrations and single-user bootstrap             | available | Source command; supported production package still absent           |
 | Single-user login sessions                                | available | Redis sessions and one PostgreSQL login identity; incident app only |
 | Component project configuration and encrypted credentials | available | Project-scoped application behavior                                 |
 | Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed      |

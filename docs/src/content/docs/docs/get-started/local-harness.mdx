@@ -1,7 +1,7 @@
 ---
-title: Local Harness walkthrough status
-description: Understand the intended database-free Local Harness path and why runnable commands are not published yet.
-availability: planned
+title: Run the Local Agent Harness
+description: Run, inspect, resume, and recover an account-free Agent Harness from source.
+availability: preview
 translationKey: local-harness
 sources:
   - backend/cmd/agentcore-local/main.go
@@ -9,21 +9,63 @@ sources:
   - backend/internal/modules/agentcore/adapter/file/store.go
 ---
 
-**Availability: planned — walkthrough awaiting validation**
+**Availability: preview — runnable from source, without a supported release package**
 
-The Local delivery target is one bounded JSON event executed by the shared
-Harness, with calls, artifacts, budgets, state, and completion reason retained in
-an inspectable run directory. It is explicitly designed to require no
-PostgreSQL, Redis, project membership, or account onboarding.
+The Local composition executes one bounded JSON event through the shared
+Harness and retains calls, artifacts, budgets, state, and completion reason in
+an inspectable run directory. It requires no PostgreSQL, Redis,
+incident-application login identity, or project configuration.
 
-Source currently exists under `backend/cmd/agentcore-local` and
-`backend/internal/modules/agentcore`, including composition, file-store, provider,
-and MCP work in progress. File presence is not the release gate. This page will
-publish commands, configuration and event shapes, inspection, resume, and the
-reversible MCP example only after the complete walkthrough passes the task's
-focused tests, race checks, and temporary-directory smoke validation.
+The CLI and examples are source-evaluation interfaces. They are covered by
+focused and race tests and an offline fixture smoke path, but Mendry does not
+yet publish a supported Local binary, installer, or compatibility guarantee.
 
-## Intended trust boundary
+## Build and run
+
+From `backend/`, build the local runner and example MCP workspace server:
+
+```bash
+make build-agentcore-local build-mcp-workspace
+```
+
+Run the deterministic report fixture without provider credentials or network
+access:
+
+```bash
+./bin/agentcore-local run \
+  --config examples/agentcore-local/fixture-report.config.json \
+  --event examples/agentcore-local/report.event.json \
+  --state-dir .agentcore/runs
+```
+
+The output includes the 32-character run ID. Use it to read the validated
+durable snapshot:
+
+```bash
+./bin/agentcore-local inspect \
+  --state-dir .agentcore/runs \
+  --run-id RUN_ID
+```
+
+Run with the same effective configuration and event plus `--resume` to require
+and continue an existing run:
+
+```bash
+./bin/agentcore-local run --resume \
+  --config examples/agentcore-local/fixture-report.config.json \
+  --event examples/agentcore-local/report.event.json \
+  --state-dir .agentcore/runs
+```
+
+## Configuration boundary
+
+The trusted configuration selects a versioned Profile and completion contract,
+provider mode, policy, finite budgets, and MCP bindings. The event contains
+bounded goal, payload, and context data only. In JSON, `maxElapsed` is a Go
+duration encoded in nanoseconds. Equivalent configurations and events are
+normalized before identity hashing.
+
+## Trust boundary
 
 - Trusted startup configuration selects Profile, completion contract, finite budgets, policy, provider binding, and MCP bindings.
 - Event data supplies goal and context; it does not select commands, endpoints, credentials, effects, or policy.
@@ -31,13 +73,30 @@ focused tests, race checks, and temporary-directory smoke validation.
 - Stdio MCP receives only configured environment entries, not the complete parent environment.
 - Effectful calls are not automatically retried after timeout, disconnect, or an unknown result.
 
-## Intended examples
+## Policy and recovery examples
 
-Validation is expected to cover a non-code structured report, a reversible
-workspace write with independent verification, a restrictive policy refusal,
-and explicit allow-all execution. The fixture directory restriction belongs to
-the example tool, not to the Harness capability model.
+`restrictive-refusal.config.json` records a rejected write without dispatching
+it. `allow-all-workspace.config.json` uses the real example filesystem boundary;
+allow-all still retains trusted registration, intent persistence, and budgets.
+The workspace server's configured root owns traversal, symlink, size, and atomic
+write checks. Those restrictions belong to the example tool, not to every
+Harness tool.
 
-Until that validation is recorded, use the [source extension guide](/docs/guides/extending-harness/)
-for implemented contracts and the [incident application journey](/docs/get-started/)
-for the existing runnable source-evaluation path.
+An effectful invocation whose result cannot be known durably moves the run to
+`waiting` with `unknown_write_outcome`; it is never replayed automatically.
+After confirming the external result, record only `succeeded` or `failed`, then
+resume the run:
+
+```bash
+./bin/agentcore-local resolve \
+  --state-dir .agentcore/runs \
+  --run-id RUN_ID \
+  --invocation-id INVOCATION_ID \
+  --state succeeded \
+  --code operator_confirmed \
+  --output-json '{"status":"confirmed"}'
+```
+
+See [Extend the Agent Harness](/docs/guides/extending-harness/) for the internal
+Go extension contracts. Use the [incident application journey](/docs/get-started/)
+for the database-backed web application instead.

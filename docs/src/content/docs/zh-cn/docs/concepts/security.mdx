@@ -34,7 +34,7 @@ Unknown write outcome 会停在 `waiting`，且不会自动 retry。Idempotency 
 
 ## 凭据与 adapter
 
-Core 契约携带 opaque model binding identity 与 tool definition，不携带 secret loader。具体 adapter 与 composition 解析凭据、校验 transport、限制 I/O 并清洗诊断。计划中的 Local 路径通过显式命名环境变量提供凭据，并隔离 stdio MCP environment；这些细节尚不是通过验证的 release 路径。
+Core 契约携带 opaque model binding identity 与 tool definition，不携带 secret loader。具体 adapter 与 composition 解析凭据、校验 transport、限制 I/O 并清洗诊断。Local 源码预览通过显式命名环境变量提供凭据，并隔离 stdio MCP environment。这些边界已用于源码评估验证，但不代表受支持的发布包。
 
 ## 事故应用兼容
 

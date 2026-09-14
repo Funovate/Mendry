@@ -25,11 +25,11 @@ sources:
 | ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Foundation 共享执行与扩展契约      | preview | 已实现并通过聚焦测试：中立 domain port、Runner、model step、配对 history、registry、policy、completion、budget、recovery 与 artifact provenance |
 | 完整事故 Runner 迁移               | planned | Remediation 已使用共享 model/history 边界，但 coordinator 仍负责领域循环、证据门禁、checkpoint 与工具路由                                       |
-| Local 输入、file durability 与示例 | planned | 源码进行中；本站尚未验证无数据库 walkthrough 或命令 smoke 路径                                                                                  |
+| Local 输入、file durability 与示例 | preview | 源码 CLI 支持 run、inspect、resume 与操作员 resolution，并使用持久文件 snapshot；尚无受支持 binary 或兼容性保证                                 |
 | Service 通用 event 与 durable run  | planned | 当前未发布通用 event/run Service 契约；事故 Webhook 不是通用任务入口                                                                            |
 | Product 通用 run 与 artifact 视图  | planned | 现有事故审阅页面不是通用 run/call/artifact 视图                                                                                                 |
 
-Foundation 的 `preview` 是有边界的正向实现状态：implementation report 记录了聚焦测试与已发布 API，但这不会把 Local、Service、Product 或端到端迁移提升为 available。详见 [Agent Harness](/zh-cn/docs/concepts/agent-harness/)。
+Foundation 与 Local 的 `preview` 都是有边界的正向实现状态：共享契约已有聚焦测试，且不依赖账号的 Local CLI 已有文档化离线 fixture smoke 路径。这不会把 Service、Product 或端到端事故迁移提升为 available，也不代表已经提供受支持的 Local 发布制品。详见 [Agent Harness](/zh-cn/docs/concepts/agent-harness/)。
 
 ## 现有事故应用
 
@@ -37,7 +37,7 @@ Foundation 的 `preview` 是有边界的正向实现状态：implementation repo
 
 | 能力                                       | 状态      | 边界                                                 |
 | ------------------------------------------ | --------- | ---------------------------------------------------- |
-| 显式迁移与管理员 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                   |
+| 显式迁移与单用户 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                   |
 | 单用户登录 Session                         | available | Redis Session 与 PostgreSQL 唯一登录账号；仅事故应用 |
 | 组件化项目配置与加密凭据                   | available | 项目范围的应用行为                                   |
 | 公开签名 Webhook 摄取                      | available | 事故信号路径；基于 token 并异步处理                  |

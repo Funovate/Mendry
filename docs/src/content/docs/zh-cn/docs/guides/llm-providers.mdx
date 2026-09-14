@@ -11,7 +11,7 @@ sources:
 
 ## 范围：现有事故应用
 
-本页记录当前事故应用中的 project-scoped provider 行为，不是尚未完成的 Local Harness 或 planned 通用 Service binding 格式。中立 core 只依赖 `ModelProvider` 与 opaque turn binding；endpoint、model 与 credential 由具体 adapter 和可信 composition 解析。
+本页记录当前事故应用中的 project-scoped provider 行为，不是 Local Harness 源码预览或 planned 通用 Service 的 binding 格式。中立 core 只依赖 `ModelProvider` 与 opaque turn binding；endpoint、model 与 credential 由具体 adapter 和可信 composition 解析。
 
 Mendry 支持项目范围内的 OpenAI-compatible provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
 
@@ -34,7 +34,7 @@ API key 只写不读。Provider 读取返回配置 metadata，不返回 secret�
 
 ## 安全停用
 
-删除或省略项目 LLM provider 可阻止新的 provider-backed 分析。按内部流程检查进行中活动和 audit record；当前源码评估不包含通用持久 worker queue。
+删除或省略项目 LLM provider 可阻止新的 provider-backed 分析。通过外部运维记录检查进行中的活动；单用户事故应用不提供应用审计事件流，当前源码评估也不包含通用持久 worker queue。
 
 ## 核验依据
 

@@ -108,4 +108,4 @@ Pending 或 unknown 的 `write` 不会重放。`Runner` 把 run 置为 `waiting`
 
 使用 instance-owned store、provider、tool registry、policy 与 evaluator registry 构造 `Runner`。Provider 凭据与 executor binding 必须留在模型可见定义和 event 数据之外。扩展测试应重点覆盖注册失败、策略拒绝且不执行、intent-before-effect 顺序、result/artifact 原子性、取消与独立预算、restart，以及 unknown write outcome。
 
-[Local 流程](/zh-cn/docs/get-started/local-harness/)会在该交付通过验证后说明完整 composition 与真实 MCP 边界。Service HTTP 注册和通用 run UI 仍是独立 planned adapter。
+[Local Harness 源码预览](/zh-cn/docs/get-started/local-harness/)已记录可运行 composition、持久检查与恢复命令，以及有界 MCP 示例。Service HTTP 注册和通用 run UI 仍是独立 planned adapter。

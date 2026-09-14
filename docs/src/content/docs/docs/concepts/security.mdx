@@ -46,9 +46,10 @@ interface.
 
 Core contracts carry opaque model binding identities and tool definitions, not
 secret loaders. Concrete adapters and composition resolve credentials, validate
-transports, bound I/O, and redact diagnostics. The planned Local path supplies
+transports, bound I/O, and redact diagnostics. The Local source preview supplies
 credentials through explicitly named environment variables and isolates stdio
-MCP environment; those details are not yet a validated release path.
+MCP environment. These boundaries are validated for source evaluation, not a
+supported release package.
 
 ## Incident application compatibility
 

@@ -18,7 +18,7 @@ sources:
 
 ## 无法登录
 
-确认 administrator bootstrap 对同一数据库成功执行。密码长度为 12 到 72 字节。API Session 需要 Redis，但 bootstrap 命令本身不使用 Redis。staging/production 必须使用 HTTPS，因为 Session Cookie 带 `Secure`。
+确认 `bootstrap-admin` 命令已在同一数据库中创建登录账号。密码长度为 12 到 72 字节。API Session 需要 Redis，但 bootstrap 命令本身不使用 Redis。staging/production 必须使用 HTTPS，因为 Session Cookie 带 `Secure`。单用户数据库不能再初始化第二个用户名。
 
 ## 配置始终不完整
 

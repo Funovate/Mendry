@@ -80,15 +80,15 @@ not product ambition.
 | Area                            | Status            | Current boundary                                                                                |
 | ------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
 | Shared Agent Harness foundation | **Preview**       | Neutral execution contracts and core mechanics are implemented and focused-tested.              |
-| Existing incident application   | **Preview**       | Source-evaluation workflow with projects, sessions, webhooks, evidence, and remediation review. |
+| Existing incident application   | **Preview**       | Single-user workflow with projects, sessions, webhooks, evidence, and remediation review.       |
 | Account-free Local composition  | **In validation** | Source and examples exist; a supported walkthrough has not been released.                       |
 | Generic run service and UI      | **Planned**       | Generic event, run, call, and artifact product surfaces are not yet available.                  |
 | Production distribution         | **Planned**       | No supported image, Compose bundle, upgrade path, or rollback package is published.             |
 
 See the [detailed capability matrix](https://www.mendry.net/docs/project/status/)
-before evaluating an integration. PostgreSQL, Redis, accounts, and projects are
-requirements of the existing incident application, not of the neutral Harness
-core.
+before evaluating an integration. PostgreSQL, Redis, one login identity, and
+projects are requirements of the existing incident application, not of the
+neutral Harness core.
 
 ## Source evaluation
 

@@ -17,11 +17,11 @@ sources:
 
 ## 准备事故应用
 
-当前源码评估流程从本仓库运行事故 Web 应用。它需要 PostgreSQL 保存业务数据、Redis 保存登录 Session、已初始化的管理员账号和项目配置。这些是事故应用前提，不是中立 Harness 契约的依赖。
+当前源码评估流程从本仓库运行事故 Web 应用。它需要 PostgreSQL 保存业务数据、Redis 保存登录 Session、已初始化的唯一登录账号和项目配置。这些是事故应用前提，不是中立 Harness 契约的依赖。
 
 1. 确认[事故应用前提](/zh-cn/docs/get-started/prerequisites/)。
 2. 选择环境前阅读[安装状态](/zh-cn/docs/get-started/install/)。
-3. 执行迁移并[初始化管理员](/zh-cn/docs/get-started/bootstrap/)。
+3. 执行迁移并[初始化登录账号](/zh-cn/docs/get-started/bootstrap/)。
 4. 创建并配置[首个项目](/zh-cn/docs/get-started/first-project/)。
 5. 发送受支持的信号并检查[首个事故](/zh-cn/docs/get-started/first-incident/)。
 
@@ -29,7 +29,7 @@ sources:
 
 ## 面向开发者：本地 Agent Harness
 
-独立的 Local 路径目标是接收 JSON event，通过共享 Harness 执行，并在不依赖 PostgreSQL、Redis 或账号的情况下写出可检查状态。完整 walkthrough 尚未达到文档发布验证条件，请查看[本地流程状态](/zh-cn/docs/get-started/local-harness/)。这条开发路径的前提条件与就绪状态不同于事故应用。
+独立的 Local 路径接收 JSON event，通过共享 Harness 执行，并在不依赖 PostgreSQL、Redis 或账号的情况下写出可检查状态。源码预览现已记录构建、运行、检查、继续和操作员恢复命令，请查看[运行本地 Agent Harness](/zh-cn/docs/get-started/local-harness/)。这条开发路径的前提条件和发布保证不同于事故应用。
 
 ## 从源码扩展
 

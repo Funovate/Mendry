@@ -231,7 +231,7 @@ never creates users, passwords, or credentials.
 
 ## Authentication
 
-After migration, create the first local administrator explicitly. The password
+After migration, create the sole local login identity explicitly. The password
 must contain 12 to 72 bytes and is read only by this one-shot command:
 
 ```bash
@@ -240,7 +240,7 @@ MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
 make bootstrap-admin USERNAME=admin
 ```
 
-Running the command again for the same enabled administrator is safe and does
+Running the command again for the same enabled login identity is safe and does
 not replace its password hash. It does not connect to Redis. Normal API startup
 never creates users or reads `MENDRY_BOOTSTRAP_ADMIN_PASSWORD`.
 

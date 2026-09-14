@@ -42,24 +42,22 @@ test("installation remains a planned release-gate page", () => {
   );
 });
 
-test("local Harness walkthrough remains non-executable until validated", () => {
+test("local Harness walkthrough is an indexable source preview", () => {
   const localEntries = routeEntries.filter(
     ({ translationKey }) => translationKey === "local-harness",
   );
   assert.equal(localEntries.length, 2);
   assert.ok(
-    localEntries.every(({ availability }) => availability === "planned"),
+    localEntries.every(({ availability }) => availability === "preview"),
   );
 });
 
 test("planned pages are excluded from the indexable route set", () => {
   assert.deepEqual(nonIndexableRoutes, [
-    "/docs/get-started/local-harness/",
-    "/zh-cn/docs/get-started/local-harness/",
     "/docs/get-started/install/",
     "/zh-cn/docs/get-started/install/",
   ]);
-  assert.equal(indexableRoutes.length, expectedRoutes.length - 4);
+  assert.equal(indexableRoutes.length, expectedRoutes.length - 2);
   for (const route of nonIndexableRoutes)
     assert.ok(!indexableRoutes.includes(route));
 });

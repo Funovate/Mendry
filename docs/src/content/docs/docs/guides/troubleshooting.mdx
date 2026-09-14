@@ -22,10 +22,11 @@ starting a binary that needs them. The API never repairs schema history.
 
 ## Login fails
 
-Confirm the administrator bootstrap command completed against the same database.
-Passwords are 12 to 72 bytes. Redis must be reachable for API sessions, although
-the bootstrap command itself does not use Redis. In staging/production, use
-HTTPS because the session cookie is `Secure`.
+Confirm the `bootstrap-admin` command created the login identity in the same
+database. Passwords are 12 to 72 bytes. Redis must be reachable for API sessions,
+although the bootstrap command itself does not use Redis. In staging/production,
+use HTTPS because the session cookie is `Secure`. A second username cannot be
+bootstrapped into the single-user database.
 
 ## Configuration remains incomplete
 
