@@ -36,8 +36,13 @@ export interface IntroContent {
     text: string;
     current: string;
     future: string;
+    currentBadge?: string;
+    futureBadge?: string;
+    gateLabel?: string;
     currentStages: string[];
     futureStages: string[];
+    currentStageDescriptions?: string[];
+    futureStageDescriptions?: string[];
     recovery: string;
     retry: string;
     policy: string;
@@ -110,8 +115,22 @@ export const introContent: Record<IntroLocale, IntroContent> = {
       text: "Today, investigate and review a solution. Next, connect AI execution and CI/CD to carry it through to recovery.",
       current: "CURRENT SCOPE · PREVIEW",
       future: "EVOLUTION · PLANNED",
+      currentBadge: "Investigation Pipeline",
+      futureBadge: "Autonomous Execution",
+      gateLabel: "Human Review & Policy Gate",
       currentStages: ["Detect", "Investigate", "Propose"],
+      currentStageDescriptions: [
+        "Ingest production alerts and anomalous telemetry signals",
+        "Correlate stack traces, logs & code repository context",
+        "Formulate verified diagnosis and reviewable diff proposal",
+      ],
       futureStages: ["Repair", "Test", "Git push / PR", "Deploy"],
+      futureStageDescriptions: [
+        "Execute sandboxed agent code remediation",
+        "Run targeted unit and regression test suites",
+        "Publish fix branch and create pull request",
+        "Stage progressive rollout with canary verification",
+      ],
       recovery: "Verify recovery & close",
       retry: "Not recovered? Return to investigation.",
       policy: "Direction: policy-defined automation and approval points.",
@@ -208,8 +227,22 @@ export const introContent: Record<IntroLocale, IntroContent> = {
       text: "当前聚焦调查与方案审查，后续通过 AI 执行与 CI/CD，将修复推进到生产恢复。",
       current: "当前覆盖 · 预览",
       future: "演进方向 · 规划中",
+      currentBadge: "核心排障链路",
+      futureBadge: "自主执行演进",
+      gateLabel: "人工审查与策略授权门禁",
       currentStages: ["发现问题", "调查根因", "生成方案"],
+      currentStageDescriptions: [
+        "接入生产告警，汇聚异常指标与观测信号",
+        "关联日志、调用堆栈与代码仓库语义上下文",
+        "输出具有证据链的根因诊断与代码修复建议",
+      ],
       futureStages: ["执行修复", "测试验证", "Git 推送 / PR", "部署上线"],
+      futureStageDescriptions: [
+        "在受控沙箱环境中由 Agent 执行代码修复",
+        "自动化运行针对性单元测试与回归用例",
+        "自动推送修复分支并提交审查 Pull Request",
+        "按自动化策略推进金丝雀灰度或生产上线",
+      ],
       recovery: "确认恢复，关闭问题",
       retry: "未恢复？回到调查，继续修复。",
       policy: "目标设计：按策略配置自动执行范围与审批节点。",

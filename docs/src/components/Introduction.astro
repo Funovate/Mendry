@@ -140,56 +140,302 @@ const { content: c } = Astro.props;
     </div>
     <div class="home-loop">
       <div class="home-current-flow">
-        <p class="home-flow-label">
-          <span class="home-dot" aria-hidden="true"></span>{c.workflow.current}
-        </p>
+        <div class="home-flow-header">
+          <p class="home-flow-label">
+            <span class="home-dot" aria-hidden="true"></span>{
+              c.workflow.current
+            }
+          </p>
+          {
+            c.workflow.currentBadge && (
+              <span class="home-flow-badge home-flow-badge-current">
+                {c.workflow.currentBadge}
+              </span>
+            )
+          }
+        </div>
         <ol class="incident-sequence home-current-stages">
           {
             c.workflow.currentStages.map((stage, i) => (
-              <li>
-                <>
-                  <span class="home-flow-number">0{i + 1}</span>
-                  <strong>{stage}</strong>
-                  <span class="home-flow-arrow" aria-hidden="true">
-                    →
-                  </span>
-                </>
+              <li class="home-stage-card home-stage-card-current">
+                <div class="home-stage-card-inner">
+                  <div class="home-stage-top">
+                    <span class="home-flow-number">0{i + 1}</span>
+                    <span class="home-stage-icon" aria-hidden="true">
+                      {i === 0 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="9" />
+                          <circle cx="12" cy="12" r="3" />
+                          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+                        </svg>
+                      )}
+                      {i === 1 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="11" cy="11" r="8" />
+                          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                          <path d="m13 8-4 6M8 8l6 6" />
+                        </svg>
+                      )}
+                      {i === 2 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                          <path d="M9 13h6M12 10v6" />
+                        </svg>
+                      )}
+                    </span>
+                  </div>
+                  <div class="home-stage-content">
+                    <strong class="home-stage-title">{stage}</strong>
+                    {c.workflow.currentStageDescriptions?.[i] && (
+                      <p class="home-stage-desc">
+                        {c.workflow.currentStageDescriptions[i]}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <span class="home-flow-arrow" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" class="home-arrow-svg">
+                    <path
+                      d="M6 3l5 5-5 5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
               </li>
             ))
           }
         </ol>
       </div>
+
+      {
+        c.workflow.gateLabel && (
+          <div class="home-flow-gate" aria-hidden="true">
+            <div class="home-gate-line" />
+            <div class="home-gate-node">
+              <svg
+                class="home-gate-icon"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M8 1.5 2.5 3.8v4.5c0 2.8 2.4 5.2 5.5 6.2 3.1-1 5.5-3.4 5.5-6.2V3.8L8 1.5z" />
+                <path d="m6 8 1.5 1.5L10.5 6.5" />
+              </svg>
+              <span>{c.workflow.gateLabel}</span>
+            </div>
+            <div class="home-gate-line" />
+          </div>
+        )
+      }
+
       <div class="home-future-flow">
-        <p class="home-flow-label">
-          <span class="home-planned-dot" aria-hidden="true"></span>{
-            c.workflow.future
+        <div class="home-flow-header">
+          <p class="home-flow-label">
+            <span class="home-planned-dot" aria-hidden="true"></span>{
+              c.workflow.future
+            }
+          </p>
+          {
+            c.workflow.futureBadge && (
+              <span class="home-flow-badge home-flow-badge-future">
+                {c.workflow.futureBadge}
+              </span>
+            )
           }
-        </p>
+        </div>
         <ol class="home-future-stages" start="4">
           {
             c.workflow.futureStages.map((stage, i) => (
-              <li>
-                <>
-                  <span class="home-flow-number">0{i + 4}</span>
-                  <strong>{stage}</strong>
-                  <span class="home-flow-arrow" aria-hidden="true">
-                    →
-                  </span>
-                </>
+              <li class="home-stage-card home-stage-card-future">
+                <div class="home-stage-card-inner">
+                  <div class="home-stage-top">
+                    <span class="home-flow-number">0{i + 4}</span>
+                    <span class="home-stage-icon" aria-hidden="true">
+                      {i === 0 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                        </svg>
+                      )}
+                      {i === 1 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                          <path d="m9 12 2 2 4-4" />
+                        </svg>
+                      )}
+                      {i === 2 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <circle cx="18" cy="18" r="3" />
+                          <circle cx="6" cy="6" r="3" />
+                          <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+                          <line x1="6" y1="9" x2="6" y2="21" />
+                        </svg>
+                      )}
+                      {i === 3 && (
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+                          <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                          <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                        </svg>
+                      )}
+                    </span>
+                  </div>
+                  <div class="home-stage-content">
+                    <strong class="home-stage-title">{stage}</strong>
+                    {c.workflow.futureStageDescriptions?.[i] && (
+                      <p class="home-stage-desc">
+                        {c.workflow.futureStageDescriptions[i]}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <span class="home-flow-arrow" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" class="home-arrow-svg">
+                    <path
+                      d="M6 3l5 5-5 5"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
               </li>
             ))
           }
         </ol>
         <div class="home-recovery">
-          <span class="home-recovery-mark" aria-hidden="true">↳</span><strong
-            >{c.workflow.recovery}</strong
-          ><span>{c.workflow.retry}</span>
+          <div class="home-recovery-primary">
+            <div class="home-recovery-track" aria-hidden="true">
+              <span class="home-recovery-mark">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="home-recovery-mark-svg"
+                >
+                  <polyline points="15 10 20 15 15 20"></polyline>
+                  <path d="M4 4v7a4 4 0 0 0 4 4h12"></path>
+                </svg>
+              </span>
+            </div>
+            <div class="home-recovery-verified">
+              <span class="home-recovery-icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="10" cy="10" r="8"></circle>
+                  <path d="m6.5 10 2.5 2.5 4.5-5"></path>
+                </svg>
+              </span>
+              <strong>{c.workflow.recovery}</strong>
+            </div>
+          </div>
+          <div class="home-recovery-feedback">
+            <span class="home-feedback-icon" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"
+                ></path>
+                <path d="M3 3v5h5"></path>
+              </svg>
+            </span>
+            <span>{c.workflow.retry}</span>
+          </div>
         </div>
       </div>
       <div class="home-loop-caption">
-        <p>{c.workflow.policy}</p><a href={c.statusHref}
-          >{c.footer.links[2].label}<span aria-hidden="true">↗</span></a
-        >
+        <div class="home-policy-note">
+          <svg
+            class="home-policy-icon"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path
+              d="M8 1.5 2.5 3.8v4.5c0 2.8 2.4 5.2 5.5 6.2 3.1-1 5.5-3.4 5.5-6.2V3.8L8 1.5z"
+            ></path>
+            <path d="m6 8 1.5 1.5L10.5 6.5"></path>
+          </svg>
+          <p>{c.workflow.policy}</p>
+        </div>
+        <a class="home-status-link" href={c.statusHref}>
+          <span>{c.footer.links[2].label}</span>
+          <span aria-hidden="true">↗</span>
+        </a>
       </div>
     </div>
   </section>
