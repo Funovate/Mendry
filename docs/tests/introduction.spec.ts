@@ -16,7 +16,7 @@ const pages = [
   {
     path: "/zh-cn/",
     lang: "zh-CN",
-    heading: "从生产告警，走向修复闭环。",
+    heading: "从生产告警，定位问题根因。",
     primaryHref: "/zh-cn/docs/get-started/",
     example: "调查示例",
     removedHeading: "从告警到修复方案",
@@ -88,6 +88,14 @@ for (const pageCase of pages) {
               document.querySelector(".home-console-brand > span:last-child")!,
             ).display,
           },
+          heroCopy: document
+            .querySelector(".home-hero-copy")!
+            .getBoundingClientRect()
+            .toJSON(),
+          brandScene: document
+            .querySelector(".home-brand-scene")!
+            .getBoundingClientRect()
+            .toJSON(),
           scrollWidth: document.documentElement.scrollWidth,
           clientWidth: document.documentElement.clientWidth,
           externalResources: performance
@@ -103,6 +111,9 @@ for (const pageCase of pages) {
       expect(layout.externalResources).toEqual([]);
       expect(layout.proofItems).toHaveLength(3);
       if (layout.clientWidth <= 768) {
+        expect(layout.heroCopy.bottom).toBeLessThanOrEqual(
+          layout.brandScene.top,
+        );
         expect(layout.consoleBrand).toEqual({
           whiteSpace: "nowrap",
           contextDisplay: "none",

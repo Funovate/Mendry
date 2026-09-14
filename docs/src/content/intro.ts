@@ -75,7 +75,7 @@ export const introContent: Record<IntroLocale, IntroContent> = {
     eyebrow: "SELF-HOSTED · AI INCIDENT RESPONSE",
     heading: ["AI incident investigation.", "From alert to repair proposal."],
     summary:
-      "Connect production alerts, logs, and code to investigate root causes and turn traceable evidence into a reviewable repair proposal.",
+      "Mendry connects production alerts, logs, and code to investigate root causes and generate repair proposals you can review.",
     primaryAction: "Start evaluating",
     primaryHref: "/docs/get-started/",
     secondaryAction: "Explore the workflow",
@@ -88,13 +88,13 @@ export const introContent: Record<IntroLocale, IntroContent> = {
       incident: "Checkout requests are failing",
       source: "Production signal / checkout-api",
       stages: ["Signal", "Evidence", "Proposal"],
-      signalTitle: "An error worth investigating.",
+      signalTitle: "Checkout requests are failing.",
       signalText:
         "A rise in failed requests points the investigation to the checkout service.",
-      evidenceTitle: "Follow the evidence into code.",
+      evidenceTitle: "The code accesses a missing session.",
       evidenceText:
         "The exception and code context suggest a missing check for an expired session.",
-      proposalTitle: "A concrete next step.",
+      proposalTitle: "Add a session null check.",
       proposalText:
         "Guard against a missing session, then verify the expired-session path with a regression test.",
       suggestion: "SUGGESTED CHANGE",
@@ -178,8 +178,9 @@ export const introContent: Record<IntroLocale, IntroContent> = {
     description:
       "连接生产告警、日志与代码，调查问题根因，并将可追溯证据转化为可审查的修复方案。",
     eyebrow: "自托管 · AI 生产问题排查",
-    heading: ["从生产告警，", "走向修复闭环。"],
-    summary: "连接告警、日志与代码，调查问题根因，让证据成为修复的起点。",
+    heading: ["从生产告警，", "定位问题根因。"],
+    summary:
+      "Mendry 连接告警、日志与代码，关联调查证据，生成可供审查的修复方案。",
     primaryAction: "开始评估",
     primaryHref: "/zh-cn/docs/get-started/",
     secondaryAction: "了解处理流程",
@@ -192,11 +193,11 @@ export const introContent: Record<IntroLocale, IntroContent> = {
       incident: "结算请求持续出现异常",
       source: "生产信号 / checkout-api",
       stages: ["发现信号", "关联证据", "生成方案"],
-      signalTitle: "从一个异常开始。",
+      signalTitle: "结算接口错误增加。",
       signalText: "请求错误增加，将调查范围指向结算服务。",
-      evidenceTitle: "沿着证据，找到代码。",
+      evidenceTitle: "代码访问了空会话。",
       evidenceText: "异常与代码上下文提示：会话过期后，缺少空值检查。",
-      proposalTitle: "让下一步具体可行。",
+      proposalTitle: "建议补充会话空值检查。",
       proposalText: "补充会话空值检查，并通过回归测试验证过期会话路径。",
       suggestion: "建议修改",
       note: "此处为调查与建议修改示例，尚未执行代码修复、测试或部署。",

@@ -887,7 +887,7 @@ html:has(.home) footer.sl-flex {
     gap: 1.75rem;
   }
   .home-hero-copy {
-    order: 2;
+    order: 1;
   }
   .home-hero h1 {
     font-size: clamp(2.25rem, 7vw, 3.5rem);
@@ -897,8 +897,8 @@ html:has(.home) footer.sl-flex {
     font-size: clamp(2.35rem, 7vw, 3.5rem);
   }
   .home-brand-scene {
-    order: 1;
-    max-width: 18rem;
+    order: 2;
+    max-width: 12rem;
     justify-self: center;
   }
   .home-section-top {
