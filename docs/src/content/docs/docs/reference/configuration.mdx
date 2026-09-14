@@ -6,6 +6,9 @@ translationKey: configuration
 sources:
   - backend/.env.example
   - backend/README.md
+  - backend/internal/modules/auth/adapter/http/handler.go
+  - backend/internal/platform/observability/telemetry.go
+  - frontend/src/features/configuration/configuration.ts
 ---
 
 **Availability: available**
@@ -43,6 +46,52 @@ PUT endpoints update one component without replacing siblings.
 Source kinds are `ssh`, `cloud`, or `mcp`; trigger kinds are
 `signed_webhook` or `custom_rule`. Persisting a configuration kind does not by
 itself prove its runtime connector is available. Check [product status](/docs/project/status/).
+
+### Signed webhook providers
+
+The configuration UI exposes **Trigger type**, **Webhook provider**, and the
+read-only **Inbound webhook URL**. A signed webhook must be saved before its URL
+can be generated or rotated. The supported provider values are `generic`,
+`tencent_cls`, and `aws_cloudwatch`.
+
+Generic and Tencent triggers use schema version 2 with bounded event types and a
+deduplication key:
+
+```json
+{
+  "schemaVersion": 2,
+  "provider": "generic",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "title"
+}
+```
+
+AWS CloudWatch displays the additional **SNS Topic ARN** field. The UI validates
+that field before enabling save and writes the fixed `alarm_arn` deduplication
+contract:
+
+```json
+{
+  "schemaVersion": 3,
+  "provider": "aws_cloudwatch",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "alarm_arn",
+  "awsCloudWatch": {
+    "topicArn": "arn:aws:sns:us-east-1:123456789012:mendry-alarms"
+  }
+}
+```
+
+See [Signed webhooks](/docs/guides/signed-webhooks/) for provider restrictions,
+sender setup, rotation, and delivery behavior.
+
+### Compatibility and telemetry
+
+New sessions use the `mendry_session` cookie. During the rename transition, the
+API accepts the legacy `fixthe_session` cookie and clears it when login or logout
+sets the current cookie. OpenTelemetry instrumentation and database pool metrics
+use the `mendry` namespace, including `mendry/backend`, `mendry.postgres.*`, and
+`mendry.redis.*`.
 
 Credentials are separate project records referenced by ID. Read responses never
 return plaintext values.

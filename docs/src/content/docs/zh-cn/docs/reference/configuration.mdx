@@ -6,6 +6,9 @@ translationKey: configuration
 sources:
   - backend/.env.example
   - backend/README.md
+  - backend/internal/modules/auth/adapter/http/handler.go
+  - backend/internal/platform/observability/telemetry.go
+  - frontend/src/features/configuration/configuration.ts
 ---
 
 **可用性：available**
@@ -34,6 +37,41 @@ sources:
 每个项目最多保存一组当前 environment、repository、source、trigger 与可选 LLM provider。Draft 端点返回不完整状态，组件 PUT 只更新一个组件，不替换其 sibling。
 
 Source kind 为 `ssh`、`cloud` 或 `mcp`；trigger kind 为 `signed_webhook` 或 `custom_rule`。保存某种配置并不等于其 runtime connector 已可用，请查看[产品状态](/zh-cn/docs/project/status/)。
+
+### 签名 Webhook Provider
+
+配置界面提供 **Trigger type**、**Webhook provider** 和只读的 **Inbound webhook URL**。必须先保存 signed webhook，才能生成或轮换 URL。支持的 provider 值为 `generic`、`tencent_cls` 和 `aws_cloudwatch`。
+
+Generic 与腾讯 Trigger 使用 schema version 2，并提供有界 event type 和去重 key：
+
+```json
+{
+  "schemaVersion": 2,
+  "provider": "generic",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "title"
+}
+```
+
+AWS CloudWatch 会额外显示 **SNS Topic ARN** 字段。界面通过校验后才允许保存，并写入固定的 `alarm_arn` 去重契约：
+
+```json
+{
+  "schemaVersion": 3,
+  "provider": "aws_cloudwatch",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "alarm_arn",
+  "awsCloudWatch": {
+    "topicArn": "arn:aws:sns:us-east-1:123456789012:mendry-alarms"
+  }
+}
+```
+
+Provider 限制、发送端设置、轮换与投递行为见[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)。
+
+### 兼容性与 Telemetry
+
+新 Session 使用 `mendry_session` Cookie。命名迁移期间，API 仍接受旧的 `fixthe_session`，并在登录或退出设置当前 Cookie 时清除旧 Cookie。OpenTelemetry instrumentation 与数据库连接池指标使用 `mendry` namespace，包括 `mendry/backend`、`mendry.postgres.*` 和 `mendry.redis.*`。
 
 Credential 是独立项目记录，通过 ID 引用。读取响应从不返回明文 value。
 
