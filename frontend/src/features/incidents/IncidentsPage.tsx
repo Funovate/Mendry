@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, Clock3, Radio, Server, Terminal } from "lucide-react";
+import { Activity, Check, ChevronDown, ChevronLeft, Clock3, Copy, LoaderCircle, Radio, Server, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import brandMark from "../../assets/mendry-mark-reversed.svg";
@@ -19,6 +19,7 @@ export function IncidentsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("All");
+  const [idCopied, setIdCopied] = useState(false);
   const incidents = useQuery({
     queryKey: queryKeys.incidents(project.key),
     queryFn: ({ signal }) => api.listIncidents(project.key, signal),
@@ -30,6 +31,17 @@ export function IncidentsPage() {
   const filtered = useMemo(() => (incidents.data?.items ?? []).filter((incident) => statusFilter === "All" || incident.status === statusFilter), [incidents.data, statusFilter]);
   const selected = incidents.data?.items.find((incident) => incident.id === incidentId) ?? null;
 
+  const handleCopyId = async () => {
+    if (!selected) return;
+    try {
+      await navigator.clipboard.writeText(selected.id);
+      setIdCopied(true);
+      setTimeout(() => setIdCopied(false), 1600);
+    } catch {
+      // clipboard write may fail if permission denied
+    }
+  };
+
   if (incidents.isPending) return <LoadingState label="Loading incidents" />;
   if (incidents.isError) return <PageError message={messageFromError(incidents.error)} onRetry={() => void incidents.refetch()} />;
 
@@ -38,25 +50,78 @@ export function IncidentsPage() {
       <header className="detail-header">
         <div className="detail-heading">
           <div className="detail-kicker-row">
-            <button className="incident-back-link" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`)}>
-              <ChevronLeft size={16} aria-hidden="true" />
-              <span>Incidents</span>
-            </button>
-            <span className="detail-kicker-divider" aria-hidden="true" />
-            <div className="eyebrow">{selected.id}</div>
+            <nav className="incident-breadcrumb" aria-label="Incident navigation">
+              <button
+                className="incident-back-link"
+                type="button"
+                onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/incidents`)}
+                title="Back to incident list"
+                aria-label="Back to incidents"
+              >
+                <ChevronLeft size={14} className="back-chevron" aria-hidden="true" />
+                <span>Incidents</span>
+              </button>
+              <span className="breadcrumb-separator" aria-hidden="true">/</span>
+              <button
+                type="button"
+                className="eyebrow incident-id-badge"
+                onClick={() => void handleCopyId()}
+                title={idCopied ? "Copied ID to clipboard" : "Click to copy incident ID"}
+                aria-label={`Incident ${selected.id}, click to copy ID`}
+              >
+                <span className={`incident-id-dot dot-${selected.status.toLowerCase()}`} aria-hidden="true" />
+                <span>{selected.id}</span>
+                {idCopied ? <Check size={12} className="id-copy-icon copied" aria-hidden="true" /> : <Copy size={12} className="id-copy-icon" aria-hidden="true" />}
+              </button>
+            </nav>
           </div>
           <h1>{selected.title}</h1>
           <div className="detail-meta">
             <StatusPill value={selected.status} /><StatusPill value={selected.priority} />
             <span><Terminal size={15} aria-hidden="true" />{selected.source}</span><span><Server size={15} aria-hidden="true" />{selected.hostCount} hosts</span><span><Radio size={15} aria-hidden="true" />{selected.occurrenceCount} occurrences</span>
           </div>
-          <p className="incident-timestamps"><Clock3 size={14} aria-hidden="true" />First seen {formatDate(selected.firstSeen)}<span>Last seen {formatDate(selected.lastSeen)}</span></p>
         </div>
-        <div className="incident-lifecycle">
-          <label htmlFor="incident-status">Incident status</label>
-          <select id="incident-status" value={selected.status} disabled={updateStatus.isPending} onChange={(event) => updateStatus.mutate({ id: selected.id, status: event.target.value as IncidentStatus })}>
-            {statuses.map((status) => <option key={status} value={status}>{status === selected.status ? status : status === "Open" ? "Reopen incident" : status === "Recovered" ? "Mark as recovered" : "Close incident"}</option>)}
-          </select>
+        <div className="incident-header-side">
+          <div className="incident-lifecycle">
+            <label htmlFor="incident-status" className="sr-only">Incident status</label>
+            <div className={`incident-status-control status-${selected.status.toLowerCase()}`}>
+              <span className={`status-control-dot dot-${selected.status.toLowerCase()}`} aria-hidden="true" />
+              <select
+                id="incident-status"
+                aria-label="Incident status"
+                value={selected.status}
+                disabled={updateStatus.isPending}
+                onChange={(event) => updateStatus.mutate({ id: selected.id, status: event.target.value as IncidentStatus })}
+              >
+                {statuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status === selected.status
+                      ? status
+                      : status === "Open"
+                      ? "Reopen incident"
+                      : status === "Recovered"
+                      ? "Mark as recovered"
+                      : "Close incident"}
+                  </option>
+                ))}
+              </select>
+              {updateStatus.isPending ? (
+                <LoaderCircle className="status-control-icon spin" size={13} aria-hidden="true" />
+              ) : (
+                <ChevronDown className="status-control-icon" size={13} aria-hidden="true" />
+              )}
+            </div>
+          </div>
+          <dl className="incident-timestamps">
+            <div>
+              <dt><Clock3 size={13} aria-hidden="true" />First seen</dt>
+              <dd>{formatDate(selected.firstSeen)}</dd>
+            </div>
+            <div>
+              <dt>Last seen</dt>
+              <dd>{formatDate(selected.lastSeen)}</dd>
+            </div>
+          </dl>
         </div>
         {updateStatus.error && <ErrorNotice message={messageFromError(updateStatus.error)} />}
       </header>

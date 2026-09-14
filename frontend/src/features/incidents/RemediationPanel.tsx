@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpRight, BadgeCheck, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench } from "lucide-react";
+import { Activity, ArrowUpRight, BadgeCheck, Check, ChevronRight, ChevronsUpDown, Copy, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, messageFromError, type RemediationContinuationInput } from "../../api";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
@@ -70,26 +71,146 @@ function DiffPane({ file, side }: { file: DiffFile; side: DiffSide }) {
   );
 }
 
-function DiffViewer({ value }: { value: string }) {
-  const parsed = parseUnifiedDiff(value);
-  if (!parsed.parseable) return <pre className="remediation-diff remediation-diff-fallback">{value}</pre>;
+export function DiffViewer({ value }: { value: string }) {
+  const parsed = useMemo(() => parseUnifiedDiff(value), [value]);
+  // Default collapsed: initially an empty set so all files are collapsed
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => new Set());
+  const [isRawExpanded, setIsRawExpanded] = useState(false);
 
-  return <div className="remediation-diff-viewer">{parsed.files.map((file, index) => (
-    <article className="remediation-diff-file" key={`${file.path}-${index}`}>
-      <header className="remediation-diff-file-header">
-        <div><strong>{file.path}</strong></div>
-        {file.header && <code>{file.header}</code>}
-      </header>
-      <div className="remediation-diff-panes">
-        <DiffPane file={file} side="original" />
-        <DiffPane file={file} side="changed" />
+  useEffect(() => {
+    setExpandedFiles(new Set());
+    setIsRawExpanded(false);
+  }, [value]);
+
+  const fileCount = parsed.files.length;
+  const allExpanded = fileCount > 0 && expandedFiles.size === fileCount;
+
+  const toggleAll = () => {
+    if (allExpanded) {
+      setExpandedFiles(new Set());
+    } else {
+      setExpandedFiles(new Set(parsed.files.map((_, index) => index)));
+    }
+  };
+
+  const toggleFile = (index: number) => {
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <section className="remediation-block remediation-diff-block" aria-labelledby="remediation-diff-heading">
+      <div className="remediation-block-heading">
+        <div>
+          <h3 id="remediation-diff-heading">
+            <FileCode2 size={20} aria-hidden="true" />
+            Suggested diff
+            {fileCount > 0 && (
+              <span className="remediation-diff-count" aria-label={`${fileCount} ${fileCount === 1 ? "file" : "files"}`}>
+                {fileCount}
+              </span>
+            )}
+          </h3>
+          <div className="remediation-diff-actions">
+            {fileCount > 0 && (
+              <button
+                type="button"
+                className="remediation-diff-toggle-all"
+                onClick={toggleAll}
+                aria-label={allExpanded ? "Collapse all files" : "Expand all files"}
+              >
+                <ChevronsUpDown size={13} aria-hidden="true" />
+                <span>{allExpanded ? "Collapse all" : "Expand all"}</span>
+              </button>
+            )}
+            <span>Original / Changed</span>
+          </div>
+        </div>
       </div>
-    </article>
-  ))}</div>;
+
+      {!parsed.parseable ? (
+        <article className={`remediation-diff-file ${isRawExpanded ? "is-expanded" : "is-collapsed"}`}>
+          <button
+            type="button"
+            className="remediation-diff-file-header"
+            aria-expanded={isRawExpanded}
+            onClick={() => setIsRawExpanded((prev) => !prev)}
+          >
+            <div className="remediation-diff-file-title">
+              <ChevronRight
+                size={15}
+                className={`remediation-diff-chevron ${isRawExpanded ? "expanded" : ""}`}
+                aria-hidden="true"
+              />
+              <strong>Raw diff output</strong>
+            </div>
+            <code>unformatted</code>
+          </button>
+          {isRawExpanded && <pre className="remediation-diff remediation-diff-fallback">{value}</pre>}
+        </article>
+      ) : parsed.files.length === 0 ? (
+        <p className="readonly-note">No code changes in diff.</p>
+      ) : (
+        <div className="remediation-diff-viewer">
+          {parsed.files.map((file, index) => {
+            const isExpanded = expandedFiles.has(index);
+            const added = file.rows.reduce((sum, r) => sum + (r.changed?.kind === "added" ? 1 : 0), 0);
+            const removed = file.rows.reduce((sum, r) => sum + (r.original?.kind === "removed" ? 1 : 0), 0);
+            const paneId = `diff-pane-${index}`;
+
+            return (
+              <article
+                className={`remediation-diff-file ${isExpanded ? "is-expanded" : "is-collapsed"}`}
+                key={`${file.path}-${index}`}
+              >
+                <button
+                  type="button"
+                  className="remediation-diff-file-header"
+                  aria-expanded={isExpanded}
+                  aria-controls={paneId}
+                  onClick={() => toggleFile(index)}
+                >
+                  <div className="remediation-diff-file-title">
+                    <ChevronRight
+                      size={15}
+                      className={`remediation-diff-chevron ${isExpanded ? "expanded" : ""}`}
+                      aria-hidden="true"
+                    />
+                    <strong>{file.path}</strong>
+                    {(added > 0 || removed > 0) && (
+                      <span className="remediation-diff-file-stats" aria-label={`+${added} -${removed}`}>
+                        {added > 0 && <span className="diff-stat-added">+{added}</span>}
+                        {removed > 0 && <span className="diff-stat-removed">-{removed}</span>}
+                      </span>
+                    )}
+                  </div>
+                  {file.header && <code>{file.header}</code>}
+                </button>
+                {isExpanded && (
+                  <div className="remediation-diff-panes" id={paneId}>
+                    <DiffPane file={file} side="original" />
+                    <DiffPane file={file} side="changed" />
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function RemediationPanel({ projectKey, incidentId, generation, fingerprint, notificationSummary }: RemediationPanelProps) {
   const queryClient = useQueryClient();
+  const [copiedCommit, setCopiedCommit] = useState<string | null>(null);
   const remediation = useQuery({
     queryKey: queryKeys.remediation(projectKey, incidentId),
     queryFn: ({ signal }) => api.getRemediation(projectKey, incidentId, signal),
@@ -113,6 +234,18 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
   const continuationBlocked = continueRemediation.error instanceof ApiError &&
     (continueRemediation.error.status === 403 || continuationBlockingCodes.has(continueRemediation.error.code));
   const review = remediation.data;
+  const commitCopied = Boolean(review?.deployedCommit && copiedCommit === review.deployedCommit);
+
+  const copyDeployedCommit = async () => {
+    if (!review?.deployedCommit) return;
+    try {
+      await navigator.clipboard.writeText(review.deployedCommit);
+      setCopiedCommit(review.deployedCommit);
+      window.setTimeout(() => setCopiedCommit(null), 1600);
+    } catch {
+      // Clipboard access may be denied by the browser.
+    }
+  };
 
   const continueFromReview = () => {
     if (!review || !canWrite || !review.continuationAvailable || continuationBlocked || continueRemediation.isPending) return;
@@ -282,12 +415,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
           )}
 
           {review.suggestedDiff ? (
-            <section className="remediation-block remediation-diff-block" aria-labelledby="remediation-diff-heading">
-              <div className="remediation-block-heading">
-                <div><h3 id="remediation-diff-heading"><FileCode2 size={20} aria-hidden="true" />Suggested diff</h3><span>Original / Changed</span></div>
-              </div>
-              <DiffViewer value={review.suggestedDiff} />
-            </section>
+            <DiffViewer value={review.suggestedDiff} />
           ) : <p className="readonly-note">No suggested diff yet.</p>}
           </div>
           <aside className="remediation-context" aria-label="Run context">
@@ -302,7 +430,23 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
             </dl>
             <dl className="remediation-technical-facts" aria-label="Technical remediation run facts">
               <div><dt>Terminal reason</dt><dd>{review.terminalReason || "None recorded"}</dd></div>
-              <div><dt>Deployed commit</dt><dd><code>{review.deployedCommit || "n/a"}</code></dd></div>
+              <div>
+                <dt>Deployed commit</dt>
+                <dd className="remediation-deployed-commit">
+                  {review.deployedCommit ? (
+                    <button
+                      type="button"
+                      className={`remediation-deployed-commit-button ${commitCopied ? "copied" : ""}`}
+                      onClick={() => void copyDeployedCommit()}
+                      title={`${commitCopied ? "Copied" : "Click to copy"}: ${review.deployedCommit}`}
+                      aria-label={commitCopied ? "Deployed commit copied" : "Copy deployed commit"}
+                    >
+                      <code>{review.deployedCommit}</code>
+                      {commitCopied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+                    </button>
+                  ) : <code>n/a</code>}
+                </dd>
+              </div>
             </dl>
 
             {!canWrite && <p className="readonly-note">Viewer access is read-only.</p>}

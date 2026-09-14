@@ -170,7 +170,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
       seriesId: "series-1",
       status: currentStatus,
       generation: 1,
-      deployedCommit: "4f9c2b7",
+      deployedCommit: "abcdef0123456789abcdef0123456789abcdef01",
       attemptNumber: currentAttempt,
       version: currentVersion,
       origin: continued ? "manual_continue" : "automatic",
@@ -484,6 +484,7 @@ test("loads project-owned configuration, events, and incidents", async ({ page }
 });
 
 test("shows diagnosis and operational context without expanding sections", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: "http://127.0.0.1:4173" });
   await mockApi(page);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto("/projects/real-estate/incidents/INC-2048");
@@ -493,6 +494,19 @@ test("shows diagnosis and operational context without expanding sections", async
   await expect(page.getByRole("heading", { name: "Recommended next step" })).toBeInViewport();
   await expect(page.getByText("observation-id", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Primary remediation run facts")).toBeVisible();
+  const commitValue = "abcdef0123456789abcdef0123456789abcdef01";
+  const deployedCommitButton = page.getByRole("button", { name: "Copy deployed commit" });
+  const deployedCommit = deployedCommitButton.locator("code");
+  await expect(deployedCommitButton).toBeVisible();
+  await expect(deployedCommitButton).toHaveAttribute("title", `Click to copy: ${commitValue}`);
+  await expect(deployedCommit).toHaveCSS("white-space", "nowrap");
+  await expect(deployedCommit).toHaveCSS("text-overflow", "ellipsis");
+  expect(await deployedCommit.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await deployedCommitButton.click();
+  const copiedCommitButton = page.getByRole("button", { name: "Deployed commit copied" });
+  await expect(copiedCommitButton).toHaveClass(/copied/);
+  await expect(copiedCommitButton).toHaveAttribute("title", `Copied: ${commitValue}`);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(commitValue);
   await expect(page.locator(".incident-workspace details")).toHaveCount(0);
   await expect(page.getByLabel("Incident status", { exact: true })).toHaveValue("Open");
   await page.screenshot({ path: "test-results/incident-workspace-desktop.png", fullPage: true });
@@ -517,6 +531,8 @@ test("renders remediation diagnostics in the selected incident detail", async ({
   await expect(page.getByText("The locale reaches validator lookup before the configured fallback is applied.", { exact: true })).toBeVisible();
   await expect(page.getByText("observation-id", { exact: true })).toBeVisible();
   await expect(page.getByText("Apply the locale fallback before validator lookup", { exact: true })).toBeVisible();
+  const diffFile = page.getByRole("button", { name: /raw diff output/i });
+  await diffFile.click();
   await expect(page.getByText("diff --git a/backend/http_encoder.go b/backend/http_encoder.go", { exact: true })).toBeVisible();
 });
 

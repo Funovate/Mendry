@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { parseUnifiedDiff } from "../src/features/incidents/remediationDiff";
 
 describe("parseUnifiedDiff", () => {
@@ -85,5 +85,114 @@ describe("parseUnifiedDiff", () => {
 
     expect(result.files.map((file) => file.path)).toEqual(["one.txt", "two.txt"]);
     expect(parseUnifiedDiff("not a patch")).toEqual({ files: [], parseable: false });
+  });
+});
+
+describe("DiffViewer UI", () => {
+  afterEach(async () => {
+    const { cleanup } = await import("@testing-library/react");
+    cleanup();
+  });
+  const sampleDiff = [
+    "diff --git a/src/first.ts b/src/first.ts",
+    "--- a/src/first.ts",
+    "+++ b/src/first.ts",
+    "@@ -1,2 +1,2 @@",
+    "-const oldA = 1;",
+    "+const newA = 2;",
+    "diff --git a/src/second.ts b/src/second.ts",
+    "--- a/src/second.ts",
+    "+++ b/src/second.ts",
+    "@@ -1,2 +1,2 @@",
+    "-const oldB = 1;",
+    "+const newB = 2;",
+  ].join("\n");
+
+  it("collapses modified code files by default", async () => {
+    const { createElement } = await import("react");
+    const { render, screen } = await import("@testing-library/react");
+    const { DiffViewer } = await import("../src/features/incidents/RemediationPanel");
+
+    render(createElement(DiffViewer, { value: sampleDiff }));
+
+    // File headers should be rendered
+    expect(screen.getByText("src/first.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/second.ts")).toBeInTheDocument();
+
+    // But code panes should NOT be visible by default (default collapsed)
+    expect(screen.queryByText("const oldA = 1;")).not.toBeInTheDocument();
+    expect(screen.queryByText("const newA = 2;")).not.toBeInTheDocument();
+    expect(screen.queryByText("const oldB = 1;")).not.toBeInTheDocument();
+    expect(screen.queryByText("const newB = 2;")).not.toBeInTheDocument();
+
+    // Toggle all button should say "Expand all"
+    expect(screen.getByRole("button", { name: /expand all/i })).toBeInTheDocument();
+  });
+
+  it("expands a single file when its header is clicked and collapses when clicked again", async () => {
+    const { createElement } = await import("react");
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { DiffViewer } = await import("../src/features/incidents/RemediationPanel");
+
+    render(createElement(DiffViewer, { value: sampleDiff }));
+
+    const firstHeader = screen.getByRole("button", { name: /src\/first\.ts/i });
+    expect(firstHeader).toHaveAttribute("aria-expanded", "false");
+
+    // Click to expand first file
+    fireEvent.click(firstHeader);
+    expect(firstHeader).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("const oldA = 1;")).toBeInTheDocument();
+    expect(screen.getByText("const newA = 2;")).toBeInTheDocument();
+
+    // Second file should remain collapsed
+    expect(screen.queryByText("const oldB = 1;")).not.toBeInTheDocument();
+
+    // Click again to collapse
+    fireEvent.click(firstHeader);
+    expect(firstHeader).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("const oldA = 1;")).not.toBeInTheDocument();
+  });
+
+  it("toggles all files when Expand all / Collapse all is clicked", async () => {
+    const { createElement } = await import("react");
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { DiffViewer } = await import("../src/features/incidents/RemediationPanel");
+
+    render(createElement(DiffViewer, { value: sampleDiff }));
+
+    const toggleAllBtn = screen.getByRole("button", { name: /expand all/i });
+
+    // Click Expand all
+    fireEvent.click(toggleAllBtn);
+
+    // Both files should be expanded
+    expect(screen.getByText("const oldA = 1;")).toBeInTheDocument();
+    expect(screen.getByText("const oldB = 1;")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /collapse all/i })).toBeInTheDocument();
+
+    // Click Collapse all
+    fireEvent.click(screen.getByRole("button", { name: /collapse all/i }));
+
+    // Both files should now be collapsed
+    expect(screen.queryByText("const oldA = 1;")).not.toBeInTheDocument();
+    expect(screen.queryByText("const oldB = 1;")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /expand all/i })).toBeInTheDocument();
+  });
+
+  it("collapses fallback raw diff by default and expands on click", async () => {
+    const { createElement } = await import("react");
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { DiffViewer } = await import("../src/features/incidents/RemediationPanel");
+
+    render(createElement(DiffViewer, { value: "raw unparseable diff text" }));
+
+    expect(screen.getByText("Raw diff output")).toBeInTheDocument();
+    expect(screen.queryByText("raw unparseable diff text")).not.toBeInTheDocument();
+
+    const rawHeader = screen.getByRole("button", { name: /raw diff output/i });
+    fireEvent.click(rawHeader);
+
+    expect(screen.getByText("raw unparseable diff text")).toBeInTheDocument();
   });
 });

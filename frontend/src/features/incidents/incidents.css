@@ -926,15 +926,31 @@
   border-radius: var(--radius-control);
 }
 
-.remediation-diff-file-header {
+.remediation-diff-file-header,
+button.remediation-diff-file-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   gap: 12px;
   min-width: 0;
   padding: 9px 11px;
   background: #f4f7f8;
+  border: 0;
   border-bottom: 1px solid #dce5e8;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+button.remediation-diff-file-header:hover {
+  background: #eaeff1;
+}
+
+.remediation-diff-file.is-collapsed .remediation-diff-file-header,
+.remediation-diff-file.is-collapsed button.remediation-diff-file-header {
+  border-bottom: 0;
 }
 
 .remediation-diff-file-header > div {
