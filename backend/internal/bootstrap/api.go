@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,8 +28,11 @@ import (
 	projecthttp "mendry/backend/internal/modules/projects/adapter/http"
 	projectopenai "mendry/backend/internal/modules/projects/adapter/openai"
 	projectpostgres "mendry/backend/internal/modules/projects/adapter/postgres"
+	projectpreparation "mendry/backend/internal/modules/projects/adapter/preparation"
 	projectsecret "mendry/backend/internal/modules/projects/adapter/secret"
 	projectapplication "mendry/backend/internal/modules/projects/application"
+	remediationartifact "mendry/backend/internal/modules/remediation/adapter/artifact"
+	remediationchangerequest "mendry/backend/internal/modules/remediation/adapter/changerequest"
 	remediationgit "mendry/backend/internal/modules/remediation/adapter/git"
 	remediationhttp "mendry/backend/internal/modules/remediation/adapter/http"
 	remediationlogging "mendry/backend/internal/modules/remediation/adapter/logging"
@@ -36,12 +40,14 @@ import (
 	remediationmetrics "mendry/backend/internal/modules/remediation/adapter/metrics"
 	remediationopenai "mendry/backend/internal/modules/remediation/adapter/openai"
 	remediationpostgres "mendry/backend/internal/modules/remediation/adapter/postgres"
+	remediationrunner "mendry/backend/internal/modules/remediation/adapter/runner"
 	remediationsshlog "mendry/backend/internal/modules/remediation/adapter/sshlog"
 	remediationapplication "mendry/backend/internal/modules/remediation/application"
 	systemhttp "mendry/backend/internal/modules/system/adapter/http"
 	"mendry/backend/internal/modules/system/application"
 	"mendry/backend/internal/platform/config"
 	"mendry/backend/internal/platform/httpserver"
+	"mendry/backend/internal/platform/observability"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -158,6 +164,9 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create project HTTP handler: %w", err),
 		)
 	}
+	hotfixCommitter := projectpostgres.NewHotfixCommitter(postgresPool)
+	hotfixJobStore := projectpostgres.NewHotfixJobStore(postgresPool)
+	var hotfixPreparer projectapplication.HotfixPreparationPort
 	observationRepository, err := observationpostgres.NewRepository(postgresPool)
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -287,6 +296,67 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		remediationStore, repositoryReader, evidenceReader, evidenceReader, modelClient, incidentLookup, repositoryReader,
 		remediationStore, remediationStore, remediationObserver, runtimeLoaders, mcpRuntime, remediationStore,
 	)
+	if apiConfig.Remediation.ArtifactRoot != "" {
+		artifactStore, storeErr := remediationartifact.NewStore(apiConfig.Remediation.ArtifactRoot, 64<<20)
+		if storeErr != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("create remediation artifact store: %w", storeErr),
+			)
+		}
+		credentialResolver, resolverErr := remediationgit.NewVersionedCredentialResolver(runtimeLoaders, projectCipher)
+		if resolverErr != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("create remediation credential resolver: %w", resolverErr),
+			)
+		}
+		workspace, workspaceErr := remediationgit.NewGitWorkspace(remediationgit.WorkspaceOptions{
+			Root: apiConfig.Remediation.WorkspaceRoot, GitCommand: apiConfig.Remediation.GitCommand,
+			Artifacts: artifactStore, Credentials: credentialResolver, KnownHostsFile: apiConfig.Remediation.SSHKnownHostsFile,
+		})
+		if workspaceErr != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("create remediation Git workspace: %w", workspaceErr),
+			)
+		}
+		publisher, publisherErr := remediationgit.NewPublisher(remediationgit.PublisherOptions{
+			Command: apiConfig.Remediation.GitCommand, Artifacts: artifactStore,
+			Credentials: credentialResolver, KnownHostsFile: apiConfig.Remediation.SSHKnownHostsFile,
+		})
+		if publisherErr != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("create remediation Git publisher: %w", publisherErr),
+			)
+		}
+		if apiConfig.Remediation.GoBuilderImage != "" || apiConfig.Remediation.NodeBuilderImage != "" {
+			validationRunner, runnerErr := remediationrunner.NewDockerRunner(remediationrunner.DockerOptions{
+				Command: apiConfig.Remediation.DockerCommand, Workspaces: workspace, Artifacts: artifactStore,
+			})
+			if runnerErr != nil {
+				return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+					fmt.Errorf("create remediation validation runner: %w", runnerErr),
+				)
+			}
+			hotfixPreparer, runnerErr = projectpreparation.NewPreparer(projectpreparation.Options{
+				Workspace: workspace, Validation: validationRunner, DockerCommand: apiConfig.Remediation.DockerCommand,
+				GoBuilderImage: apiConfig.Remediation.GoBuilderImage, NodeBuilderImage: apiConfig.Remediation.NodeBuilderImage,
+			})
+			if runnerErr != nil {
+				return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+					fmt.Errorf("create automatic hotfix preparer: %w", runnerErr),
+				)
+			}
+			remediationCoordinator.SetValidationPort(validationRunner)
+		}
+		changeRequestClient, changeRequestErr := remediationchangerequest.NewClient(remediationchangerequest.ClientOptions{Credentials: credentialResolver})
+		if changeRequestErr != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("create remediation change-request client: %w", changeRequestErr),
+			)
+		}
+		remediationCoordinator.SetWorkspacePort(workspace)
+		remediationCoordinator.SetGitPublicationPort(publisher)
+		remediationCoordinator.SetChangeRequestPort(changeRequestClient)
+	}
 	remediationCoordinator.SetDockerEvidencePort(evidenceReader)
 	remediationCoordinator.SetTencentCLSDetailPort(tencentDetailResolver)
 	// evidence.read 允许模型按证据 ID 重新读取同 series 持久化证据的有界页面；
@@ -310,6 +380,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 	remediationCoordinator.SetCheckpointStore(remediationCheckpointStore)
+	remediationCoordinator.SetLifecycleStore(remediationStore)
 	remediationCoordinator.SetResilienceMetricObserver(remediationMetricsObserver)
 	remediationFailureReporter, err := remediationlogging.NewFailureReporter(logger)
 	if err != nil {
@@ -379,12 +450,23 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create remediation HTTP handler: %w", err),
 		)
 	}
+	hotfixSetup := projectapplication.NewHotfixSetup(ctx, projectService, hotfixPreparer, hotfixCommitter)
+	hotfixSetup.SetJobStore(hotfixJobStore)
+	projectService.SetRepositoryChangeObserver(hotfixSetup)
+	if hotfixPreparer != nil {
+		if err := hotfixSetup.Recover(ctx); err != nil {
+			return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+				fmt.Errorf("recover automatic hotfix preparations: %w", err),
+			)
+		}
+	}
 
 	mux := http.NewServeMux()
 	systemHandler := systemhttp.NewHandler(systemService)
 	systemHandler.Register(mux)
 	authHandler.Register(mux)
 	projectHandler.Register(mux)
+	projectHandler.RegisterHotfixSetup(mux, hotfixSetup)
 	observationHandler.Register(mux)
 	incidentHandler.Register(mux)
 	hookHandler.Register(mux)
@@ -419,7 +501,38 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		)
 	}
 
-	if err := server.Run(ctx); err != nil {
+	executionStore, err := remediationpostgres.NewExecutionStore(postgresPool)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation execution store: %w", err))
+	}
+	executor, err := remediationapplication.NewRunExecutor(ctx, executionStore, apiConfig.Remediation.Concurrency)
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation executor: %w", err))
+	}
+	remediationCoordinator.SetRunExecutor(executor)
+	recoveryWorker, err := remediationapplication.NewRecoveryWorker(remediationapplication.RecoveryWorkerOptions{
+		Store: executionStore, Recoverer: remediationCoordinator,
+		Interval: apiConfig.Remediation.RecoveryInterval, Concurrency: apiConfig.Remediation.Concurrency,
+		Observer: func(ctx context.Context, event remediationapplication.RecoveryObservation) {
+			level := slog.LevelInfo
+			if event.Outcome == "failed" {
+				level = slog.LevelWarn
+			}
+			observability.Log(ctx, logger, level, "remediation.recovery", "remediation recovery worker",
+				slog.String("component", "remediation"), slog.String("run_id", event.RunID),
+				slog.String("outcome", event.Outcome), slog.String("reason", event.Reason))
+		},
+	})
+	if err != nil {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), apiConfig.Common.ShutdownTimeout)
+		_ = executor.Close(closeCtx)
+		cancelClose()
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create remediation recovery worker: %w", err))
+	}
+	if err := runWithRecovery(ctx, server, recoveryWorker, executor, apiConfig.Common.ShutdownTimeout); err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout, err)
 	}
 

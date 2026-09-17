@@ -23,6 +23,8 @@ var (
 	ErrActiveAttempt = errors.New("remediation attempt is active")
 	// ErrUnsupportedContinuation 表示当前终态不允许由 operator 继续。
 	ErrUnsupportedContinuation = errors.New("remediation continuation is unsupported")
+	// ErrReconfigurationUnavailable 表示当前项目没有可用的自动修复快照。
+	ErrReconfigurationUnavailable = errors.New("current automatic repair policy is unavailable")
 )
 
 // ProjectAccess 是 remediation 读写用例需要的项目授权 contract。
@@ -47,6 +49,12 @@ type TriggerContinuer interface {
 // 不支持该接口的旧 trigger 仍通过 TriggerContinuer 保持同步兼容行为。
 type BackgroundTriggerContinuer interface {
 	QueueContinuation(context.Context, domain.NextAttempt) (domain.Run, error)
+}
+
+// ReconfiguredTrigger 创建使用当前项目自动修复策略的新 attempt。
+// 它与普通 continuation 分离，避免旧策略快照被意外继承。
+type ReconfiguredTrigger interface {
+	QueueReconfiguredAttempt(context.Context, domain.NextAttempt) (domain.Run, error)
 }
 
 // ServiceOptions 声明 remediation 手动用例依赖。
@@ -212,6 +220,115 @@ func (s *Service) ContinueRemediation(
 		return domain.Run{}, ErrConflict
 	}
 	return child, nil
+}
+
+// RepairWithCurrentPolicy 创建一个 linked attempt，并在持久化边界重新读取当前
+// auto_hotfix 策略。旧 run、诊断和历史不会被覆盖，且不会复用旧 lifecycle checkpoint。
+func (s *Service) RepairWithCurrentPolicy(
+	ctx context.Context,
+	principal authdomain.User,
+	projectKey string,
+	identifier string,
+	generation int64,
+	expectedRunID string,
+	expectedVersion int64,
+) (domain.Run, error) {
+	expectedRunID = strings.TrimSpace(expectedRunID)
+	if generation < 1 || expectedRunID == "" || expectedVersion < 1 {
+		return domain.Run{}, ErrInvalidInput
+	}
+	number, err := incidentdomain.ParseID(identifier)
+	if err != nil {
+		return domain.Run{}, ErrInvalidInput
+	}
+	project, err := s.projects.RequireIncidentWrite(ctx, principal, projectKey)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	identity, err := s.incidents.GetByProjectNumber(ctx, project.ID, number)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	if identity.ProjectID != "" && identity.ProjectID != project.ID {
+		return domain.Run{}, ErrNotFound
+	}
+	if identity.LifecycleGeneration != generation || identity.ContextVersion < 1 {
+		return domain.Run{}, ErrConflict
+	}
+	latest, err := s.reviews.GetLatestForIncident(ctx, identity.ID, identity.LifecycleGeneration, identity.DeployedCommit)
+	if errors.Is(err, ErrNotFound) {
+		return domain.Run{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("load latest remediation attempt: %w", err)
+	}
+	if latest.Run.RunID != expectedRunID || latest.Run.Version != expectedVersion || !runMatchesIncident(latest.Run, identity) {
+		return domain.Run{}, ErrConflict
+	}
+	if latest.Run.SeriesID == "" {
+		return domain.Run{}, ErrNotFound
+	}
+	if aggregateHasActiveAttempt(latest) {
+		return domain.Run{}, ErrActiveAttempt
+	}
+	if !isManualReconfigurationState(latest.Run.State) {
+		return domain.Run{}, ErrUnsupportedContinuation
+	}
+	trigger, ok := s.trigger.(ReconfiguredTrigger)
+	if !ok {
+		return domain.Run{}, ErrReconfigurationUnavailable
+	}
+	child, err := trigger.QueueReconfiguredAttempt(ctx, domain.NextAttempt{
+		ContinuationOfRunID:     latest.Run.RunID,
+		SeriesID:                latest.Run.SeriesID,
+		IncidentID:              identity.ID,
+		LifecycleGeneration:     identity.LifecycleGeneration,
+		DeployedCommit:          identity.DeployedCommit,
+		ContextVersion:          identity.ContextVersion,
+		ExpectedPreviousVersion: expectedVersion,
+		Origin:                  domain.TriggerOriginManualReconfigure,
+		TriggerReason:           domain.TriggerOriginManualReconfigure,
+		ContinuationReason:      "operator requested repair with current settings",
+	})
+	if err != nil {
+		return domain.Run{}, normalizeReconfigurationError(err)
+	}
+	if child.RunID == "" || child.RunID == expectedRunID || child.AttemptNumber != latest.Run.AttemptNumber+1 ||
+		(child.SeriesID != "" && child.SeriesID != latest.Run.SeriesID) ||
+		(child.IncidentID != "" && child.IncidentID != identity.ID) ||
+		(child.LifecycleGeneration != 0 && child.LifecycleGeneration != identity.LifecycleGeneration) ||
+		(child.DeployedCommit != "" && child.DeployedCommit != identity.DeployedCommit) ||
+		child.ExecutionMode != domain.ExecutionModeAutoHotfix || child.AnalysisOnly {
+		return domain.Run{}, ErrConflict
+	}
+	return child, nil
+}
+
+func isManualReconfigurationState(state domain.RunState) bool {
+	switch state {
+	case domain.RunStateDiagnosisReadyForReview, domain.RunStateFailed,
+		domain.RunStateBudgetExhausted, domain.RunStateBlockedManualReview:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeReconfigurationError(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrInvalidNextAttempt):
+		return ErrInvalidInput
+	case errors.Is(err, domain.ErrStalePredecessor):
+		return ErrConflict
+	case errors.Is(err, domain.ErrActiveAttempt):
+		return ErrActiveAttempt
+	case errors.Is(err, domain.ErrUnsupportedState):
+		return ErrUnsupportedContinuation
+	case errors.Is(err, domain.ErrReconfigurationUnavailable):
+		return ErrReconfigurationUnavailable
+	default:
+		return err
+	}
 }
 
 func runMatchesIncident(run domain.Run, identity IncidentIdentity) bool {

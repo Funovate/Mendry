@@ -45,6 +45,12 @@ func (p StaticPlanPolicy) EvaluatePlan(_ context.Context, input domain.PlanPolic
 			return domain.PlanPolicyDecision{}, fmt.Errorf("plan policy candidate id is required")
 		}
 		candidateRisk, reason := classifyPlanCandidate(candidate)
+		if reason == "" && (len(input.ChangePolicy.AllowedPaths) > 0 || len(input.ChangePolicy.DeniedPaths) > 0 || input.ChangePolicy.MaxChangedFiles > 0) {
+			policyRisk, policyReason := classifyConfiguredPlanPaths(candidate, input.ChangePolicy)
+			if policyReason != "" {
+				candidateRisk, reason = policyRisk, policyReason
+			}
+		}
 		if reason != "" {
 			decision.RejectedPlanIDs = append(decision.RejectedPlanIDs, candidate.PlanID)
 			if candidateRisk == domain.RiskDeniedControlPlane {
@@ -95,6 +101,62 @@ func (p StaticPlanPolicy) EvaluatePlan(_ context.Context, input domain.PlanPolic
 		decision.Message = "No candidate plan is currently policy compliant. Revise the affected paths and risk classification, or hand the change to a human reviewer."
 	}
 	return decision, decision.Validate()
+}
+
+func classifyConfiguredPlanPaths(candidate domain.RepairPlanCandidate, policy domain.ChangePolicySnapshot) (domain.RiskClassification, string) {
+	if len(policy.AllowedPaths) == 0 && len(policy.DeniedPaths) == 0 && policy.MaxChangedFiles == 0 {
+		return domain.RiskOrdinary, ""
+	}
+	if policy.MaxChangedFiles > 0 && len(candidate.AffectedFiles) > policy.MaxChangedFiles {
+		return domain.RiskHighRisk, "changed_file_limit_exceeded"
+	}
+	if len(policy.AllowedPaths) > 0 && len(candidate.AffectedFiles) == 0 {
+		return domain.RiskHighRisk, "affected_paths_required"
+	}
+	for _, file := range candidate.AffectedFiles {
+		clean := strings.TrimSpace(strings.ReplaceAll(file, "\\", "/"))
+		for _, pattern := range policy.DeniedPaths {
+			if policyPathMatch(pattern, clean) {
+				return domain.RiskDeniedControlPlane, "project_denied_path"
+			}
+		}
+		if len(policy.AllowedPaths) > 0 {
+			allowed := false
+			for _, pattern := range policy.AllowedPaths {
+				if policyPathMatch(pattern, clean) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return domain.RiskHighRisk, "project_path_not_allowed"
+			}
+		}
+	}
+	return domain.RiskOrdinary, ""
+}
+
+func policyPathMatch(pattern, value string) bool {
+	patterns := strings.Split(strings.Trim(strings.ReplaceAll(pattern, "\\", "/"), "/"), "/")
+	values := strings.Split(strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/"), "/")
+	if pattern == "**" {
+		return true
+	}
+	return policyPathSegmentsMatch(patterns, values)
+}
+
+func policyPathSegmentsMatch(patterns, values []string) bool {
+	if len(patterns) == 0 {
+		return len(values) == 0
+	}
+	if patterns[0] == "**" {
+		return policyPathSegmentsMatch(patterns[1:], values) || (len(values) > 0 && policyPathSegmentsMatch(patterns, values[1:]))
+	}
+	if len(values) == 0 {
+		return false
+	}
+	matched, err := path.Match(patterns[0], values[0])
+	return err == nil && matched && policyPathSegmentsMatch(patterns[1:], values[1:])
 }
 
 func classifyPlanCandidate(candidate domain.RepairPlanCandidate) (domain.RiskClassification, string) {

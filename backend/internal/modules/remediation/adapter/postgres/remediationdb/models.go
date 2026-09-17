@@ -301,6 +301,23 @@ type RemediationRun struct {
 	AgentLoopPolicyVersion int64
 	// Immutable execution constraint inherited by continuation attempts; true permits diagnosis and proposed solutions but forbids patch, validation, publication, repair, and deployment effects.
 	AnalysisOnly bool
+	// Time the current state was entered; NULL for legacy runs until their next state transition.
+	StateEnteredAt pgtype.Timestamptz
+	// Immutable project execution mode captured by a root run and inherited by continuations.
+	ExecutionMode string
+	// Required validation command ID/version map captured at root creation.
+	ValidationCommands []byte
+	// Immutable validation image digest captured at root creation.
+	ValidationImageDigest string
+	// Complete immutable validation argv, timeout, working directory, and resource profile captured at root creation.
+	ExecutionProfile []byte
+	// Credential-free repository identity plus credential references and versions captured at root creation.
+	PublicationSnapshot []byte
+	// Immutable allowed path and change-size policy captured at root creation.
+	ChangePolicy []byte
+	// Production branch captured as the review target at root creation.
+	PublicationTargetBranch string
+	PublicationBranchPrefix string
 }
 
 // 一次事故在固定 lifecycle_generation 与 deployed_commit 下的 remediation 系列；唯一键阻止同一基线重复建根 run。

@@ -30,7 +30,7 @@ func NewCheckpointStore(database transactor) (*CheckpointStore, error) {
 	if database == nil {
 		return nil, fmt.Errorf("remediation database is required")
 	}
-	return &CheckpointStore{db: database}, nil
+	return &CheckpointStore{db: wrapExecutionAwareDatabase(database)}, nil
 }
 
 // Compile-time assertion that the adapter satisfies the checkpoint port.

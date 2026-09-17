@@ -35,7 +35,7 @@ type ProjectAccess interface {
 
 type Repository interface {
 	Create(context.Context, domain.Observation) (domain.Observation, error)
-	List(context.Context, string, int32) (ListResult, error)
+	List(context.Context, string, int32, int32) (ListResult, error)
 }
 
 type Options struct {
@@ -71,15 +71,15 @@ type CreateInput struct {
 	Attributes  json.RawMessage
 }
 
-func (s *Service) List(ctx context.Context, principal authdomain.User, projectKey string, limit int32) (ListResult, error) {
+func (s *Service) List(ctx context.Context, principal authdomain.User, projectKey string, limit, offset int32) (ListResult, error) {
 	project, err := s.projects.ResolveAccess(ctx, principal, projectKey)
 	if err != nil {
 		return ListResult{}, err
 	}
-	if limit < 1 || limit > MaximumListLimit {
+	if limit < 1 || limit > MaximumListLimit || offset < 0 {
 		return ListResult{}, ErrInvalidInput
 	}
-	result, err := s.repository.List(ctx, project.ID, limit)
+	result, err := s.repository.List(ctx, project.ID, limit, offset)
 	if err != nil {
 		return ListResult{}, err
 	}

@@ -17,11 +17,12 @@ var (
 	ErrInvalidNextAttempt = errors.New("invalid remediation next attempt")
 	// 以下 sentinel 是安全、稳定的 eligibility 分类；调用方可使用 errors.Is，
 	// 不会因此接收数据库细节或请求 payload。
-	ErrStalePredecessor      = errors.New("stale remediation predecessor")
-	ErrActiveAttempt         = errors.New("remediation attempt is active")
-	ErrUnsupportedState      = errors.New("remediation continuation state is unsupported")
-	ErrAutomaticGateRejected = errors.New("automatic continuation gate rejected")
-	ErrAutomaticCeiling      = errors.New("automatic continuation ceiling reached")
+	ErrStalePredecessor           = errors.New("stale remediation predecessor")
+	ErrActiveAttempt              = errors.New("remediation attempt is active")
+	ErrUnsupportedState           = errors.New("remediation continuation state is unsupported")
+	ErrReconfigurationUnavailable = errors.New("current automatic repair policy is unavailable")
+	ErrAutomaticGateRejected      = errors.New("automatic continuation gate rejected")
+	ErrAutomaticCeiling           = errors.New("automatic continuation ceiling reached")
 	// ErrPlanningCheckpointNotFound 表示同一 series/context 中不存在已通过 evidence gate
 	// 的 durable code_fixable decision；这是正常的 diagnosis fallback，不是存储失败。
 	ErrPlanningCheckpointNotFound = errors.New("remediation planning checkpoint not found")
@@ -78,7 +79,7 @@ func (n NextAttempt) Validate() error {
 	if n.Origin != "" && n.TriggerReason != "" && n.Origin != n.TriggerReason {
 		return fmt.Errorf("continuation origins do not match")
 	}
-	if origin != TriggerOriginAutomaticContinue && origin != TriggerOriginManualContinue {
+	if origin != TriggerOriginAutomaticContinue && origin != TriggerOriginManualContinue && origin != TriggerOriginManualReconfigure {
 		return fmt.Errorf("trigger reason is not a continuation origin")
 	}
 	if err := validateContinuationReason(n.ContinuationReason); err != nil {

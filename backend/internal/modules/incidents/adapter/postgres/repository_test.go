@@ -96,8 +96,10 @@ func TestRepositoryScopesReadAndStatusByProject(t *testing.T) {
 		t.Fatalf("UpdateStatus() params = %#v, error = %v", queries.updateParams, err)
 	}
 	queries.listRows = []incidentdb.ListIncidentsRow{validListRow(t, now)}
-	if _, err := repository.List(context.Background(), projectIDValue, 25); err != nil ||
-		queries.listParams.ProjectID != uuidValue(t, projectIDValue) || queries.listParams.ResultLimit != 25 {
+	statusOpen := domain.StatusOpen
+	if _, err := repository.List(context.Background(), projectIDValue, application.ListQuery{Limit: 25, Offset: 10, Status: &statusOpen}); err != nil ||
+		queries.listParams.ProjectID != uuidValue(t, projectIDValue) || queries.listParams.ResultLimit != 25 ||
+		queries.listParams.ResultOffset != 10 || queries.listParams.Status == nil || *queries.listParams.Status != "Open" {
 		t.Fatalf("List() params = %#v, error = %v", queries.listParams, err)
 	}
 }
@@ -125,7 +127,7 @@ func TestRepositoryMapsNotFoundConflictAndSafeErrors(t *testing.T) {
 
 	cause := errors.New("sensitive database detail")
 	repository = &Repository{queries: &fakeQueries{listError: cause}}
-	_, err := repository.List(context.Background(), projectIDValue, 50)
+	_, err := repository.List(context.Background(), projectIDValue, application.ListQuery{Limit: 50})
 	if !errors.Is(err, cause) || err.Error() == cause.Error() {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -141,7 +143,7 @@ func TestRepositoryRejectsCorruptStoredRows(t *testing.T) {
 	listRow := validListRow(t, time.Now().UTC())
 	listRow.ProjectID.Valid = false
 	repository = &Repository{queries: &fakeQueries{listRows: []incidentdb.ListIncidentsRow{listRow}}}
-	if _, err := repository.List(context.Background(), projectIDValue, 50); err == nil {
+	if _, err := repository.List(context.Background(), projectIDValue, application.ListQuery{Limit: 50}); err == nil {
 		t.Fatal("List() error = nil")
 	}
 }

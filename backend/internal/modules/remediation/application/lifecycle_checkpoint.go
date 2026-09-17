@@ -15,6 +15,7 @@ func cloneCheckpointValidation(value *domain.CheckpointValidation) *domain.Check
 		return nil
 	}
 	copyValue := *value
+	copyValue.Results = append([]domain.CheckpointValidationResult(nil), value.Results...)
 	return &copyValue
 }
 

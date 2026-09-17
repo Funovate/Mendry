@@ -121,7 +121,12 @@ type configurationRequest struct {
 }
 
 type remediationPolicyRequest struct {
-	AgentLoopMode domain.AgentLoopMode `json:"agentLoopMode"`
+	AgentLoopMode     domain.AgentLoopMode            `json:"agentLoopMode"`
+	ExecutionMode     domain.RemediationExecutionMode `json:"executionMode"`
+	ValidationProfile domain.ValidationProfile        `json:"validationProfile"`
+	Publication       domain.RemediationPublication   `json:"publication"`
+	ChangePolicy      domain.RemediationChangePolicy  `json:"changePolicy"`
+	Version           *int64                          `json:"version,omitempty"`
 }
 
 type llmRequest struct {
@@ -234,8 +239,12 @@ type configurationDraftResponse struct {
 }
 
 type remediationPolicyResponse struct {
-	AgentLoopMode domain.AgentLoopMode `json:"agentLoopMode"`
-	Version       int64                `json:"version"`
+	AgentLoopMode     domain.AgentLoopMode            `json:"agentLoopMode"`
+	ExecutionMode     domain.RemediationExecutionMode `json:"executionMode"`
+	ValidationProfile domain.ValidationProfile        `json:"validationProfile"`
+	Publication       domain.RemediationPublication   `json:"publication"`
+	ChangePolicy      domain.RemediationChangePolicy  `json:"changePolicy"`
+	Version           int64                           `json:"version"`
 }
 
 type llmResponse struct {
@@ -593,7 +602,10 @@ func (h *Handler) putConfigurationComponent(writer nethttp.ResponseWriter, reque
 			return
 		}
 		var saved domain.RemediationPolicy
-		saved, err = h.service.PutConfigurationRemediationPolicy(request.Context(), principal, projectKey, domain.RemediationPolicy{AgentLoopMode: payload.AgentLoopMode})
+		saved, err = h.service.PutConfigurationRemediationPolicy(request.Context(), principal, projectKey, domain.RemediationPolicy{
+			AgentLoopMode: payload.AgentLoopMode, ExecutionMode: payload.ExecutionMode,
+			ValidationProfile: payload.ValidationProfile, Publication: payload.Publication, ChangePolicy: payload.ChangePolicy,
+		})
 		response = mapRemediationPolicy(saved)
 	default:
 		writeApplicationError(writer, request, application.ErrInvalidInput)
@@ -699,7 +711,12 @@ func mapConfigurationDraft(draft domain.ConfigurationDraft) configurationDraftRe
 }
 
 func mapRemediationPolicy(policy domain.RemediationPolicy) remediationPolicyResponse {
-	return remediationPolicyResponse{AgentLoopMode: policy.AgentLoopMode, Version: policy.Version}
+	policy = domain.NormalizeRemediationPolicy(policy)
+	return remediationPolicyResponse{
+		AgentLoopMode: policy.AgentLoopMode, ExecutionMode: policy.ExecutionMode,
+		ValidationProfile: policy.ValidationProfile, Publication: policy.Publication,
+		ChangePolicy: policy.ChangePolicy, Version: policy.Version,
+	}
 }
 
 func mapEnvironment(environment domain.Environment) environmentResponse {

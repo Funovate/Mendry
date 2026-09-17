@@ -25,14 +25,16 @@ type fakeIncidentService struct {
 	incidents   []domain.Incident
 	error       error
 	limit       int32
+	offset      int32
+	listStatus  *domain.Status
 	identifier  string
 	status      string
 	projectKey  string
 	createInput application.CreateInput
 }
 
-func (f *fakeIncidentService) List(_ context.Context, _ authdomain.User, projectKey string, limit int32) (application.ListResult, error) {
-	f.projectKey, f.limit = projectKey, limit
+func (f *fakeIncidentService) List(_ context.Context, _ authdomain.User, projectKey string, query application.ListQuery) (application.ListResult, error) {
+	f.projectKey, f.limit, f.offset, f.listStatus = projectKey, query.Limit, query.Offset, query.Status
 	return application.ListResult{Items: f.incidents, Total: int64(len(f.incidents))}, f.error
 }
 
@@ -121,7 +123,7 @@ func TestListReturnsEnvelopeWithTotalAndValidatesLimit(t *testing.T) {
 		t.Fatalf("response leaked internal ID: %#v", body.Data[0])
 	}
 
-	for _, query := range []string{"limit=101", "limit=", "limit=10&limit=20", "cursor=1", "limit=%ZZ"} {
+	for _, query := range []string{"limit=101", "limit=", "limit=10&limit=20", "cursor=1", "limit=%ZZ", "offset=-1", "offset=abc", "status=InvalidStatus"} {
 		request = httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/incidents?"+query, nil)
 		request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
 		response = httptest.NewRecorder()
@@ -129,6 +131,14 @@ func TestListReturnsEnvelopeWithTotalAndValidatesLimit(t *testing.T) {
 		if response.Code != nethttp.StatusBadRequest || !strings.Contains(response.Body.String(), `"invalid_request"`) {
 			t.Errorf("query %q response = %d %q", query, response.Code, response.Body.String())
 		}
+	}
+
+	request = httptest.NewRequest(nethttp.MethodGet, "/api/v1/projects/payments/incidents?limit=10&offset=20&status=Open", nil)
+	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.limit != 10 || service.offset != 20 || service.listStatus == nil || *service.listStatus != domain.StatusOpen {
+		t.Fatalf("pagination query response = %d, limit = %d, offset = %d, status = %v", response.Code, service.limit, service.offset, service.listStatus)
 	}
 }
 

@@ -62,8 +62,10 @@ SELECT id, project_id, environment_id, source_id, incident_number, title,
        COUNT(*) OVER() AS total_count
 FROM incidents
 WHERE project_id = sqlc.arg(project_id)
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
 ORDER BY last_seen DESC, incident_number DESC
-LIMIT sqlc.arg(result_limit);
+LIMIT sqlc.arg(result_limit)
+OFFSET sqlc.arg(result_offset);
 
 -- name: GetIncidentByFingerprint :one
 SELECT id, project_id, environment_id, source_id, incident_number, title,

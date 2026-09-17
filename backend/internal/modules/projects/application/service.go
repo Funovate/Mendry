@@ -57,6 +57,10 @@ type Repository interface {
 	UpdateWebhookToken(context.Context, string, []byte, []byte, []byte) error
 }
 
+type RepositoryChangeObserver interface {
+	RepositoryUpdated(context.Context, string, domain.Repository, domain.Repository, domain.RemediationPolicy)
+}
+
 // WebhookIngress 是路径 token 验通后定位到的项目与已启用 source。
 type WebhookIngress struct {
 	ProjectID string
@@ -117,14 +121,15 @@ type Options struct {
 }
 
 type Service struct {
-	repository      Repository
-	cipher          Cipher
-	git             GitRefLister
-	llm             LLMModelLister
-	containers      ContainerProbePort
-	idGenerator     func() (string, error)
-	publicURL       string
-	newWebhookToken func() (string, error)
+	repository               Repository
+	cipher                   Cipher
+	git                      GitRefLister
+	llm                      LLMModelLister
+	containers               ContainerProbePort
+	idGenerator              func() (string, error)
+	publicURL                string
+	newWebhookToken          func() (string, error)
+	repositoryChangeObserver RepositoryChangeObserver
 }
 
 func NewService(options Options) (*Service, error) {
@@ -312,7 +317,12 @@ func (s *Service) PutConfigurationEnvironment(ctx context.Context, principal aut
 	return s.repository.UpsertEnvironment(ctx, project.ID, environment)
 }
 
-// PutConfigurationRepository 独立保存 Git 仓库配置。
+func (s *Service) SetRepositoryChangeObserver(observer RepositoryChangeObserver) {
+	if s != nil {
+		s.repositoryChangeObserver = observer
+	}
+}
+
 func (s *Service) PutConfigurationRepository(ctx context.Context, principal authdomain.User, projectKey string, repository domain.Repository) (domain.Repository, error) {
 	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
@@ -333,7 +343,16 @@ func (s *Service) PutConfigurationRepository(ctx context.Context, principal auth
 			return domain.Repository{}, err
 		}
 	}
-	return s.repository.UpsertRepository(ctx, project.ID, repository)
+	saved, err := s.repository.UpsertRepository(ctx, project.ID, repository)
+	if err != nil {
+		return domain.Repository{}, err
+	}
+	if s.repositoryChangeObserver != nil && draft.Repository != nil && draft.Remediation != nil &&
+		draft.Remediation.ExecutionMode == domain.RemediationExecutionAutoHotfix &&
+		draft.Repository.DeployedCommit != saved.DeployedCommit {
+		s.repositoryChangeObserver.RepositoryUpdated(context.WithoutCancel(ctx), project.ID, *draft.Repository, saved, *draft.Remediation)
+	}
+	return saved, nil
 }
 
 // PutConfigurationSource 独立保存 collection source 配置。
@@ -436,7 +455,13 @@ func (s *Service) PutConfigurationRemediationPolicy(ctx context.Context, princip
 	if err != nil {
 		return domain.RemediationPolicy{}, err
 	}
+	policy = domain.NormalizeRemediationPolicy(policy)
 	if err := domain.ValidateRemediationPolicy(policy); err != nil {
+		return domain.RemediationPolicy{}, ErrInvalidInput
+	}
+	if policy.ExecutionMode == domain.RemediationExecutionAutoHotfix && (policy.ValidationProfile.Enabled == nil || *policy.ValidationProfile.Enabled) {
+		// Enhanced profiles contain platform-owned image and command identities.
+		// Only the checked preparation flow may persist them.
 		return domain.RemediationPolicy{}, ErrInvalidInput
 	}
 	return s.repository.UpsertRemediationPolicy(ctx, project.ID, policy)

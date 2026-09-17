@@ -60,7 +60,7 @@ func TestLifecycleContractsRejectUnsafeOrIncompleteValues(t *testing.T) {
 
 func TestLifecycleContractsPreservePublicationAndValidationMetadata(t *testing.T) {
 	validation := domain.ValidationResult{
-		RunID: "run-1", WorkspaceID: "workspace-1", CommandID: "unit", CommandVersion: 3,
+		RunID: "run-1", WorkspaceID: "workspace-1", CommandID: "unit", CommandVersion: 3, TreeHash: "tree-verified",
 		Passed: true, ExitCode: 0, OutputArtifactRef: "sha256:validation", OutputHash: strings.Repeat("a", 64),
 		Summary: "all checks passed", StartedAt: time.Now().Add(-time.Second), CompletedAt: time.Now(),
 	}

@@ -145,6 +145,7 @@ func TestTriggerOriginValuesAreKnown(t *testing.T) {
 		domain.TriggerOriginManual,
 		domain.TriggerOriginAutomaticContinue,
 		domain.TriggerOriginManualContinue,
+		domain.TriggerOriginManualReconfigure,
 	} {
 		if !domain.TriggerOrigin(value).IsKnown() {
 			t.Fatalf("trigger origin %q is not known", value)

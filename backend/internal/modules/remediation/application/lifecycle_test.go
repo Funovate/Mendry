@@ -250,7 +250,7 @@ func (v *lifecycleValidationFake) Run(_ context.Context, request domain.Validati
 	if len(v.results) == 0 {
 		return domain.ValidationResult{
 			RunID: request.RunID, WorkspaceID: request.WorkspaceID, CommandID: request.CommandID,
-			CommandVersion: request.CommandVersion, Passed: true, ExitCode: 0,
+			CommandVersion: request.CommandVersion, TreeHash: request.ExpectedTreeHash, Passed: true, ExitCode: 0,
 			OutputArtifactRef: "sha256:validation", OutputHash: fmt.Sprintf("%064x", v.calls), BytesRetrieved: 8,
 			Summary: "validation passed",
 		}, nil
@@ -261,6 +261,7 @@ func (v *lifecycleValidationFake) Run(_ context.Context, request domain.Validati
 	result.WorkspaceID = request.WorkspaceID
 	result.CommandID = request.CommandID
 	result.CommandVersion = request.CommandVersion
+	result.TreeHash = request.ExpectedTreeHash
 	return result, nil
 }
 
@@ -292,6 +293,39 @@ func (p *lifecyclePublicationFake) Publish(_ context.Context, request domain.Pub
 	}, nil
 }
 
+type lifecycleGitPublicationFake struct {
+	calls    int
+	requests []domain.GitPublicationRequest
+}
+
+func (p *lifecycleGitPublicationFake) PublishGit(_ context.Context, request domain.GitPublicationRequest) (domain.GitPublicationResult, error) {
+	p.calls++
+	p.requests = append(p.requests, request)
+	return domain.GitPublicationResult{
+		BranchRef: request.BranchRef, CommitHash: "commit-published", BaselineCommit: request.BaselineCommit,
+		TargetBranch: request.TargetBranch, ExpectedTreeHash: request.ExpectedTreeHash,
+		RemoteVerified: true,
+	}, nil
+}
+
+type lifecycleChangeRequestFake struct {
+	capabilities domain.ProviderCapabilities
+	find         domain.ChangeRequestResult
+	created      domain.ChangeRequestResult
+	createCalls  int
+}
+
+func (p *lifecycleChangeRequestFake) ProbeCapabilities(context.Context, string, domain.PublicationSnapshot) (domain.ProviderCapabilities, error) {
+	return p.capabilities, nil
+}
+func (p *lifecycleChangeRequestFake) FindChangeRequest(context.Context, domain.ChangeRequestLookup) (domain.ChangeRequestResult, error) {
+	return p.find, nil
+}
+func (p *lifecycleChangeRequestFake) CreateChangeRequest(_ context.Context, _ domain.ChangeRequestRequest) (domain.ChangeRequestResult, error) {
+	p.createCalls++
+	return p.created, nil
+}
+
 func setupLifecycleCoordinator(t *testing.T, responses []string) (*application.RemediationCoordinator, *fakeRunStore, *fakeCheckpointStore, *fakeLifecycleStore, *lifecycleWorkspaceFake, *lifecycleValidationFake, *lifecyclePublicationFake) {
 	t.Helper()
 	store := newFakeRunStore()
@@ -310,6 +344,7 @@ func setupLifecycleCoordinator(t *testing.T, responses []string) (*application.R
 	coord.SetValidationPort(validation)
 	coord.SetPublicationPort(publication)
 	coord.SetValidationCommandVersions(map[string]int64{"unit": 1})
+	coord.SetLifecyclePublicationPolicy(application.LifecyclePublicationPolicy{TargetBranch: "main", BranchPrefix: "hotfix/remediation"})
 	return coord, store, checkpoints, lifecycleStore, workspace, validation, publication
 }
 
@@ -326,6 +361,49 @@ func startLifecyclePlan(t *testing.T, coord *application.RemediationCoordinator,
 	}
 	store.created.ProjectID = testProjectID
 	return run
+}
+
+func TestLifecycleUnavailableIdentifiesMissingDependencies(t *testing.T) {
+	coord, store, _, _, _, _, _ := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+	})
+	startLifecyclePlan(t, coord, store)
+	coord.SetCheckpointStore(nil)
+	coord.SetLifecycleStore(nil)
+	coord.SetWorkspacePort(nil)
+	coord.SetValidationPort(nil)
+	coord.SetPublicationPort(nil)
+
+	_, err := coord.ApplyPlan(context.Background(), "run-1", "p1")
+	if !errors.Is(err, application.ErrLifecycleUnavailable) {
+		t.Fatalf("ApplyPlan() error = %v, want lifecycle unavailable", err)
+	}
+	for _, dependency := range []string{"checkpoint store", "lifecycle store", "workspace adapter", "validation adapter", "publication adapter"} {
+		if !strings.Contains(err.Error(), dependency) {
+			t.Errorf("ApplyPlan() error = %q, want missing %q", err, dependency)
+		}
+	}
+}
+
+func TestLifecycleUnavailableOmitsDisabledValidationDependency(t *testing.T) {
+	coord, store, _, _, _, _, _ := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+	})
+	startLifecyclePlan(t, coord, store)
+	disabled := false
+	store.created.ExecutionProfile.Enabled = &disabled
+	store.created.ValidationCommands = nil
+	store.created.ValidationImageDigest = ""
+	coord.SetValidationPort(nil)
+	coord.SetWorkspacePort(nil)
+
+	_, err := coord.ApplyPlan(context.Background(), "run-1", "p1")
+	if !errors.Is(err, application.ErrLifecycleUnavailable) {
+		t.Fatalf("ApplyPlan() error = %v, want lifecycle unavailable", err)
+	}
+	if strings.Contains(err.Error(), "validation adapter") {
+		t.Fatalf("ApplyPlan() error = %q, disabled validation must not require an adapter", err)
+	}
 }
 
 func patchRequestEnvelope(patch string) string {
@@ -375,6 +453,107 @@ func TestLifecyclePlanPolicyFeedsRecoverableFeedbackIntoPlanning(t *testing.T) {
 	}
 }
 
+func TestAutomaticHotfixUsesRecommendedPlanWithoutReviewPause(t *testing.T) {
+	coord, store, _, _, workspace, validation, publication := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+		patchRequestEnvelope("diff --git a/main.go b/main.go\n"), patchCompleteEnvelope(),
+		validationRequestEnvelope("unit"), validationAssessmentEnvelope(true),
+	})
+	store.executionMode = domain.ExecutionModeAutoHotfix
+	store.projectID = testProjectID
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123", ContextVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("Start() automatic hotfix error = %v", err)
+	}
+	if run.State != domain.RunStateAwaitingHumanReview {
+		t.Fatalf("automatic state = %s, want awaiting_human_review", run.State)
+	}
+	if workspace.ensures != 1 || validation.calls != 1 || publication.calls != 1 {
+		t.Fatalf("automatic effects workspace/validation/publication = %d/%d/%d", workspace.ensures, validation.calls, publication.calls)
+	}
+}
+
+func TestLifecycleRequiresEveryValidationCommandOnFinalTree(t *testing.T) {
+	coord, store, _, _, _, validation, publication := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+		patchRequestEnvelope("diff --git a/main.go b/main.go\n"), patchCompleteEnvelope(),
+		validationRequestEnvelope("unit"), validationAssessmentEnvelope(true),
+		validationRequestEnvelope("lint"), validationAssessmentEnvelope(true),
+	})
+	coord.SetValidationCommandVersions(map[string]int64{"unit": 1, "lint": 2})
+	startLifecyclePlan(t, coord, store)
+	if _, err := coord.ApplyPlan(context.Background(), "run-1", "p1"); err != nil {
+		t.Fatalf("ApplyPlan() error = %v", err)
+	}
+	if validation.calls != 2 || publication.calls != 1 {
+		t.Fatalf("validation/publication calls = %d/%d, want 2/1", validation.calls, publication.calls)
+	}
+	if validation.requests[0].ExpectedTreeHash != validation.requests[1].ExpectedTreeHash {
+		t.Fatalf("required commands ran on different trees: %#v", validation.requests)
+	}
+}
+
+func TestSplitPublicationKeepsBranchWhenDraftChangeRequestsUnsupported(t *testing.T) {
+	coord, store, _, effects, _, _, legacyPublication := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+		patchRequestEnvelope("diff --git a/main.go b/main.go\n"), patchCompleteEnvelope(),
+		validationRequestEnvelope("unit"), validationAssessmentEnvelope(true),
+	})
+	gitPublisher := &lifecycleGitPublicationFake{}
+	changes := &lifecycleChangeRequestFake{capabilities: domain.ProviderCapabilities{Status: domain.CapabilitySupported, DraftSupported: false}}
+	coord.SetGitPublicationPort(gitPublisher)
+	coord.SetChangeRequestPort(changes)
+	startLifecyclePlan(t, coord, store)
+
+	run, err := coord.ApplyPlan(context.Background(), "run-1", "p1")
+	if err != nil {
+		t.Fatalf("ApplyPlan() split publication error = %v", err)
+	}
+	if run.State != domain.RunStateAwaitingHumanReview || gitPublisher.calls != 1 || legacyPublication.calls != 0 || changes.createCalls != 0 {
+		t.Fatalf("split publication state/calls = %s git:%d legacy:%d changes:%d", run.State, gitPublisher.calls, legacyPublication.calls, changes.createCalls)
+	}
+	foundGitPublish := false
+	for _, effect := range effects.effects {
+		foundGitPublish = foundGitPublish || effect.Kind == domain.LifecycleEffectGitPublish && effect.State == domain.LifecycleEffectSucceeded
+	}
+	if !foundGitPublish {
+		t.Fatalf("git publication effect not persisted: %#v", effects.effects)
+	}
+}
+
+func TestSplitPublicationCreatesDraftChangeRequest(t *testing.T) {
+	coord, store, checkpoints, effects, _, _, _ := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+		patchRequestEnvelope("diff --git a/main.go b/main.go\n"), patchCompleteEnvelope(),
+		validationRequestEnvelope("unit"), validationAssessmentEnvelope(true),
+	})
+	gitPublisher := &lifecycleGitPublicationFake{}
+	changes := &lifecycleChangeRequestFake{
+		capabilities: domain.ProviderCapabilities{Status: domain.CapabilitySupported, DraftSupported: true, RepositoryID: "repo-1"},
+		created:      domain.ChangeRequestResult{Status: domain.CapabilitySupported, Reference: "pr-1", URL: "https://example.test/pr/1", Draft: true},
+	}
+	coord.SetGitPublicationPort(gitPublisher)
+	coord.SetChangeRequestPort(changes)
+	startLifecyclePlan(t, coord, store)
+
+	if _, err := coord.ApplyPlan(context.Background(), "run-1", "p1"); err != nil {
+		t.Fatalf("ApplyPlan() change request error = %v", err)
+	}
+	if changes.createCalls != 1 || checkpoints.byRun["run-1"].Checkpoint.Publication.DraftChangeRef != "pr-1" {
+		t.Fatalf("change request/checkpoint = %d/%#v", changes.createCalls, checkpoints.byRun["run-1"].Checkpoint.Publication)
+	}
+	foundChangeRequest := false
+	for _, effect := range effects.effects {
+		foundChangeRequest = foundChangeRequest || effect.Kind == domain.LifecycleEffectChangeRequest && effect.State == domain.LifecycleEffectSucceeded
+	}
+	if !foundChangeRequest {
+		t.Fatalf("change request effect not persisted: %#v", effects.effects)
+	}
+}
+
 func TestAnalysisOnlyRunRejectsInitialAndResumedLifecycleEffects(t *testing.T) {
 	coord, store, _, _, workspace, validation, publication := setupLifecycleCoordinator(t, []string{
 		diagnosisEnvelope("code_fixable"), planEnvelope(),
@@ -391,6 +570,29 @@ func TestAnalysisOnlyRunRejectsInitialAndResumedLifecycleEffects(t *testing.T) {
 	}
 	if workspace.patches != 0 || validation.calls != 0 || publication.calls != 0 {
 		t.Fatalf("analysis-only external effects = patch:%d validation:%d publication:%d", workspace.patches, validation.calls, publication.calls)
+	}
+}
+
+func TestBasicRemediationSkipsLocalValidationBeforePublication(t *testing.T) {
+	coord, store, _, _, workspace, validation, publication := setupLifecycleCoordinator(t, []string{
+		diagnosisEnvelope("code_fixable"), planEnvelope(),
+		patchRequestEnvelope("diff --git a/main.go b/main.go\n"), patchCompleteEnvelope(),
+	})
+	startLifecyclePlan(t, coord, store)
+	localValidation := false
+	store.created.ExecutionProfile.Enabled = &localValidation
+	store.created.ValidationCommands = map[string]int64{}
+	store.created.ValidationImageDigest = ""
+
+	run, err := coord.ApplyPlan(context.Background(), "run-1", "p1")
+	if err != nil {
+		t.Fatalf("ApplyPlan() error = %v", err)
+	}
+	if run.State != domain.RunStateAwaitingHumanReview {
+		t.Fatalf("final state = %s, want awaiting_human_review", run.State)
+	}
+	if workspace.patches != 1 || validation.calls != 0 || publication.calls != 1 {
+		t.Fatalf("external calls patch=%d validation=%d publication=%d", workspace.patches, validation.calls, publication.calls)
 	}
 }
 
@@ -412,7 +614,7 @@ func TestResilientLifecycleRunsPatchValidationPublicationWithCheckpointIdentitie
 	if workspace.ensures != 1 || workspace.patches != 1 || validation.calls != 1 || publication.calls != 1 {
 		t.Fatalf("external calls workspace=%d patch=%d validation=%d publication=%d", workspace.ensures, workspace.patches, validation.calls, publication.calls)
 	}
-	if len(publication.requests) != 1 || publication.requests[0].BaselineCommit != "abc123" || publication.requests[0].TargetBranch != "production" {
+	if len(publication.requests) != 1 || publication.requests[0].BaselineCommit != "abc123" || publication.requests[0].TargetBranch != "main" || publication.requests[0].BranchRef != "hotfix/remediation/"+testIncidentUUID+"/run-1" {
 		t.Fatalf("publication request = %#v", publication.requests)
 	}
 	if len(store.notifications) != 2 || store.notifications[len(store.notifications)-1].Kind != application.NotificationChangeReadyForReview {
@@ -526,7 +728,7 @@ func TestResilientLifecyclePublicationRetryReusesIdempotencyKeyAfterRestart(t *t
 	if publication.requests[1].IdempotencyKey != firstKey {
 		t.Fatalf("publication keys = %q/%q, want same key", firstKey, publication.requests[1].IdempotencyKey)
 	}
-	if publication.requests[1].TargetBranch != "production" || publication.requests[1].BranchRef != firstBranch {
+	if publication.requests[1].TargetBranch != "main" || publication.requests[1].BranchRef != firstBranch {
 		t.Fatalf("publication policy changed across restart: first=%#v second=%#v", publication.requests[0], publication.requests[1])
 	}
 	before := publication.calls
@@ -620,7 +822,7 @@ func TestResilientLifecycleRestartSkipsPublicationWhenResultWasDurable(t *testin
 func TestLifecycleToolGatewayDoesNotExposePatchContentAsBase64(t *testing.T) {
 	workspace := &lifecycleWorkspaceFake{identity: domain.WorkspaceIdentity{WorkspaceID: "w", RunID: "run-1", BaselineCommit: "base", BaseTreeHash: "tree", CurrentTreeHash: "tree", Version: 1}}
 	gateway := application.NewLifecycleToolGateway(workspace, nil)
-	result, err := gateway.Execute(context.Background(), domain.RunStatePatching, workspace.identity, nil, "patch/1", application.ToolWorkspaceReadFile, map[string]interface{}{"path": "main.go"})
+	result, err := gateway.Execute(context.Background(), domain.RunStatePatching, workspace.identity, nil, domain.ExecutionProfileSnapshot{}, domain.ChangePolicySnapshot{}, "patch/1", application.ToolWorkspaceReadFile, map[string]interface{}{"path": "main.go"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -664,7 +866,7 @@ func TestLifecycleToolGatewayRejectsUnapprovedValidationCommand(t *testing.T) {
 	workspace := &lifecycleWorkspaceFake{identity: domain.WorkspaceIdentity{WorkspaceID: "w", RunID: "run-1", BaselineCommit: "base", BaseTreeHash: "tree", CurrentTreeHash: "tree", Version: 1}}
 	validation := &lifecycleValidationFake{}
 	gateway := application.NewLifecycleToolGateway(workspace, validation)
-	_, err := gateway.Execute(context.Background(), domain.RunStateValidating, workspace.identity, map[string]int64{"unit": 1}, "validation/1", application.ToolWorkspaceRunValidation, map[string]interface{}{"commandId": "shell"})
+	_, err := gateway.Execute(context.Background(), domain.RunStateValidating, workspace.identity, map[string]int64{"unit": 1}, domain.ExecutionProfileSnapshot{}, domain.ChangePolicySnapshot{}, "validation/1", application.ToolWorkspaceRunValidation, map[string]interface{}{"commandId": "shell"})
 	if err == nil {
 		t.Fatal("unapproved validation command was accepted")
 	}

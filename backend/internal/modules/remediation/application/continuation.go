@@ -373,11 +373,16 @@ func safeContinuationReasonCode(value string) string {
 		"capability_unavailable", "policy_unconfigured", "invalid_arguments", "tool_unavailable",
 		"provider_detail_unavailable", "provider_detail_invalid", "provider_detail_redirect_rejected",
 		"provider_detail_oversized", "provider_detail_timeout", "provider_detail_persistence",
-		"runtime_evidence_persistence", "prior_detail_failure", "policy_rejection",
+		"diagnosis_ready_for_review", "runtime_evidence_persistence", "prior_detail_failure", "policy_rejection",
 		"invalid_envelope", "blocked_manual_review", "insufficient_evidence", "budget_exhausted",
 		"elapsed", "model_calls", "model_cost", "tool_calls", "evidence_bytes", "repository_bytes",
 		"configuration_failure", "authorization_failure", "persistence_failure", "canceled", "unknown_failure",
-		"awaiting_human_review":
+		"awaiting_human_review", "denied_control_plane_change", "high_risk_policy_requires_opt_in",
+		"plan_policy_no_progress", "no_policy_compliant_plan", "publication_retry_exhausted",
+		"workspace_retry_exhausted", "patch_retry_exhausted", "validation_retry_exhausted",
+		"publication_validation_required", "publication_patch_artifact_required", "patch_protocol_no_progress",
+		"validation_protocol_no_progress", "validation_no_progress", "lifecycle_tool_no_progress",
+		"lifecycle_model_no_progress", "agent_stop_no_progress", "patch_plan_precondition_mismatch", "lifecycle_failure", "lifecycle_policy_blocked":
 		return value
 	default:
 		return "unknown"

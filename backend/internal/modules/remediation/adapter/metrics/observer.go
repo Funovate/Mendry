@@ -220,7 +220,7 @@ func metricChallengeKind(kind domain.RecoveryChallengeKind) string {
 func metricTerminalReason(reason string) string {
 	switch reason {
 	case "diagnosis_ready_for_review", "completed_non_code", "blocked_manual_review",
-		"awaiting_human_review",
+		"awaiting_human_review", "patch_plan_precondition_mismatch",
 		"model_output_exhausted", "provider_timeout", "provider_transport", "provider_rate_limit",
 		"provider_http_5xx", "provider_http_4xx", "provider_decode", "provider_failure",
 		"provider_configuration", "provider_authentication", "provider_response_too_large",

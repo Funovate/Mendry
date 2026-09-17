@@ -214,6 +214,7 @@ func TestResilientLifecycleChangedPatchesResetValidationNoProgress(t *testing.T)
 	coord.SetValidationPort(validation)
 	coord.SetPublicationPort(publication)
 	coord.SetValidationCommandVersions(map[string]int64{"unit": 1})
+	coord.SetLifecyclePublicationPolicy(application.LifecyclePublicationPolicy{TargetBranch: "main", BranchPrefix: "hotfix/remediation"})
 	sharedOutputHash := strings.Repeat("a", 64)
 	for index := 0; index < 3; index++ {
 		validation.results = append(validation.results, domain.ValidationResult{

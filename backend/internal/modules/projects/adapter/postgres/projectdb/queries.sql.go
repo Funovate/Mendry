@@ -308,20 +308,32 @@ func (q *Queries) GetProjectLLMProvider(ctx context.Context, projectID pgtype.UU
 }
 
 const getProjectRemediationPolicy = `-- name: GetProjectRemediationPolicy :one
-SELECT agent_loop_mode, agent_loop_policy_version
+SELECT agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+       remediation_publication, remediation_change_policy, agent_loop_policy_version
 FROM projects
 WHERE id = $1
 `
 
 type GetProjectRemediationPolicyRow struct {
-	AgentLoopMode          string
-	AgentLoopPolicyVersion int64
+	AgentLoopMode                string
+	RemediationExecutionMode     string
+	RemediationValidationProfile []byte
+	RemediationPublication       []byte
+	RemediationChangePolicy      []byte
+	AgentLoopPolicyVersion       int64
 }
 
 func (q *Queries) GetProjectRemediationPolicy(ctx context.Context, projectID pgtype.UUID) (GetProjectRemediationPolicyRow, error) {
 	row := q.db.QueryRow(ctx, getProjectRemediationPolicy, projectID)
 	var i GetProjectRemediationPolicyRow
-	err := row.Scan(&i.AgentLoopMode, &i.AgentLoopPolicyVersion)
+	err := row.Scan(
+		&i.AgentLoopMode,
+		&i.RemediationExecutionMode,
+		&i.RemediationValidationProfile,
+		&i.RemediationPublication,
+		&i.RemediationChangePolicy,
+		&i.AgentLoopPolicyVersion,
+	)
 	return i, err
 }
 
@@ -1121,30 +1133,58 @@ const upsertProjectRemediationPolicy = `-- name: UpsertProjectRemediationPolicy 
 WITH changed_policy AS (
     UPDATE projects
     SET agent_loop_mode = $1,
+        remediation_execution_mode = $2,
+        remediation_validation_profile = $3,
+        remediation_publication = $4,
+        remediation_change_policy = $5,
         agent_loop_policy_version = projects.agent_loop_policy_version + 1,
         version = projects.version + 1,
         updated_at = clock_timestamp()
-    WHERE projects.id = $2
-    RETURNING id, agent_loop_mode, agent_loop_policy_version
+    WHERE projects.id = $6
+    RETURNING id, agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+              remediation_publication, remediation_change_policy, agent_loop_policy_version
 )
-SELECT agent_loop_mode, agent_loop_policy_version
+SELECT agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+       remediation_publication, remediation_change_policy, agent_loop_policy_version
 FROM changed_policy
 `
 
 type UpsertProjectRemediationPolicyParams struct {
-	AgentLoopMode string
-	ProjectID     pgtype.UUID
+	AgentLoopMode                string
+	RemediationExecutionMode     string
+	RemediationValidationProfile []byte
+	RemediationPublication       []byte
+	RemediationChangePolicy      []byte
+	ProjectID                    pgtype.UUID
 }
 
 type UpsertProjectRemediationPolicyRow struct {
-	AgentLoopMode          string
-	AgentLoopPolicyVersion int64
+	AgentLoopMode                string
+	RemediationExecutionMode     string
+	RemediationValidationProfile []byte
+	RemediationPublication       []byte
+	RemediationChangePolicy      []byte
+	AgentLoopPolicyVersion       int64
 }
 
 func (q *Queries) UpsertProjectRemediationPolicy(ctx context.Context, arg UpsertProjectRemediationPolicyParams) (UpsertProjectRemediationPolicyRow, error) {
-	row := q.db.QueryRow(ctx, upsertProjectRemediationPolicy, arg.AgentLoopMode, arg.ProjectID)
+	row := q.db.QueryRow(ctx, upsertProjectRemediationPolicy,
+		arg.AgentLoopMode,
+		arg.RemediationExecutionMode,
+		arg.RemediationValidationProfile,
+		arg.RemediationPublication,
+		arg.RemediationChangePolicy,
+		arg.ProjectID,
+	)
 	var i UpsertProjectRemediationPolicyRow
-	err := row.Scan(&i.AgentLoopMode, &i.AgentLoopPolicyVersion)
+	err := row.Scan(
+		&i.AgentLoopMode,
+		&i.RemediationExecutionMode,
+		&i.RemediationValidationProfile,
+		&i.RemediationPublication,
+		&i.RemediationChangePolicy,
+		&i.AgentLoopPolicyVersion,
+	)
 	return i, err
 }
 

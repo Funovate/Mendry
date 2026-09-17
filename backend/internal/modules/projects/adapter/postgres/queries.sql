@@ -103,7 +103,8 @@ ORDER BY e.created_at
 LIMIT 1;
 
 -- name: GetProjectRemediationPolicy :one
-SELECT agent_loop_mode, agent_loop_policy_version
+SELECT agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+       remediation_publication, remediation_change_policy, agent_loop_policy_version
 FROM projects
 WHERE id = sqlc.arg(project_id);
 
@@ -111,13 +112,19 @@ WHERE id = sqlc.arg(project_id);
 WITH changed_policy AS (
     UPDATE projects
     SET agent_loop_mode = sqlc.arg(agent_loop_mode),
+        remediation_execution_mode = sqlc.arg(remediation_execution_mode),
+        remediation_validation_profile = sqlc.arg(remediation_validation_profile),
+        remediation_publication = sqlc.arg(remediation_publication),
+        remediation_change_policy = sqlc.arg(remediation_change_policy),
         agent_loop_policy_version = projects.agent_loop_policy_version + 1,
         version = projects.version + 1,
         updated_at = clock_timestamp()
     WHERE projects.id = sqlc.arg(project_id)
-    RETURNING id, agent_loop_mode, agent_loop_policy_version
+    RETURNING id, agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+              remediation_publication, remediation_change_policy, agent_loop_policy_version
 )
-SELECT agent_loop_mode, agent_loop_policy_version
+SELECT agent_loop_mode, remediation_execution_mode, remediation_validation_profile,
+       remediation_publication, remediation_change_policy, agent_loop_policy_version
 FROM changed_policy;
 
 -- name: UpsertProjectConfiguration :one

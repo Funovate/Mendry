@@ -26,6 +26,10 @@ type continuationService interface {
 	ContinueRemediation(context.Context, authdomain.User, string, string, int64, string, int64) (domain.Run, error)
 }
 
+type reconfigurationService interface {
+	RepairWithCurrentPolicy(context.Context, authdomain.User, string, string, int64, string, int64) (domain.Run, error)
+}
+
 type authentication interface {
 	RequireAuthentication(nethttp.Handler) nethttp.Handler
 }
@@ -54,6 +58,7 @@ func NewHandler(options HandlerOptions) (*Handler, error) {
 func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/start", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.startRemediation)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/retry", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.retryRemediation)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/repair", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.repairRemediation)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/incidents/{id}/remediation", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getRemediation)))
 }
 
@@ -65,6 +70,12 @@ type retryRemediationRequest struct {
 	Generation int64  `json:"generation"`
 	RunID      string `json:"runId"`
 	Version    int64  `json:"version"`
+}
+
+type repairRemediationRequest struct {
+	Generation      int64  `json:"generation"`
+	ExpectedRunID   string `json:"expectedRunId"`
+	ExpectedVersion int64  `json:"expectedVersion"`
 }
 
 type startRemediationResponse struct {
@@ -139,11 +150,29 @@ type reviewResponse struct {
 
 // reviewCheckpointResponse 是最新 durable checkpoint 的安全摘要。
 type reviewCheckpointResponse struct {
-	Sequence           int64     `json:"sequence"`
-	Phase              string    `json:"phase"`
-	Reason             string    `json:"reason"`
-	ObservedRunVersion int64     `json:"observedRunVersion"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	Sequence           int64                      `json:"sequence"`
+	Phase              string                     `json:"phase"`
+	Reason             string                     `json:"reason"`
+	ObservedRunVersion int64                      `json:"observedRunVersion"`
+	UpdatedAt          time.Time                  `json:"updatedAt"`
+	Validations        []reviewValidationResponse `json:"validations"`
+	Publication        *reviewPublicationResponse `json:"publication,omitempty"`
+}
+
+type reviewValidationResponse struct {
+	CommandID      string `json:"commandId"`
+	CommandVersion int64  `json:"commandVersion"`
+	TreeHash       string `json:"treeHash"`
+	Passed         bool   `json:"passed"`
+}
+
+type reviewPublicationResponse struct {
+	BranchRef      string `json:"branchRef"`
+	TargetBranch   string `json:"targetBranch"`
+	CommitHash     string `json:"commitHash"`
+	ChangeRef      string `json:"changeRef,omitempty"`
+	CompareURL     string `json:"compareUrl,omitempty"`
+	TargetDiverged bool   `json:"targetDiverged"`
 }
 
 // reviewRecoveryResponse 是活动 recovery 的安全摘要；attemptedPathClasses 永远
@@ -229,6 +258,38 @@ func (h *Handler) retryRemediation(writer nethttp.ResponseWriter, request *netht
 	}
 }
 
+func (h *Handler) repairRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload repairRemediationRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	principal, ok := authhttp.CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, projectapplication.ErrForbidden)
+		return
+	}
+	repairer, ok := h.service.(reconfigurationService)
+	if !ok {
+		httpserver.WriteInternalError(writer, request, fmt.Errorf("current-policy remediation service is unavailable"))
+		return
+	}
+	run, err := repairer.RepairWithCurrentPolicy(
+		request.Context(), principal, request.PathValue("projectKey"), request.PathValue("id"),
+		payload.Generation, payload.ExpectedRunID, payload.ExpectedVersion,
+	)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, nethttp.StatusOK, startRemediationResponse{
+		RunID: run.RunID, SeriesID: run.SeriesID, Status: run.State,
+		Generation: run.LifecycleGeneration, AttemptNumber: run.AttemptNumber, Version: run.Version,
+	}); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
 func (h *Handler) getRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	principal, ok := authhttp.CurrentUser(request.Context())
 	if !ok {
@@ -300,6 +361,20 @@ func mapReview(review application.Review) reviewResponse {
 			Reason:             review.Checkpoint.Reason,
 			ObservedRunVersion: max(review.Checkpoint.ObservedRunVersion, 0),
 			UpdatedAt:          review.Checkpoint.UpdatedAt,
+			Validations:        []reviewValidationResponse{},
+		}
+		for _, validation := range review.Checkpoint.Validations {
+			response.Checkpoint.Validations = append(response.Checkpoint.Validations, reviewValidationResponse{
+				CommandID: validation.CommandID, CommandVersion: validation.CommandVersion,
+				TreeHash: validation.TreeHash, Passed: validation.Passed,
+			})
+		}
+		if publication := review.Checkpoint.Publication; publication != nil {
+			response.Checkpoint.Publication = &reviewPublicationResponse{
+				BranchRef: publication.BranchRef, TargetBranch: publication.TargetBranch,
+				CommitHash: publication.CommitHash, ChangeRef: publication.ChangeRef,
+				CompareURL: publication.CompareURL, TargetDiverged: publication.TargetDiverged,
+			}
 		}
 	}
 	if review.Recovery != nil {
@@ -354,6 +429,10 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 	case errors.Is(err, application.ErrUnsupportedContinuation), errors.Is(err, domain.ErrUnsupportedState):
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: nethttp.StatusConflict, Code: "remediation_unsupported", Message: "The current remediation result cannot be continued.",
+		})
+	case errors.Is(err, application.ErrReconfigurationUnavailable), errors.Is(err, domain.ErrReconfigurationUnavailable):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusConflict, Code: "remediation_policy_unavailable", Message: "Automatic repair is not enabled with a current validation policy for this project.",
 		})
 	case errors.Is(err, application.ErrConflict), errors.Is(err, domain.ErrStalePredecessor):
 		httpserver.WriteError(writer, request, httpserver.Error{

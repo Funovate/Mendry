@@ -206,7 +206,7 @@ const diagnosisConfidenceInstruction = "confidence must be a JSON number between
 
 const stopWireContractInstruction = `Stop wire contract: if you must stop, return exactly {"schemaVersion":"v1","kind":"stop","stop":{"reason":"...","recommendedNextAction":"..."}}. stop.recommendedNextAction is required, must be a non-empty bounded handoff suggestion for a human operator, and should state the next safe action or evidence needed. Do not stop with an empty or omitted recommendation.`
 
-const diagnosisWireContractInstruction = `Diagnosis wire contract: return {"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"fixability":"insufficient_evidence","confidence":0.2,"causalReasoning":"...","contradictions":[],"missingEvidence":[],"evidenceCitations":[],"recommendedNextAction":"...","alertQuality":"enriched","sourceCoverage":[],"timeAssessment":{"originalValues":[],"normalizedStart":"","normalizedEnd":"","basis":"unresolved","certainty":"unresolved","contradictory":false},"correlation":{"temporal":false,"operational":false,"hostIdentity":false,"directBridge":false},"causalClosure":{"explainsOriginalSymptom":false,"explanation":"..."},"materialContradictions":[],"testSuspected":false,"testPolicyMatched":false,"hypotheses":[]}}. fixability is a JSON string, never an object, and must be one of code_fixable, external_dependency, configuration, data, infrastructure, insufficient_evidence, unsafe_to_automate. confidence is a number from 0 to 1. contradictions, missingEvidence, materialContradictions, and hypotheses are arrays. evidenceCitations is an array whose entries are either a persisted evidence ID string or {"evidenceId":"...","classification":"direct_fault"} with optional classification; classification, when present, must be one of direct_fault, correlated_supporting, contextual, unrelated, contradictory. alertQuality is sparse, anchor_only, or enriched. sourceCoverage is a JSON array, never an object, of {"sourceId":"...","kind":"...","primary":true,"status":"inspected_success","reason":"...","directBridge":false}; status must be one of configured, inspected_success, inspected_empty, unavailable, not_applicable, not_inspected. timeAssessment.basis must be exactly one of paired_epoch, explicit_offset, contextual_zone, unresolved; never put explanation text in basis. Keep timeAssessment.certainty a short label such as high, low, or unresolved. timeAssessment, correlation, and causalClosure otherwise use the object shapes shown. Each hypothesis is {"id":"...","summary":"...","evidenceRefs":[],"nonActionable":true}.`
+const diagnosisWireContractInstruction = `Diagnosis wire contract: return {"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"fixability":"insufficient_evidence","confidence":0.2,"causalReasoning":"...","contradictions":[],"missingEvidence":[],"evidenceCitations":[],"recommendedNextAction":"...","alertQuality":"enriched","sourceCoverage":[],"timeAssessment":{"originalValues":[],"normalizedStart":"","normalizedEnd":"","basis":"unresolved","certainty":"unresolved","contradictory":false},"correlation":{"temporal":false,"operational":false,"hostIdentity":false,"directBridge":false},"causalClosure":{"explainsOriginalSymptom":false,"explanation":"..."},"materialContradictions":[],"testSuspected":false,"testPolicyMatched":false,"hypotheses":[]}}. fixability is a JSON string, never an object, and must be one of code_fixable, no_change_needed, external_dependency, configuration, data, infrastructure, insufficient_evidence, unsafe_to_automate. confidence is a number from 0 to 1. contradictions, missingEvidence, materialContradictions, and hypotheses are arrays. evidenceCitations is an array whose entries are either a persisted evidence ID string or {"evidenceId":"...","classification":"direct_fault"} with optional classification; classification, when present, must be one of direct_fault, correlated_supporting, contextual, unrelated, contradictory. alertQuality is sparse, anchor_only, or enriched. sourceCoverage is a JSON array, never an object, of {"sourceId":"...","kind":"...","primary":true,"status":"inspected_success","reason":"...","directBridge":false}; status must be one of configured, inspected_success, inspected_empty, unavailable, not_applicable, not_inspected. timeAssessment.basis must be exactly one of paired_epoch, explicit_offset, contextual_zone, unresolved; never put explanation text in basis. Keep timeAssessment.certainty a short label such as high, low, or unresolved. timeAssessment, correlation, and causalClosure otherwise use the object shapes shown. Each hypothesis is {"id":"...","summary":"...","evidenceRefs":[],"nonActionable":true}.`
 
 const planningWireContractInstruction = `Planning wire contract: you may first call any advertised read-only repository tools when you need code, dependency, or impact context. After tool observations are sufficient, return exactly {"schemaVersion":"v1","kind":"planCandidates","planCandidates":{"candidates":[{"planId":"plan-1","evidenceRefs":["evidence-id"],"affectedFiles":["path/to/file.go"],"intendedBehavior":"...","risk":"ordinary","rollbackStrategy":"..."}],"recommendedId":"plan-1","rationale":"...","suggestedDiff":"diff --git a/path/to/file.go b/path/to/file.go\\n..."}}. candidates must be a non-empty array. Every candidate requires non-empty planId, evidenceRefs and affectedFiles arrays, intendedBehavior, risk, and rollbackStrategy. risk must be exactly one of ordinary, high_risk, denied_control_plane. recommendedId is required and must equal one candidate planId. rationale and suggestedDiff are required strings, and suggestedDiff must be a non-empty unified diff. Return one envelope only; do not return diagnosis or stop in planning.`
 
@@ -252,11 +252,19 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"repository (list/read/search/history over the exact deployed code), " +
 			"provider_evidence (trusted provider detail and persisted evidence by ID), " +
 			"runtime_logs (Docker logs / evidence search and context), ssh_inspect (read-only " +
-			"host inspection). A stack, source path, function, or line in trusted provider " +
-			"detail is a strong code-localization hint, not a rule that skips runtime " +
-			"correlation: inspect the exact deployed source first, later, or between refined " +
-			"runtime queries as the causal question requires; runtime correlation is likewise " +
-			"not mandatory for every code fix. " +
+			"host inspection). Follow the strongest available evidence. Request additional " +
+			"evidence only when it can change the causal conclusion, repair choice, or " +
+			"automation safety. A stack, source path, function, or line in trusted provider " +
+			"detail is a strong code-localization anchor: inspect the exact deployed source, " +
+			"surrounding control flow, callers, and production reachability, then determine " +
+			"whether the location proves a deterministic defect, exposes a conditional defect " +
+			"that depends on input, state, configuration, concurrency, or an external system, " +
+			"or is only an error-reporting boundary. When source inspection proves a " +
+			"deterministic defect and persisted direct evidence proves that path executed, " +
+			"complete the causal explanation without collecting runtime evidence solely to " +
+			"fill optional time, host, request, or source-coverage fields. For a conditional " +
+			"defect or error boundary, request only the runtime evidence needed to resolve the " +
+			"triggering condition or trace the upstream cause. " +
 			diagnosisWireContractInstruction + " " +
 			"Include alertQuality, sourceCoverage, timeAssessment, correlation, causalClosure, " +
 			"causalReasoning, contradictions, materialContradictions, missingEvidence, " +
@@ -275,19 +283,21 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 			"evidence prevents causal explanation or a safe fixability classification. Missing direct fault " +
 			"evidence remains a fact-gate issue. Unresolved time, host identity, request correlation, or source " +
 			"coverage must be recorded with whether the gap is material to this causal chain; none is a universal " +
-			"prerequisite for every code fix. " +
+			"prerequisite for every code fix. timeAssessment.contradictory records an observed time mismatch for " +
+			"audit; include that mismatch in materialContradictions only when it can invalidate incident identity, " +
+			"the causal explanation, the repair choice, or automation safety. " +
 			"Tool guidance (no ordering is required): for an SSH source, ssh.inspect may list " +
 			"the hinted logPath directory first to discover actual file names; never assume " +
 			"logPath is a file to tail. " +
 			"When trusted Tencent CLS detail contains an error, stack, source path, or line number, " +
-			"treat it as an anchor and use repository inspection and runtime collection in any " +
-			"order that closes causality. AnalysisOriginal.time in the detail is the " +
+			"map it to the repository-relative path and inspect the exact deployed code. When a " +
+			"remaining material question requires runtime evidence, AnalysisOriginal.time in the detail is the " +
 			"UTC log-event time; use it directly as the since/until anchor with a narrow window around " +
 			"that time. docker.logs returns only the tail of the requested window, so inspect " +
 			"window_lines, returned_lines, filtered, truncated, coverage_limited, and refinement_required " +
 			"before deciding that no failure is present. window_lines=-1 means the connector deliberately " +
 			"skipped an additional full-log count. When refinement_required is true, narrow the window or add " +
-			"a pattern before returning a terminal diagnosis. For a panic or stack anchor, request pattern with context_after to capture the " +
+			"a pattern before relying on that runtime result to resolve a material question. For a panic or stack anchor, request pattern with context_after to capture the " +
 			"following goroutine frames. Map any provider path to a repository-relative path and " +
 			"use repository.read_file plus repository.search for the stable fault, message, or " +
 			"function. " + toolRecoveryInstruction + "Do not repeatedly retry " +
@@ -299,7 +309,7 @@ func (e *AgentEngine) buildPrompt(phase domain.RunState) string {
 	case domain.RunStateValidating:
 		return "Validate the current workspace patch using only the advertised approved command IDs. Inspect bounded workspace status or files when the result is ambiguous, then return one validationAssessment envelope. The service trusts the actual validation runner result, not a model claim. A failed validation should explain the bounded repair direction; it does not authorize publication. " + toolRecoveryInstruction
 	case domain.RunStatePatching:
-		return "Apply the selected repair plan in the isolated workspace based on the exact deployed baseline. Use only the advertised bounded workspace tools, inspect status/files before changing content when needed, and apply small idempotent patches with the supplied tree precondition. After a patch is applied, return one patchComplete envelope with a bounded summary. Never access Git credentials, host paths, arbitrary commands, or SCM publication. " + toolRecoveryInstruction
+		return "Apply the selected repair plan in the isolated workspace based on the exact deployed baseline. Use only the advertised bounded workspace tools, inspect status/files before changing content when needed, and apply small idempotent patches with the supplied tree precondition. After a patch is applied, return one patchComplete envelope with a bounded summary. If inspection shows the selected change is absent at this baseline, return {\"schemaVersion\":\"v1\",\"kind\":\"stop\",\"stop\":{\"code\":\"selected_change_absent_at_baseline\",\"reason\":\"...\",\"recommendedNextAction\":\"...\"}} for service reconciliation and manual review. Never claim successful no-op completion or return to planning. requestTool must use toolName, never the tool alias. Never access Git credentials, host paths, arbitrary commands, or SCM publication. " + toolRecoveryInstruction
 	default:
 		return "Process the current remediation phase."
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,16 @@ func TestLoadAPIRemediationModelTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAPI() error = %v", err)
 	}
-	if configuration.Remediation.ModelTurnTimeout != 5*time.Minute {
+	artifactRoot, err := filepath.Abs(filepath.Join(".var", "remediation", "artifacts"))
+	if err != nil {
+		t.Fatalf("resolve default artifact root: %v", err)
+	}
+	workspaceRoot, err := filepath.Abs(filepath.Join(".var", "remediation", "workspaces"))
+	if err != nil {
+		t.Fatalf("resolve default workspace root: %v", err)
+	}
+	if configuration.Remediation.ModelTurnTimeout != 5*time.Minute || configuration.Remediation.DockerCommand != "docker" || configuration.Remediation.GitCommand != "git" ||
+		configuration.Remediation.ArtifactRoot != artifactRoot || configuration.Remediation.WorkspaceRoot != workspaceRoot {
 		t.Fatalf("Remediation = %#v", configuration.Remediation)
 	}
 
@@ -115,6 +125,40 @@ func TestLoadAPIRemediationModelTimeout(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), value) {
 			t.Fatalf("error %q contains raw value", err)
+		}
+	}
+}
+
+func TestLoadAPIRemediationStorageRequiresPairedSeparateAbsoluteRoots(t *testing.T) {
+	valid := map[string]string{
+		RemediationArtifactRootKey: "/srv/mendry/artifacts", RemediationWorkspaceRootKey: "/srv/mendry/workspaces",
+		RemediationDockerCommandKey: "/usr/bin/docker", RemediationGitCommandKey: "/usr/bin/git",
+		RemediationSSHKnownHostsFileKey: "/etc/ssh/known_hosts",
+		RemediationGoBuilderImageKey:    "registry.example/mendry/go@sha256:" + strings.Repeat("a", 64),
+		RemediationNodeBuilderImageKey:  "sha256:" + strings.Repeat("b", 64),
+	}
+	configuration, err := LoadAPI(mapLookup(valid))
+	if err != nil {
+		t.Fatalf("LoadAPI() error = %v", err)
+	}
+	if configuration.Remediation.ArtifactRoot != valid[RemediationArtifactRootKey] || configuration.Remediation.WorkspaceRoot != valid[RemediationWorkspaceRootKey] ||
+		configuration.Remediation.DockerCommand != valid[RemediationDockerCommandKey] || configuration.Remediation.GitCommand != valid[RemediationGitCommandKey] ||
+		configuration.Remediation.SSHKnownHostsFile != valid[RemediationSSHKnownHostsFileKey] ||
+		configuration.Remediation.GoBuilderImage != valid[RemediationGoBuilderImageKey] || configuration.Remediation.NodeBuilderImage != valid[RemediationNodeBuilderImageKey] {
+		t.Fatalf("Remediation storage = %#v", configuration.Remediation)
+	}
+
+	invalid := []map[string]string{
+		{RemediationArtifactRootKey: "/srv/mendry/artifacts"},
+		{RemediationArtifactRootKey: "relative/artifacts", RemediationWorkspaceRootKey: "/srv/mendry/workspaces"},
+		{RemediationArtifactRootKey: "/srv/mendry/data/artifacts", RemediationWorkspaceRootKey: "/srv/mendry/data"},
+		{RemediationArtifactRootKey: "/srv/mendry/artifacts", RemediationWorkspaceRootKey: "/srv/mendry/workspaces", RemediationSSHKnownHostsFileKey: "known_hosts"},
+		{RemediationGoBuilderImageKey: "golang:1.23-bookworm"},
+		{RemediationNodeBuilderImageKey: "node@example:latest"},
+	}
+	for _, values := range invalid {
+		if _, err := LoadAPI(mapLookup(values)); err == nil {
+			t.Fatalf("LoadAPI(%v) unexpectedly succeeded", values)
 		}
 	}
 }

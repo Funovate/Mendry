@@ -17,7 +17,7 @@ import (
 )
 
 type service interface {
-	List(context.Context, authdomain.User, string, int32) (application.ListResult, error)
+	List(context.Context, authdomain.User, string, application.ListQuery) (application.ListResult, error)
 	Get(context.Context, authdomain.User, string, string) (domain.Incident, error)
 	Create(context.Context, authdomain.User, string, application.CreateInput) (domain.Incident, error)
 	UpdateStatus(context.Context, authdomain.User, string, string, string) (domain.Incident, error)
@@ -94,7 +94,7 @@ type incidentResponse struct {
 }
 
 func (h *Handler) list(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	limit, err := listLimit(request)
+	query, err := listQuery(request)
 	if err != nil {
 		writeApplicationError(writer, request, application.ErrInvalidInput)
 		return
@@ -104,7 +104,7 @@ func (h *Handler) list(writer nethttp.ResponseWriter, request *nethttp.Request) 
 		writeApplicationError(writer, request, projectapplication.ErrForbidden)
 		return
 	}
-	incidents, err := h.service.List(request.Context(), principal, request.PathValue("projectKey"), limit)
+	incidents, err := h.service.List(request.Context(), principal, request.PathValue("projectKey"), query)
 	if err != nil {
 		writeApplicationError(writer, request, err)
 		return
@@ -184,29 +184,58 @@ func (h *Handler) updateStatus(writer nethttp.ResponseWriter, request *nethttp.R
 	writeIncident(writer, request, nethttp.StatusOK, incident)
 }
 
-func listLimit(request *nethttp.Request) (int32, error) {
+func listQuery(request *nethttp.Request) (application.ListQuery, error) {
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
-		return 0, application.ErrInvalidInput
+		return application.ListQuery{}, application.ErrInvalidInput
 	}
 	for key, values := range query {
-		if key != "limit" || len(values) != 1 {
-			return 0, application.ErrInvalidInput
+		if (key != "limit" && key != "offset" && key != "status") || len(values) != 1 {
+			return application.ListQuery{}, application.ErrInvalidInput
 		}
 	}
-	values, exists := query["limit"]
-	if !exists {
-		return application.DefaultListLimit, nil
+	limit := application.DefaultListLimit
+	offset := int32(0)
+	var status *domain.Status
+
+	if values, exists := query["limit"]; exists {
+		if values[0] == "" {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		parsed, err := strconv.ParseInt(values[0], 10, 32)
+		if err != nil || parsed < 1 || parsed > int64(application.MaximumListLimit) {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		limit = int32(parsed)
 	}
-	value := values[0]
-	if value == "" {
-		return 0, application.ErrInvalidInput
+
+	if values, exists := query["offset"]; exists {
+		if values[0] == "" {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		parsed, err := strconv.ParseInt(values[0], 10, 32)
+		if err != nil || parsed < 0 {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		offset = int32(parsed)
 	}
-	limit, err := strconv.ParseInt(value, 10, 32)
-	if err != nil || limit < 1 || limit > int64(application.MaximumListLimit) {
-		return 0, application.ErrInvalidInput
+
+	if values, exists := query["status"]; exists {
+		if values[0] == "" {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		parsedStatus, err := domain.ParseStatus(values[0])
+		if err != nil {
+			return application.ListQuery{}, application.ErrInvalidInput
+		}
+		status = &parsedStatus
 	}
-	return int32(limit), nil
+
+	return application.ListQuery{
+		Limit:  limit,
+		Offset: offset,
+		Status: status,
+	}, nil
 }
 
 func mapIncident(incident domain.Incident) (incidentResponse, error) {

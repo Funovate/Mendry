@@ -235,6 +235,7 @@ func freshRestartCoordinator(store *fakeRunStore, checkpoints *fakeCheckpointSto
 	coord.SetValidationPort(validation)
 	coord.SetPublicationPort(publication)
 	coord.SetValidationCommandVersions(map[string]int64{"unit": 1})
+	coord.SetLifecyclePublicationPolicy(application.LifecyclePublicationPolicy{TargetBranch: "main", BranchPrefix: "hotfix/remediation"})
 	return coord, model, repo, workspace, validation, publication
 }
 

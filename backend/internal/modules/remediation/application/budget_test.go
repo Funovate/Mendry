@@ -8,6 +8,23 @@ import (
 	"mendry/backend/internal/modules/remediation/domain"
 )
 
+func TestDefaultRepositoryByteBudget(t *testing.T) {
+	const ceiling int64 = 256 << 20
+	if got := DefaultBudgetLimits().MaxRepositoryBytes; got != ceiling {
+		t.Fatalf("MaxRepositoryBytes = %d, want %d", got, ceiling)
+	}
+	budget := newRunBudget(DefaultBudgetLimits())
+	if reason := budget.consume(domain.Effect{RepositoryBytes: 213731471}); reason != "" {
+		t.Fatalf("reported repository usage exhausted default budget: %s", reason)
+	}
+	if reason := budget.consume(domain.Effect{RepositoryBytes: ceiling - 213731471}); reason != "" {
+		t.Fatalf("exact ceiling exhausted default budget: %s", reason)
+	}
+	if reason := budget.consume(domain.Effect{RepositoryBytes: 1}); reason != budgetReasonRepositoryBytes {
+		t.Fatalf("consume reason = %q, want repository_bytes", reason)
+	}
+}
+
 func TestRunBudgetDoesNotExhaustOnModelTokens(t *testing.T) {
 	budget := newRunBudget(DefaultBudgetLimits())
 
@@ -20,8 +37,12 @@ func TestRunBudgetDoesNotExhaustOnModelTokens(t *testing.T) {
 }
 
 func TestDefaultRunElapsedBudgetIsTwentyMinutes(t *testing.T) {
-	if got := DefaultBudgetLimits().MaxElapsed; got != 20*time.Minute {
+	limits := DefaultBudgetLimits()
+	if got := limits.MaxElapsed; got != 20*time.Minute {
 		t.Fatalf("MaxElapsed = %s, want 20m", got)
+	}
+	if got := limits.MaxModelCalls; got != 50 {
+		t.Fatalf("MaxModelCalls = %d, want 50", got)
 	}
 }
 

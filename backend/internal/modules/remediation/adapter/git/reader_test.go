@@ -197,10 +197,11 @@ func TestReaderReadsLatestProductionBranch(t *testing.T) {
 	for _, entry := range listing.Entries {
 		paths[entry.Path] = true
 	}
-	if !paths["main.go"] || !paths["later.go"] {
-		t.Fatalf("list at latest production branch = %#v", listing.Entries)
+	if !paths["main.go"] || paths["later.go"] {
+		t.Fatalf("list at deployed commit = %#v", listing.Entries)
 	}
 
+	commitTestFile(t, dir, "main.go", "package changed\n")
 	commitTestFile(t, dir, "latest.go", "package latest\n")
 	refreshed, err := reader.ListTree(context.Background(), ref, "", domain.TreeOptions{MaxDepth: 2, MaxEntries: 50})
 	if err != nil {
@@ -210,13 +211,24 @@ func TestReaderReadsLatestProductionBranch(t *testing.T) {
 	for _, entry := range refreshed.Entries {
 		refreshedPaths[entry.Path] = true
 	}
-	if !refreshedPaths["latest.go"] {
-		t.Fatalf("list after branch update = %#v", refreshed.Entries)
+	if refreshedPaths["latest.go"] || refreshedPaths["later.go"] {
+		t.Fatalf("pinned list after branch update = %#v", refreshed.Entries)
 	}
 
-	content, err := reader.ReadFile(context.Background(), ref, "latest.go", domain.ReadOptions{MaxBytes: 1024})
-	if err != nil || !strings.Contains(string(content.Content), "package latest") {
+	content, err := reader.ReadFile(context.Background(), ref, "main.go", domain.ReadOptions{MaxBytes: 1024})
+	if err != nil || string(content.Content) != "package main\n" {
 		t.Fatalf("ReadFile() = %#v, err=%v", content, err)
+	}
+	if _, err := reader.ReadFile(context.Background(), ref, "latest.go", domain.ReadOptions{}); err == nil {
+		t.Fatal("read branch-tip-only file at deployment baseline")
+	}
+	search, err := reader.Search(context.Background(), ref, domain.SearchQuery{Pattern: "package"})
+	if err != nil || len(search.Matches) != 1 || search.Matches[0].Path != "main.go" || search.Matches[0].Line != "package main" {
+		t.Fatalf("pinned Search() = %#v, err=%v", search, err)
+	}
+	history, err := reader.History(context.Background(), ref, "", domain.HistoryOptions{})
+	if err != nil || len(history.Commits) != 1 || history.Commits[0].Hash != old {
+		t.Fatalf("pinned History() = %#v, err=%v", history, err)
 	}
 }
 
@@ -306,7 +318,7 @@ func TestReaderPreservesSafeGitDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReader() error = %v", err)
 	}
-	_, err = reader.ListTree(context.Background(), domain.RepoRef{ProjectID: testProjectID, Commit: "deadbeef"}, "", domain.TreeOptions{})
+	_, err = reader.ListTree(context.Background(), domain.RepoRef{ProjectID: testProjectID, Commit: strings.Repeat("d", 40)}, "", domain.TreeOptions{})
 	if !errors.Is(err, projectapplication.ErrGitUnreachable) {
 		t.Fatalf("error = %v, want ErrGitUnreachable", err)
 	}
@@ -316,7 +328,7 @@ func TestReaderPreservesSafeGitDiagnostic(t *testing.T) {
 }
 
 func TestReaderRejectsInvalidProductionBranchBeforeClone(t *testing.T) {
-	dir, _, _ := initLocalRepo(t)
+	dir, old, _ := initLocalRepo(t)
 	cache := t.TempDir()
 	reader, err := git.NewReader(git.Options{
 		Configs: staticConfig{cfg: git.RepositoryConfig{
@@ -328,7 +340,7 @@ func TestReaderRejectsInvalidProductionBranchBeforeClone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReader() error = %v", err)
 	}
-	_, err = reader.ListTree(context.Background(), domain.RepoRef{ProjectID: testProjectID, RemoteURL: "file://" + dir, Commit: "ignored"}, "", domain.TreeOptions{})
+	_, err = reader.ListTree(context.Background(), domain.RepoRef{ProjectID: testProjectID, RemoteURL: "file://" + dir, Commit: old}, "", domain.TreeOptions{})
 	if err == nil || !strings.Contains(err.Error(), "production branch is invalid") {
 		t.Fatalf("ListTree() error = %v, want invalid branch", err)
 	}

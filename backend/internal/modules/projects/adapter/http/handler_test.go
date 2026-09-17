@@ -434,8 +434,41 @@ func TestConfigurationRemediationPolicyPUTIsComponentScoped(t *testing.T) {
 	if response.Code != nethttp.StatusOK || service.projectKey != "payments" {
 		t.Fatalf("policy PUT = %d %q project=%q", response.Code, response.Body.String(), service.projectKey)
 	}
-	if !strings.Contains(response.Body.String(), `"data":{"agentLoopMode":"resilient_v1","version":1}`) {
+	if !strings.Contains(response.Body.String(), `"agentLoopMode":"resilient_v1"`) ||
+		!strings.Contains(response.Body.String(), `"executionMode":"analysis_only"`) ||
+		!strings.Contains(response.Body.String(), `"branchPrefix":"hotfix/remediation"`) ||
+		!strings.Contains(response.Body.String(), `"maxChangedFiles":10`) {
 		t.Fatalf("policy response = %s", response.Body.String())
+	}
+}
+
+func TestConfigurationRemediationPolicyPUTAcceptsVersion(t *testing.T) {
+	service := &fakeService{}
+	handler := newHandler(t, service)
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration/remediation-policy", strings.NewReader(`{"agentLoopMode":"resilient_v1","version":1}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" {
+		t.Fatalf("policy PUT with version = %d %q project=%q", response.Code, response.Body.String(), service.projectKey)
+	}
+}
+
+func TestConfigurationRemediationPolicyPUTWithCustomLimits(t *testing.T) {
+	service := &fakeService{}
+	handler := newHandler(t, service)
+	payload := `{"agentLoopMode":"resilient_v1","executionMode":"auto_hotfix","validationProfile":{"enabled":false},"publication":{"branchPrefix":"hotfix/remediation","gitCredentialSecretId":"cred-1","apiCredentialSecretId":"","apiBaseUrl":"https://git.example.com/api/v4"},"changePolicy":{"allowedPaths":["**"],"deniedPaths":[],"maxChangedFiles":20,"maxChangedLines":4000}}`
+	request := httptest.NewRequest(nethttp.MethodPut, "/api/v1/projects/payments/configuration/remediation-policy", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" {
+		t.Fatalf("policy PUT custom limits = %d %q project=%q", response.Code, response.Body.String(), service.projectKey)
+	}
+	if service.configuration.Remediation.ChangePolicy.MaxChangedFiles != 20 || service.configuration.Remediation.ChangePolicy.MaxChangedLines != 4000 {
+		t.Fatalf("service policy limits = %+v", service.configuration.Remediation.ChangePolicy)
 	}
 }
 

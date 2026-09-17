@@ -63,6 +63,13 @@ type AttemptStore interface {
 	CreateNextAttempt(ctx context.Context, in NextAttempt) (Run, error)
 }
 
+// ReconfiguredAttemptStore creates a linked attempt from the current project
+// policy. It is deliberately separate from CreateNextAttempt: ordinary retry
+// keeps the predecessor's immutable policy snapshot.
+type ReconfiguredAttemptStore interface {
+	CreateReconfiguredAttempt(ctx context.Context, in NextAttempt) (Run, error)
+}
+
 // PlanningCheckpointStore 在 bounded review history 之外按 durable series/context
 // 查询最近一次通过 evidence gate 的 code_fixable decision。throughAttemptNumber
 // 保证 continuation 不会读取 expected predecessor 之后的尝试。

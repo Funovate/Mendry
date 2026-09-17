@@ -146,6 +146,33 @@ func TestProtocolCorrectionUsesPhaseFallbackOutsideDiagnosis(t *testing.T) {
 	}
 }
 
+func TestProtocolCorrectionUsesLifecyclePhaseContract(t *testing.T) {
+	tests := []struct {
+		phase domain.RunState
+		want  string
+	}{
+		{phase: domain.RunStatePatching, want: "patchComplete"},
+		{phase: domain.RunStateValidating, want: "validationAssessment"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.phase), func(t *testing.T) {
+			correction := ProtocolCorrectionFor(test.phase, fmt.Errorf(`json: unknown field "private"`))
+			if correction.Code != protocolCorrectionInvalidEnvelope || correction.Path != "envelope" || !strings.Contains(correction.Message, test.want) {
+				t.Fatalf("correction = %#v, want phase-specific wire contract", correction)
+			}
+			if strings.Contains(correction.Message, "diagnosis must be an object") || strings.Contains(correction.Message, "private") {
+				t.Fatalf("correction exposed wrong phase or decoder detail: %#v", correction)
+			}
+
+			conversation := NewAgentConversation("bootstrap")
+			conversation.AppendProtocolError(test.phase, ProtocolCorrection{Code: "invalid_evidence_citation"})
+			if text := conversation.ContextText(); !strings.Contains(text, test.want) || strings.Contains(text, "diagnosis must be an object") {
+				t.Fatalf("normalized lifecycle correction = %s", text)
+			}
+		})
+	}
+}
+
 func TestRedactConversationValueNormalizesStructPayload(t *testing.T) {
 	value := domain.SearchResult{Matches: []domain.SearchMatch{{
 		Path: "handler.go", LineNumber: 12, Line: "token: secret-value",

@@ -33,7 +33,11 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 		"docker.logs",
 		"no required first tool and no mandated sequence",
 		"repository (list/read/search/history", "provider_evidence", "runtime_logs", "ssh_inspect",
-		"code-localization hint", "not a rule that skips runtime",
+		"Follow the strongest available evidence", "code-localization anchor",
+		"deterministic defect", "conditional defect", "error-reporting boundary",
+		"without collecting runtime evidence solely to fill optional time, host, request, or source-coverage fields",
+		"timeAssessment.contradictory records an observed time mismatch for audit",
+		"include that mismatch in materialContradictions only when it can invalidate",
 		"AnalysisOriginal.time", "UTC log-event time", "since/until anchor", "window_lines", "returned_lines", "filtered", "truncated", "narrow the window", "pattern", "context_after", "goroutine frames",
 		"repository-relative path", "repository.read_file", "repository.search",
 		"non-retryable detail failure", "available fallback tools",
@@ -63,7 +67,7 @@ func TestDiagnosisPromptRequiresGlobalTimeAndEvidenceAssessment(t *testing.T) {
 
 // TestDiagnosisPromptIsGoalOrientedWithoutToolOrdering 证明 D1/R4：诊断 prompt
 // 表达 objective、completion criteria、可用 capability classes 与
-// code-localization 语义，不再编码 Docker-first/SSH-first 的决策树。
+// code-localization 语义，不再编码 Docker-first/SSH-first 的工具顺序。
 func TestDiagnosisPromptIsGoalOrientedWithoutToolOrdering(t *testing.T) {
 	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
 	for _, want := range []string{
@@ -72,8 +76,12 @@ func TestDiagnosisPromptIsGoalOrientedWithoutToolOrdering(t *testing.T) {
 		"any advertised bounded read tool in any useful order",
 		"no required first tool",
 		"repository", "provider_evidence", "runtime_logs", "ssh_inspect",
-		"strong code-localization hint",
-		"runtime correlation is likewise not mandatory for every code fix",
+		"Follow the strongest available evidence",
+		"strong code-localization anchor",
+		"surrounding control flow, callers, and production reachability",
+		"deterministic defect", "conditional defect", "error-reporting boundary",
+		"Request additional evidence only when it can change the causal conclusion, repair choice, or automation safety",
+		"complete the causal explanation without collecting runtime evidence solely",
 		"Tool guidance (no ordering is required)",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -110,7 +118,7 @@ func TestDiagnosisPromptRequiresDockerCoverageRefinement(t *testing.T) {
 	prompt := (&AgentEngine{}).buildPrompt(domain.RunStateDiagnosing)
 	for _, want := range []string{
 		"coverage_limited", "refinement_required", "window_lines=-1",
-		"skipped an additional full-log count", "before returning a terminal diagnosis",
+		"skipped an additional full-log count", "before relying on that runtime result to resolve a material question",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("diagnosis prompt missing %q: %s", want, prompt)

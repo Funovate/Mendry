@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// RepoRef 是 remediation 的项目仓库身份与历史基线元数据；Git adapter
-// 使用项目配置的 production branch 最新代码，不用 Commit 选择读取对象。
+// RepoRef 是 remediation 的项目仓库身份与部署基线；Git adapter
+// 使用 Commit 指定的完整 commit object ID 固定所有读取。
 type RepoRef struct {
 	ProjectID string
 	RemoteURL string
@@ -81,22 +81,82 @@ const (
 	TriggerOriginManual            = "manual"
 	TriggerOriginAutomaticContinue = "automatic_continue"
 	TriggerOriginManualContinue    = "manual_continue"
+	TriggerOriginManualReconfigure = "manual_reconfigure"
 	// 使用 persisted column 术语的调用方可继续使用这些兼容名称。
 	TriggerReasonAutomatic         = TriggerOriginAutomatic
 	TriggerReasonManual            = TriggerOriginManual
 	TriggerReasonAutomaticContinue = TriggerOriginAutomaticContinue
 	TriggerReasonManualContinue    = TriggerOriginManualContinue
+	TriggerReasonManualReconfigure = TriggerOriginManualReconfigure
 )
 
 // IsKnown 检查值是否属于安全的 persisted trigger origin。
 func (o TriggerOrigin) IsKnown() bool {
 	switch string(o) {
 	case TriggerOriginAutomatic, TriggerOriginManual,
-		TriggerOriginAutomaticContinue, TriggerOriginManualContinue:
+		TriggerOriginAutomaticContinue, TriggerOriginManualContinue,
+		TriggerOriginManualReconfigure:
 		return true
 	default:
 		return false
 	}
+}
+
+type ExecutionMode string
+
+const (
+	ExecutionModeAnalysisOnly ExecutionMode = "analysis_only"
+	ExecutionModeAutoHotfix   ExecutionMode = "auto_hotfix"
+)
+
+func ParseExecutionMode(value string) ExecutionMode {
+	if ExecutionMode(value) == ExecutionModeAutoHotfix {
+		return ExecutionModeAutoHotfix
+	}
+	return ExecutionModeAnalysisOnly
+}
+
+// ValidationCommandSnapshot contains the administrator-approved argv for one
+// command version. It is immutable for the lifetime of a run.
+type ValidationCommandSnapshot struct {
+	ID             string   `json:"id"`
+	Version        int64    `json:"version"`
+	Argv           []string `json:"argv"`
+	TimeoutSeconds int      `json:"timeoutSeconds"`
+}
+
+type ExecutionProfileSnapshot struct {
+	Enabled           *bool                       `json:"enabled"`
+	ImageDigest       string                      `json:"imageDigest"`
+	WorkingDirectory  string                      `json:"workingDirectory"`
+	Preparation       []ValidationCommandSnapshot `json:"preparation"`
+	RequiredCommands  []ValidationCommandSnapshot `json:"requiredCommands"`
+	CPULimit          int                         `json:"cpuLimit"`
+	MemoryLimitMiB    int                         `json:"memoryLimitMiB"`
+	WorkspaceLimitMiB int                         `json:"workspaceLimitMiB"`
+}
+
+// PublicationSnapshot contains only repository metadata and credential
+// references. Credential bytes are resolved by trusted adapters at use time.
+type PublicationSnapshot struct {
+	RemoteURL                    string `json:"remoteUrl"`
+	SCMProvider                  string `json:"scmProvider"`
+	Transport                    string `json:"transport"`
+	ProductionBranch             string `json:"productionBranch"`
+	RepositoryCredentialSecretID string `json:"repositoryCredentialSecretId"`
+	RepositoryCredentialVersion  int64  `json:"repositoryCredentialVersion"`
+	GitCredentialSecretID        string `json:"gitCredentialSecretId"`
+	GitCredentialVersion         int64  `json:"gitCredentialVersion"`
+	APICredentialSecretID        string `json:"apiCredentialSecretId"`
+	APICredentialVersion         int64  `json:"apiCredentialVersion"`
+	APIBaseURL                   string `json:"apiBaseUrl"`
+}
+
+type ChangePolicySnapshot struct {
+	AllowedPaths    []string `json:"allowedPaths"`
+	DeniedPaths     []string `json:"deniedPaths"`
+	MaxChangedFiles int      `json:"maxChangedFiles"`
+	MaxChangedLines int      `json:"maxChangedLines"`
 }
 
 // FixabilityClass 分类事故的可自动修复性。
@@ -104,6 +164,7 @@ type FixabilityClass string
 
 const (
 	FixabilityCodeFixable          FixabilityClass = "code_fixable"
+	FixabilityNoChangeNeeded       FixabilityClass = "no_change_needed"
 	FixabilityExternalDependency   FixabilityClass = "external_dependency"
 	FixabilityConfiguration        FixabilityClass = "configuration"
 	FixabilityData                 FixabilityClass = "data"
@@ -403,7 +464,17 @@ type Run struct {
 	// AgentLoopPolicyVersion records the project policy version captured by the
 	// root run; continuations inherit it unchanged from their predecessor.
 	AgentLoopPolicyVersion int64
-	// AnalysisOnly 为 true 时，run 及其 continuation 永远不能进入 patch/validation/publication。
+	// ExecutionMode is the immutable project execution policy captured at root creation.
+	ExecutionMode ExecutionMode
+	// Validation and publication values are immutable lifecycle policy snapshots.
+	ValidationCommands      map[string]int64
+	ValidationImageDigest   string
+	ExecutionProfile        ExecutionProfileSnapshot
+	PublicationSnapshot     PublicationSnapshot
+	ChangePolicySnapshot    ChangePolicySnapshot
+	PublicationTargetBranch string
+	PublicationBranchPrefix string
+	// AnalysisOnly 为 true时，run 及其 continuation 永远不能进入 patch/validation/publication。
 	AnalysisOnly  bool
 	Budget        BudgetCounters
 	ModelProvider string

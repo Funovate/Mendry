@@ -23,6 +23,9 @@ backend/*.out
 .vscode/
 *.swp
 
+# Local runtime data
+.var/
+
 # Local agent tooling and root-level test output
 .pi/
 test-results/

@@ -88,6 +88,7 @@ func TestCoordinator_RoutesFixabilityToTerminalState(t *testing.T) {
 		fixability string
 		want       domain.RunState
 	}{
+		{"no_change_needed", domain.RunStateCompletedNonCode},
 		{"external_dependency", domain.RunStateCompletedNonCode},
 		{"configuration", domain.RunStateCompletedNonCode},
 		{"data", domain.RunStateCompletedNonCode},

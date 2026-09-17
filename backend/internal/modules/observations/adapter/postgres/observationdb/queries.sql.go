@@ -109,12 +109,14 @@ SELECT id, project_id, environment_id, source_id, service, occurred_at, level,
 FROM observations
 WHERE project_id = $1
 ORDER BY occurred_at DESC, id DESC
-LIMIT $2
+LIMIT $3
+OFFSET $2
 `
 
 type ListObservationsParams struct {
-	ProjectID   pgtype.UUID
-	ResultLimit int32
+	ProjectID    pgtype.UUID
+	ResultOffset int32
+	ResultLimit  int32
 }
 
 type ListObservationsRow struct {
@@ -135,7 +137,7 @@ type ListObservationsRow struct {
 }
 
 func (q *Queries) ListObservations(ctx context.Context, arg ListObservationsParams) ([]ListObservationsRow, error) {
-	rows, err := q.db.Query(ctx, listObservations, arg.ProjectID, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listObservations, arg.ProjectID, arg.ResultOffset, arg.ResultLimit)
 	if err != nil {
 		return nil, err
 	}

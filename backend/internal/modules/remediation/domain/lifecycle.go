@@ -13,9 +13,12 @@ import (
 const LifecycleSchemaVersionV1 = "v1"
 
 const (
-	LifecycleEffectWorkspace    LifecycleEffectKind = "workspace"
-	LifecycleEffectPatch        LifecycleEffectKind = "patch"
-	LifecycleEffectValidation   LifecycleEffectKind = "validation"
+	LifecycleEffectWorkspace     LifecycleEffectKind = "workspace"
+	LifecycleEffectPatch         LifecycleEffectKind = "patch"
+	LifecycleEffectValidation    LifecycleEffectKind = "validation"
+	LifecycleEffectGitPublish    LifecycleEffectKind = "git_publish"
+	LifecycleEffectChangeRequest LifecycleEffectKind = "change_request"
+	// LifecycleEffectPublication remains readable for pre-split records.
 	LifecycleEffectPublication  LifecycleEffectKind = "publication"
 	LifecycleEffectWorkspaceEnd LifecycleEffectKind = "workspace_cleanup"
 )
@@ -50,7 +53,7 @@ func (e *LifecycleRuntimeError) Unwrap() error {
 func (k LifecycleEffectKind) IsKnown() bool {
 	switch k {
 	case LifecycleEffectWorkspace, LifecycleEffectPatch, LifecycleEffectValidation,
-		LifecycleEffectPublication, LifecycleEffectWorkspaceEnd:
+		LifecycleEffectGitPublish, LifecycleEffectChangeRequest, LifecycleEffectPublication, LifecycleEffectWorkspaceEnd:
 		return true
 	default:
 		return false
@@ -83,6 +86,7 @@ type PlanPolicyInput struct {
 	BaselineCommit string
 	Candidates     []RepairPlanCandidate
 	RecommendedID  string
+	ChangePolicy   ChangePolicySnapshot
 }
 
 // PlanPolicyDecision 是 plan policy 对模型候选的结构化反馈。
@@ -109,6 +113,9 @@ type WorkspaceRequest struct {
 	ProjectID      string
 	BaselineCommit string
 	IdempotencyKey string
+	Profile        ExecutionProfileSnapshot
+	Repository     PublicationSnapshot
+	ChangePolicy   ChangePolicySnapshot
 }
 
 // WorkspaceIdentity 是工作区和 immutable deployed baseline 的绑定身份。
@@ -143,6 +150,7 @@ type PatchRequest struct {
 	Patch            string
 	ExpectedTreeHash string
 	IdempotencyKey   string
+	ChangePolicy     ChangePolicySnapshot
 }
 
 // PatchResult 是 patch adapter 返回的有界结果和内容寻址身份。
@@ -176,6 +184,7 @@ type ValidationRequest struct {
 	CommandVersion   int64
 	ExpectedTreeHash string
 	IdempotencyKey   string
+	Profile          ExecutionProfileSnapshot
 }
 
 // ValidationResult 是经过 runner 脱敏、裁剪后的验证结果。
@@ -184,6 +193,8 @@ type ValidationResult struct {
 	WorkspaceID       string
 	CommandID         string
 	CommandVersion    int64
+	TreeHash          string
+	ImageDigest       string
 	Passed            bool
 	ExitCode          int
 	OutputArtifactRef string
@@ -223,16 +234,19 @@ type ValidationPort interface {
 // PublicationRequest 是从已验证 artifact 向受保护 SCM 发布 change 的输入。
 // 请求只携带内容寻址 artifact 和安全元数据，不携带 Git/SCM credential。
 type PublicationRequest struct {
-	RunID            string
-	ProjectID        string
-	BaselineCommit   string
-	TargetBranch     string
-	BranchRef        string
-	CommitMessage    string
-	PatchArtifactRef string
-	PatchContentHash string
-	ExpectedTreeHash string
-	IdempotencyKey   string
+	RunID             string
+	ProjectID         string
+	BaselineCommit    string
+	TargetBranch      string
+	BranchRef         string
+	CommitMessage     string
+	PatchArtifactRef  string
+	PatchContentHash  string
+	ExpectedTreeHash  string
+	IdempotencyKey    string
+	Repository        PublicationSnapshot
+	ChangePolicy      ChangePolicySnapshot
+	WorkspaceLimitMiB int
 }
 
 // PublicationResult 是发布后的 branch/commit/change-request 安全投影。
@@ -245,6 +259,7 @@ type PublicationResult struct {
 	TargetBranch        string
 	HumanReviewRequired bool
 	AlreadyPublished    bool
+	TargetDiverged      bool
 	Summary             string
 }
 
@@ -432,6 +447,14 @@ func (r ValidationResult) Validate() error {
 	if r.CommandVersion < 1 {
 		return fmt.Errorf("validation command version must be positive")
 	}
+	if err := lifecycleRequiredText("validation tree hash", r.TreeHash, 128); err != nil {
+		return err
+	}
+	if r.ImageDigest != "" {
+		if err := lifecycleOptionalText("validation image digest", r.ImageDigest, 128); err != nil {
+			return err
+		}
+	}
 	if r.ExitCode < -1 {
 		return fmt.Errorf("validation exit code is invalid")
 	}
@@ -497,6 +520,9 @@ func (r PublicationRequest) Validate() error {
 	}
 	if err := lifecycleRequiredText("publication expected tree hash", r.ExpectedTreeHash, 128); err != nil {
 		return err
+	}
+	if r.WorkspaceLimitMiB != 0 && (r.WorkspaceLimitMiB < 1024 || r.WorkspaceLimitMiB > 102400) {
+		return fmt.Errorf("publication workspace limit is invalid")
 	}
 	return validateIdempotencyKey(r.IdempotencyKey)
 }

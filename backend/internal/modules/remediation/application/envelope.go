@@ -43,6 +43,7 @@ func AgentEnvelopeSchema() map[string]interface{} {
 			"stop": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					"code":                  map[string]interface{}{"type": "string"},
 					"reason":                map[string]interface{}{"type": "string"},
 					"recommendedNextAction": map[string]interface{}{"type": "string", "minLength": 1},
 				},
@@ -174,6 +175,7 @@ type PlanCandidate struct {
 
 // StopOutput 表示模型主动停止。
 type StopOutput struct {
+	Code                  string `json:"code,omitempty"`
 	Reason                string `json:"reason"`
 	RecommendedNextAction string `json:"recommendedNextAction"`
 }
@@ -297,6 +299,7 @@ func validateRequestTool(rt *RequestTool) error {
 func validateDiagnosis(d *DiagnosisOutput) error {
 	validFixability := map[domain.FixabilityClass]bool{
 		domain.FixabilityCodeFixable:          true,
+		domain.FixabilityNoChangeNeeded:       true,
 		domain.FixabilityExternalDependency:   true,
 		domain.FixabilityConfiguration:        true,
 		domain.FixabilityData:                 true,

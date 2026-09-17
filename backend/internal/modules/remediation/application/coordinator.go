@@ -35,6 +35,7 @@ const maxConsecutiveProtocolFailures = 3
 // ports plus the in-process engine, assembler, and gateway; it never receives
 // credentials or raw clients.
 type RemediationCoordinator struct {
+	executor        *RunExecutor
 	store           domain.RunStore
 	lookup          IncidentLookup
 	remotes         RepositoryRemoteResolver
@@ -58,6 +59,8 @@ type RemediationCoordinator struct {
 	workspace          domain.WorkspacePort
 	validation         domain.ValidationPort
 	publication        domain.PublicationPort
+	gitPublication     domain.GitPublicationPort
+	changeRequests     domain.ChangeRequestPort
 	lifecycleStore     domain.LifecycleStore
 	lifecycleTools     *LifecycleToolGateway
 	validationCommands map[string]int64
@@ -335,6 +338,11 @@ func (c *RemediationCoordinator) Continue(ctx context.Context, in domain.NextAtt
 // 从最新 checkpoint 重建 provider-neutral context；lifecycle phase 额外复用
 // durable external-effect projection，终态重复调用保持幂等。
 func (c *RemediationCoordinator) Resume(ctx context.Context, runID string) (domain.Run, error) {
+	if c.executor != nil && !c.executor.owns(ctx, runID) {
+		return c.executor.Execute(ctx, runID, func(owned context.Context) (domain.Run, error) {
+			return c.Resume(owned, runID)
+		})
+	}
 	aggregate, err := c.store.Get(ctx, runID)
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("load remediation run for resume: %w", err)
@@ -378,6 +386,10 @@ func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate d
 	tracker := newResilientRunState(c.checkpointStore, run, "")
 	analysisOnly := run.AnalysisOnly || run.TriggerReason == domain.TriggerOriginManualContinue
 	tracker.analysisOnly = analysisOnly
+	resumePhase := run.State
+	continuationBrief, priorEvidence := "", ""
+	priorInvocations := aggregate.ToolInvocations
+	checkpointRestored := false
 	for _, invocation := range aggregate.ToolInvocations {
 		tracker.recordPriorToolAction(invocation)
 	}
@@ -387,6 +399,7 @@ func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate d
 				return domain.Run{}, err
 			}
 			tracker.reconstruction = renderCheckpointReconstruction(snapshot, nil, nil, aggregate.ToolInvocations)
+			checkpointRestored = true
 		} else if !errors.Is(err, domain.ErrCheckpointNotFound) ||
 			(run.State != domain.RunStatePreparingContext && !(run.State == domain.RunStateDiagnosing && run.Budget.ModelCalls == 0)) {
 			// 初始 preparing→diagnosing after-window 尚无 checkpoint；zero model calls
@@ -399,8 +412,33 @@ func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate d
 		// boundary: only pre-first-turn states can be rebuilt safely.
 		return domain.Run{}, fmt.Errorf("load remediation checkpoint for resume: %w", domain.ErrCheckpointNotFound)
 	}
+	if !checkpointRestored && run.ContinuationOfRunID != "" {
+		// A crash between claiming a queued child and its first checkpoint must
+		// retain the predecessor brief, evidence and planning-resume decision.
+		queued := run
+		queued.State = domain.RunStateQueued
+		var prepared preparedContinuation
+		var prepareErr error
+		if run.TriggerReason == domain.TriggerOriginManualReconfigure {
+			prepared, prepareErr = c.rebuildQueuedReconfiguration(ctx, queued)
+		} else {
+			prepared, prepareErr = c.rebuildQueuedContinuation(ctx, queued)
+		}
+		if prepareErr != nil {
+			return domain.Run{}, prepareErr
+		}
+		continuationBrief, priorEvidence = prepared.brief, prepared.priorEvidence
+		tracker.reconstruction = prepared.reconstruction
+		priorInvocations = append(append([]domain.ToolInvocation(nil), prepared.priorInvocations...), priorInvocations...)
+		for _, invocation := range prepared.priorInvocations {
+			tracker.recordPriorToolAction(invocation)
+		}
+		if run.State == domain.RunStatePreparingContext {
+			resumePhase = prepared.resumePhase
+		}
+	}
 	if tracker.alloc == nil {
-		budgetPhase := run.State
+		budgetPhase := resumePhase
 		if budgetPhase == domain.RunStatePreparingContext {
 			budgetPhase = domain.RunStateDiagnosing
 		}
@@ -411,7 +449,7 @@ func (c *RemediationCoordinator) resumeAnalysis(ctx context.Context, aggregate d
 	if err != nil {
 		return domain.Run{}, c.fail(ctx, run.RunID, run.State, err)
 	}
-	if err := c.drive(ctx, run.RunID, ref, scope, "", "", run.State, run.State, aggregate.ToolInvocations, analysisOnly); err != nil {
+	if err := c.drive(ctx, run.RunID, ref, scope, continuationBrief, priorEvidence, run.State, resumePhase, priorInvocations, analysisOnly); err != nil {
 		return domain.Run{}, err
 	}
 	return c.loadLifecycleRun(ctx, run.RunID)
@@ -470,6 +508,12 @@ func (c *RemediationCoordinator) prepareContinuation(
 	ctx context.Context,
 	in domain.NextAttempt,
 ) (preparedContinuation, error) {
+	return c.prepareContinuationRun(ctx, in, nil)
+}
+
+// prepareContinuationRun can reconstruct an already persisted queued child
+// after a crash, without creating another attempt or changing its policy snapshot.
+func (c *RemediationCoordinator) prepareContinuationRun(ctx context.Context, in domain.NextAttempt, existing *domain.Run) (preparedContinuation, error) {
 	if err := in.Validate(); err != nil {
 		return preparedContinuation{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
 	}
@@ -542,9 +586,14 @@ func (c *RemediationCoordinator) prepareContinuation(
 			}
 		}
 	}
-	child, err := attempts.CreateNextAttempt(ctx, in)
-	if err != nil {
-		return preparedContinuation{}, err
+	var child domain.Run
+	if existing == nil {
+		child, err = attempts.CreateNextAttempt(ctx, in)
+		if err != nil {
+			return preparedContinuation{}, err
+		}
+	} else {
+		child = *existing
 	}
 	if child.State != domain.RunStateQueued || child.RunID == "" || child.SeriesID != in.SeriesID ||
 		child.IncidentID != in.IncidentID || child.LifecycleGeneration != in.LifecycleGeneration ||
@@ -583,6 +632,48 @@ func (c *RemediationCoordinator) prepareContinuation(
 	return preparedContinuation{
 		child: child, brief: brief, priorEvidence: priorEvidence, reconstruction: reconstruction,
 		resumePhase: resumePhase, priorInvocations: predecessor.ToolInvocations,
+	}, nil
+}
+
+// prepareReconfigured creates a fresh-policy child and only carries a bounded
+// predecessor hypothesis brief. It never loads planning checkpoints, runtime
+// evidence indexes, or prior tool invocations for lifecycle reuse.
+func (c *RemediationCoordinator) prepareReconfigured(inCtx context.Context, in domain.NextAttempt, existing *domain.Run) (preparedContinuation, error) {
+	if err := in.Validate(); err != nil {
+		return preparedContinuation{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+	}
+	attempts, ok := c.store.(domain.ReconfiguredAttemptStore)
+	if !ok {
+		return preparedContinuation{}, domain.ErrReconfigurationUnavailable
+	}
+	predecessor, err := c.store.Get(inCtx, in.ContinuationOfRunID)
+	if err != nil {
+		return preparedContinuation{}, fmt.Errorf("load reconfiguration predecessor: %w", err)
+	}
+	if err := validateContinuationPredecessor(predecessor.Run, in); err != nil {
+		return preparedContinuation{}, err
+	}
+	var child domain.Run
+	if existing == nil {
+		child, err = attempts.CreateReconfiguredAttempt(inCtx, in)
+		if err != nil {
+			return preparedContinuation{}, err
+		}
+	} else {
+		child = *existing
+	}
+	if child.State != domain.RunStateQueued || child.RunID == "" || child.SeriesID != in.SeriesID ||
+		child.IncidentID != in.IncidentID || child.LifecycleGeneration != in.LifecycleGeneration ||
+		child.DeployedCommit != in.DeployedCommit || child.ContinuationOfRunID != in.ContinuationOfRunID ||
+		child.AttemptNumber != predecessor.Run.AttemptNumber+1 || child.AnalysisOnly ||
+		child.ExecutionMode != domain.ExecutionModeAutoHotfix ||
+		domain.ParseAgentLoopMode(string(child.AgentLoopMode)) != domain.AgentLoopModeResilientV1 {
+		return preparedContinuation{}, domain.ErrReconfigurationUnavailable
+	}
+	return preparedContinuation{
+		child:       child,
+		brief:       buildContinuationBrief(predecessor, nil, in),
+		resumePhase: domain.RunStateDiagnosing,
 	}, nil
 }
 
@@ -626,6 +717,15 @@ func (c *RemediationCoordinator) runQueued(
 	priority string,
 	priorInvocations []domain.ToolInvocation,
 ) (domain.Run, error) {
+	if c.executor != nil && !c.executor.owns(ctx, run.RunID) {
+		result, err := c.executor.Execute(ctx, run.RunID, func(owned context.Context) (domain.Run, error) {
+			return c.runQueued(owned, run, continuationBrief, priorEvidenceBlock, reconstruction, resumePhase, triggerReason, priority, priorInvocations)
+		})
+		if errors.Is(err, ErrRunExecutionBusy) {
+			return c.loadLifecycleRun(ctx, run.RunID)
+		}
+		return result, err
+	}
 	started := time.Now()
 	ctx = withRunObservationContext(ctx, run)
 	if triggerReason == "" {
@@ -1413,10 +1513,14 @@ func (c *RemediationCoordinator) routeDiagnosis(
 	conversation *AgentConversation,
 ) (bool, error) {
 	switch diag.Fixability {
-	case domain.FixabilityExternalDependency, domain.FixabilityConfiguration,
+	case domain.FixabilityNoChangeNeeded, domain.FixabilityExternalDependency, domain.FixabilityConfiguration,
 		domain.FixabilityData, domain.FixabilityInfrastructure:
 		effect := modelEffect(usage)
-		effect.TerminalReason = "completed_non_code"
+		if diag.Fixability == domain.FixabilityNoChangeNeeded {
+			effect.TerminalReason = "no_change_needed"
+		} else {
+			effect.TerminalReason = "completed_non_code"
+		}
 		exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateDiagnosing, domain.RunStateCompletedNonCode, effect)
 		if err != nil || exhausted {
 			return true, err
@@ -1634,9 +1738,14 @@ func (c *RemediationCoordinator) planFrom(
 		case "planCandidates":
 			protocolFailures = 0
 			if tracker := resilientStateFrom(ctx); tracker != nil && c.planPolicy != nil {
+				policy := domain.ChangePolicySnapshot{}
+				if tracker := resilientStateFrom(ctx); tracker != nil {
+					policy = tracker.run.ChangePolicySnapshot
+				}
 				policyDecision, policyErr := c.planPolicy.EvaluatePlan(ctx, domain.PlanPolicyInput{
 					RunID: runID, BaselineCommit: ref.Commit,
 					Candidates: repairPlanCandidates(env.PlanCandidates), RecommendedID: env.PlanCandidates.RecommendedID,
+					ChangePolicy: policy,
 				})
 				if policyErr != nil {
 					return c.fail(ctx, runID, domain.RunStatePlanning, markConfigurationFailure(fmt.Errorf("evaluate plan policy: %w", policyErr)))
@@ -1663,7 +1772,7 @@ func (c *RemediationCoordinator) planFrom(
 			continue
 		}
 
-		// 先写入计划和建议 diff，再进入 diagnosis_ready_for_review，保证 GET 能读到完整 review chain。
+		// Persist the complete candidate set before crossing the execution boundary.
 		if err := c.recordPlans(ctx, runID, env.PlanCandidates); err != nil {
 			return c.fail(ctx, runID, domain.RunStatePlanning, markPersistenceFailure(err))
 		}
@@ -1673,6 +1782,14 @@ func (c *RemediationCoordinator) planFrom(
 		exhausted, err = c.transitionBudgeted(ctx, budget, runID, domain.RunStatePlanning, domain.RunStateDiagnosisReadyForReview, effect)
 		if err != nil || exhausted {
 			return err
+		}
+		current, loadErr := c.store.Get(ctx, runID)
+		if loadErr != nil {
+			return c.fail(ctx, runID, domain.RunStateDiagnosisReadyForReview, markPersistenceFailure(loadErr))
+		}
+		if current.Run.ExecutionMode == domain.ExecutionModeAutoHotfix && !current.Run.AnalysisOnly {
+			_, applyErr := c.ApplyPlan(ctx, runID, env.PlanCandidates.RecommendedID)
+			return applyErr
 		}
 		return c.notifyTerminal(ctx, runID, domain.RunStateDiagnosisReadyForReview, domain.FixabilityCodeFixable)
 	}
@@ -1998,12 +2115,17 @@ func (c *RemediationCoordinator) transition(ctx context.Context, runID string, f
 }
 
 func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID string, from, to domain.RunState, effect domain.Effect, reason budgetExhaustionReason) error {
+	if executionInterrupted(ctx) {
+		return ErrRunExecutionInterrupted
+	}
 	transitionContext := ctx
 	var checkpointErr error
 	if isTerminalStateForApplication(to) {
 		// Terminal persistence must survive a caller/run operation deadline; the
 		// run budget and database transaction still bound the actual write.
-		transitionContext = context.WithoutCancel(ctx)
+		var cancelPersistence context.CancelFunc
+		transitionContext, cancelPersistence = executionPersistenceContext(ctx)
+		defer cancelPersistence()
 		tracker := resilientStateFrom(ctx)
 		// 放弃型终态（failed/budget_exhausted/blocked_manual_review）先静默关闭
 		// recovery episode，使随后的 phase_boundary checkpoint 不结算
@@ -2024,6 +2146,9 @@ func (c *RemediationCoordinator) transitionWithReason(ctx context.Context, runID
 			reason = ""
 			effect = domain.Effect{TerminalReason: "persistence_failure", Retryable: false}
 		}
+	}
+	if executionInterrupted(ctx) {
+		return ErrRunExecutionInterrupted
 	}
 	effect = terminalEffectForState(to, effect, reason)
 	if err := c.store.Transition(transitionContext, runID, from, to, effect); err != nil {

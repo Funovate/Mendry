@@ -243,18 +243,14 @@ func EvaluateEvidenceGate(input EvidenceGateInput) EvidenceGateDecision {
 	}
 
 	// R8/D4：time、host、operational correlation 与 primary source coverage
-	// 不是所有 code fix 的全局前置矩阵。它们仍保留在 resolution/audit 中，
-	// 但只有模型声明并由服务解析出的 material contradiction 才会阻断；
-	// causal closure false 则表示缺口对当前因果链仍然 material。
+	// 不是所有 code fix 的全局前置矩阵。原始 time contradiction 仍保留在
+	// resolution/audit 中，但不会自动升级为 hard gate；只有模型声明并由服务
+	// 解析出的 material contradiction 才会阻断，causal closure false 则表示
+	// 缺口对当前因果链仍然 material。
 	if len(input.Resolution.MaterialContradictions) > 0 {
 		decision.Contradictions = appendUnique(decision.Contradictions, input.Resolution.MaterialContradictions...)
 		decision.ConfidenceCap = minConfidence(decision.ConfidenceCap, ConfidenceCapUnresolved)
 		decision.Reasons = append(decision.Reasons, "material contradiction remains unresolved")
-	}
-	if input.Resolution.Time != nil && input.Resolution.Time.Contradictory {
-		decision.Contradictions = appendUnique(decision.Contradictions, "contradictory time evidence")
-		decision.ConfidenceCap = minConfidence(decision.ConfidenceCap, ConfidenceCapUnresolved)
-		decision.Reasons = appendUnique(decision.Reasons, "material contradiction remains unresolved")
 	}
 	if input.CausalClosure == nil || !input.CausalClosure.ExplainsOriginalSymptom {
 		decision.Reasons = append(decision.Reasons, "causal closure does not explain the original symptom")

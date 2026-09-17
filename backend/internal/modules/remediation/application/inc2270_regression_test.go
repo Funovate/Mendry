@@ -242,7 +242,7 @@ func TestINC2270Regression_AC1_TrustedLocatorsLeadCodeFirstAndCorrectionEntersPl
 	for _, want := range []string{
 		"ev-inc2270-provider-detail", "TriggerNilPointerFault", "handler.go:42",
 		"internal/handler.go", `"line":42`, "rawTime",
-		"no required first tool and no mandated sequence", "strong code-localization hint",
+		"no required first tool and no mandated sequence", "strong code-localization anchor",
 	} {
 		if !strings.Contains(first, want) {
 			t.Errorf("first turn missing %q", want)

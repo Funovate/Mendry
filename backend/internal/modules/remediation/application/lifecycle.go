@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -24,7 +26,6 @@ var (
 
 const (
 	maxLifecycleRecoveryAttempts = 3
-	defaultPublicationTarget     = "production"
 	defaultPublicationPrefix     = "hotfix/remediation"
 )
 
@@ -52,9 +53,19 @@ func (c *RemediationCoordinator) SetValidationPort(validation domain.ValidationP
 	c.lifecycleTools = NewLifecycleToolGateway(c.workspace, c.validation)
 }
 
-// SetPublicationPort 注入 provider-neutral publication adapter；其接口没有 merge/deploy 能力。
+// SetPublicationPort injects the legacy combined publisher for compatible deployments.
 func (c *RemediationCoordinator) SetPublicationPort(publication domain.PublicationPort) {
 	c.publication = publication
+}
+
+// SetGitPublicationPort injects branch publication independently from change requests.
+func (c *RemediationCoordinator) SetGitPublicationPort(publication domain.GitPublicationPort) {
+	c.gitPublication = publication
+}
+
+// SetChangeRequestPort injects provider capability probing and PR/MR creation.
+func (c *RemediationCoordinator) SetChangeRequestPort(changeRequests domain.ChangeRequestPort) {
+	c.changeRequests = changeRequests
 }
 
 // SetLifecycleStore 注入 workspace/patch/validation/publication 的 durable effect store。
@@ -80,6 +91,11 @@ func (c *RemediationCoordinator) SetLifecyclePublicationPolicy(policy LifecycleP
 // 它不改变 diagnosis 结果；调用方必须提供当前 run 的 plan ID，所有外部效果
 // 通过 durable lifecycle effect projection 和稳定幂等 key 恢复。
 func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID string) (domain.Run, error) {
+	if c.executor != nil && !c.executor.owns(ctx, runID) {
+		return c.executor.Execute(ctx, runID, func(owned context.Context) (domain.Run, error) {
+			return c.ApplyPlan(owned, runID, planID)
+		})
+	}
 	agg, err := c.store.Get(ctx, runID)
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("load remediation plan run: %w", err)
@@ -96,7 +112,7 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 		}
 		return agg.Run, fmt.Errorf("%w: state %s cannot accept a plan", ErrLifecycleNotReady, agg.Run.State)
 	}
-	if err := c.validateLifecycleDependencies(); err != nil {
+	if err := c.validateLifecycleDependencies(agg.Run); err != nil {
 		return agg.Run, err
 	}
 	selected, err := selectRepairPlan(agg, planID)
@@ -132,7 +148,15 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 	tracker.lifecyclePlanID = selected.PlanID
 	tracker.nextActions = []string{"apply selected plan " + boundedContinuationText(selected.PlanID, 128)}
 	tracker.validationCommands = cloneValidationCommands(c.validationCommands)
-	tracker.publicationPolicy = checkpointPublicationPolicy(c.publicationPolicy)
+	if len(agg.Run.ValidationCommands) > 0 {
+		tracker.validationCommands = cloneValidationCommands(agg.Run.ValidationCommands)
+	}
+	publicationPolicy := c.publicationPolicy
+	if strings.TrimSpace(agg.Run.PublicationTargetBranch) != "" {
+		publicationPolicy.TargetBranch = agg.Run.PublicationTargetBranch
+		publicationPolicy.BranchPrefix = agg.Run.PublicationBranchPrefix
+	}
+	tracker.publicationPolicy = checkpointPublicationPolicy(publicationPolicy)
 	tracker.conversation = NewAgentConversation(lifecyclePlanContext(agg.Run, selected, agg.SuggestedDiff))
 	ctx = withResilientRunState(ctx, tracker)
 	budget := resumeRunBudget(
@@ -140,7 +164,7 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 		restoredRunBudgetCounters(tracker, agg.Run.Budget),
 	)
 	ctx = withLifecycleBudget(ctx, budget)
-	if len(tracker.validationCommands) == 0 {
+	if localValidationEnabled(agg.Run.ExecutionProfile) && len(tracker.validationCommands) == 0 {
 		return agg.Run, fmt.Errorf("%w: no approved validation command snapshot", ErrLifecycleUnavailable)
 	}
 	if tracker.alloc == nil {
@@ -174,6 +198,11 @@ func (c *RemediationCoordinator) ApplyPlan(ctx context.Context, runID, planID st
 // effect projection，避免 process restart 重复创建 workspace、patch、validation
 // 或 publication external effect。
 func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID string) (domain.Run, error) {
+	if c.executor != nil && !c.executor.owns(ctx, runID) {
+		return c.executor.Execute(ctx, runID, func(owned context.Context) (domain.Run, error) {
+			return c.ResumeLifecycle(owned, runID)
+		})
+	}
 	agg, err := c.store.Get(ctx, runID)
 	if err != nil {
 		return domain.Run{}, fmt.Errorf("load remediation lifecycle run: %w", err)
@@ -190,7 +219,7 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 	if !isLifecycleActiveState(agg.Run.State) {
 		return agg.Run, fmt.Errorf("%w: state %s is not resumable", ErrLifecycleNotReady, agg.Run.State)
 	}
-	if err := c.validateLifecycleDependencies(); err != nil {
+	if err := c.validateLifecycleDependencies(agg.Run); err != nil {
 		return agg.Run, err
 	}
 	selected, err := selectRepairPlan(agg, agg.RecommendedPlanID)
@@ -204,7 +233,7 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 	}
 	tracker.lifecyclePlanID = selected.PlanID
 	tracker.conversation = NewAgentConversation(lifecyclePlanContext(agg.Run, selected, agg.SuggestedDiff))
-	if len(tracker.validationCommands) == 0 || tracker.publicationPolicy == nil {
+	if tracker.publicationPolicy == nil || (localValidationEnabled(agg.Run.ExecutionProfile) && len(tracker.validationCommands) == 0) {
 		return agg.Run, fmt.Errorf("%w: lifecycle policy snapshot is incomplete", ErrLifecycleUnavailable)
 	}
 	ctx = withResilientRunState(ctx, tracker)
@@ -226,7 +255,7 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 		}
 		tracker.checkpointNeedsRebuild = false
 	}
-	if agg.Run.State != domain.RunStatePublishing && len(tracker.validationCommands) == 0 {
+	if agg.Run.State != domain.RunStatePublishing && localValidationEnabled(agg.Run.ExecutionProfile) && len(tracker.validationCommands) == 0 {
 		return agg.Run, fmt.Errorf("%w: validation command snapshot is unavailable", ErrLifecycleUnavailable)
 	}
 	if err := c.driveLifecycle(ctx, budget, agg.Run, selected); err != nil {
@@ -235,12 +264,143 @@ func (c *RemediationCoordinator) ResumeLifecycle(ctx context.Context, runID stri
 	return c.loadLifecycleRun(ctx, runID)
 }
 
-func (c *RemediationCoordinator) validateLifecycleDependencies() error {
-	if c.checkpointStore == nil || c.lifecycleStore == nil || c.workspace == nil || c.validation == nil || c.publication == nil {
-		return ErrLifecycleUnavailable
+func (c *RemediationCoordinator) validateLifecycleDependencies(run domain.Run) error {
+	missing := make([]string, 0, 5)
+	if c.checkpointStore == nil {
+		missing = append(missing, "checkpoint store")
 	}
-	if len(c.validationCommands) == 0 {
+	if c.lifecycleStore == nil {
+		missing = append(missing, "lifecycle store")
+	}
+	if c.workspace == nil {
+		missing = append(missing, "workspace adapter")
+	}
+	if localValidationEnabled(run.ExecutionProfile) && c.validation == nil {
+		missing = append(missing, "validation adapter")
+	}
+	if c.publication == nil && c.gitPublication == nil {
+		missing = append(missing, "publication adapter")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: missing lifecycle dependencies: %s", ErrLifecycleUnavailable, strings.Join(missing, ", "))
+	}
+	targetBranch := c.publicationPolicy.TargetBranch
+	if run.PublicationTargetBranch != "" {
+		targetBranch = run.PublicationTargetBranch
+	}
+	if strings.TrimSpace(targetBranch) == "" {
+		return fmt.Errorf("%w: publication target branch is required", ErrLifecycleUnavailable)
+	}
+	if run.ExecutionMode == domain.ExecutionModeAutoHotfix && !run.AnalysisOnly {
+		if err := validateAutoHotfixSnapshot(run); err != nil {
+			return fmt.Errorf("%w: %v", ErrLifecycleUnavailable, err)
+		}
+		if run.PublicationSnapshot.SCMProvider != "generic" && c.changeRequests == nil {
+			return fmt.Errorf("%w: change-request adapter is required for this provider", ErrLifecycleUnavailable)
+		}
+	} else if len(c.validationCommands) == 0 && len(run.ValidationCommands) == 0 {
 		return fmt.Errorf("%w: no approved validation command snapshot", ErrLifecycleUnavailable)
+	}
+	return nil
+}
+
+func localValidationEnabled(profile domain.ExecutionProfileSnapshot) bool {
+	// Snapshots written before the enabled flag remain enhanced snapshots.
+	return profile.Enabled == nil || *profile.Enabled
+}
+
+func validateAutoHotfixSnapshot(run domain.Run) error {
+	profile := run.ExecutionProfile
+	if localValidationEnabled(profile) {
+		if err := validateLocalValidationSnapshot(run, profile); err != nil {
+			return err
+		}
+	} else if len(run.ValidationCommands) != 0 || run.ValidationImageDigest != "" {
+		return fmt.Errorf("disabled local validation snapshot contains validation configuration")
+	}
+
+	repository := run.PublicationSnapshot
+	remote, err := url.Parse(repository.RemoteURL)
+	if err != nil || remote.Host == "" || remote.User != nil || remote.Scheme != repository.Transport || (remote.Scheme != "https" && remote.Scheme != "ssh") {
+		return fmt.Errorf("immutable repository snapshot is invalid")
+	}
+	switch repository.SCMProvider {
+	case "github", "gitlab", "gitee", "yunxiao", "generic":
+	default:
+		return fmt.Errorf("immutable SCM provider snapshot is invalid")
+	}
+	if repository.ProductionBranch == "" || repository.ProductionBranch != run.PublicationTargetBranch || repository.GitCredentialSecretID == "" || repository.GitCredentialVersion < 1 {
+		return fmt.Errorf("immutable publication snapshot is incomplete")
+	}
+	if repository.RepositoryCredentialSecretID != "" && repository.RepositoryCredentialVersion < 1 {
+		return fmt.Errorf("immutable repository credential snapshot is incomplete")
+	}
+	if repository.APICredentialSecretID != "" && repository.APICredentialVersion < 1 {
+		return fmt.Errorf("immutable API credential snapshot is incomplete")
+	}
+	if repository.APIBaseURL != "" {
+		apiURL, parseErr := url.Parse(repository.APIBaseURL)
+		if parseErr != nil || apiURL.Host == "" || apiURL.User != nil || (apiURL.Scheme != "https" && apiURL.Scheme != "http") {
+			return fmt.Errorf("immutable provider API URL snapshot is invalid")
+		}
+	}
+
+	policy := run.ChangePolicySnapshot
+	if len(policy.AllowedPaths) == 0 || len(policy.AllowedPaths) > 64 || len(policy.DeniedPaths) > 64 || policy.MaxChangedFiles < 1 || policy.MaxChangedFiles > 30 || policy.MaxChangedLines < 1 || policy.MaxChangedLines > 5000 {
+		return fmt.Errorf("immutable change policy snapshot is incomplete")
+	}
+	for _, pattern := range append(append([]string{}, policy.AllowedPaths...), policy.DeniedPaths...) {
+		if strings.TrimSpace(pattern) == "" || strings.HasPrefix(pattern, "/") || len(pattern) > 256 {
+			return fmt.Errorf("immutable path policy snapshot is invalid")
+		}
+		for _, segment := range strings.Split(pattern, "/") {
+			if segment == ".." {
+				return fmt.Errorf("immutable path policy snapshot is invalid")
+			}
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			return fmt.Errorf("immutable path policy snapshot is invalid")
+		}
+	}
+	return nil
+}
+
+func validateLocalValidationSnapshot(run domain.Run, profile domain.ExecutionProfileSnapshot) error {
+	if profile.ImageDigest != run.ValidationImageDigest || !strings.HasPrefix(profile.ImageDigest, "sha256:") || len(profile.ImageDigest) != len("sha256:")+64 {
+		return fmt.Errorf("immutable validation image snapshot is incomplete")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(profile.ImageDigest, "sha256:")); err != nil {
+		return fmt.Errorf("immutable validation image snapshot is invalid")
+	}
+	workingDirectory := path.Clean(profile.WorkingDirectory)
+	if profile.WorkingDirectory == "" || path.IsAbs(profile.WorkingDirectory) || workingDirectory == ".." || strings.HasPrefix(workingDirectory, "../") {
+		return fmt.Errorf("immutable validation working directory is invalid")
+	}
+	if profile.CPULimit < 1 || profile.CPULimit > 16 || profile.MemoryLimitMiB < 256 || profile.MemoryLimitMiB > 65536 || profile.WorkspaceLimitMiB < 1024 || profile.WorkspaceLimitMiB > 102400 {
+		return fmt.Errorf("immutable execution resource limits are invalid")
+	}
+	if len(profile.RequiredCommands) == 0 || len(profile.RequiredCommands) > 32 || len(profile.Preparation) > 16 || len(run.ValidationCommands) != len(profile.RequiredCommands) {
+		return fmt.Errorf("immutable validation command snapshot is incomplete")
+	}
+	seenCommands := make(map[string]struct{}, len(profile.RequiredCommands)+len(profile.Preparation))
+	for _, command := range append(append([]domain.ValidationCommandSnapshot{}, profile.Preparation...), profile.RequiredCommands...) {
+		if command.ID == "" || len(command.ID) > 128 || command.Version < 1 || len(command.Argv) == 0 || len(command.Argv) > 64 || command.TimeoutSeconds < 1 || command.TimeoutSeconds > 3600 {
+			return fmt.Errorf("immutable validation command snapshot is invalid")
+		}
+		if _, exists := seenCommands[command.ID]; exists {
+			return fmt.Errorf("immutable validation command IDs are not unique")
+		}
+		seenCommands[command.ID] = struct{}{}
+		for _, arg := range command.Argv {
+			if strings.TrimSpace(arg) == "" || len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
+				return fmt.Errorf("immutable validation argv is invalid")
+			}
+		}
+	}
+	for _, command := range profile.RequiredCommands {
+		if run.ValidationCommands[command.ID] != command.Version {
+			return fmt.Errorf("validation command version map does not match profile")
+		}
 	}
 	return nil
 }
@@ -336,17 +496,53 @@ func (c *RemediationCoordinator) newLifecycleTracker(ctx context.Context, run do
 			}
 			tracker.validation = nil
 		case domain.LifecycleEffectValidation:
-			tracker.validation = &domain.CheckpointValidation{
+			validationTree := effect.ResultTreeHash
+			if validationTree == "" && tracker.workspace != nil {
+				// Pre-aggregation v1 effects omitted the tree identity. They remain readable,
+				// but every newly executed validation must attest it explicitly.
+				validationTree = tracker.workspace.CurrentTreeHash
+			}
+			if tracker.validation == nil || tracker.validation.TreeHash != validationTree {
+				tracker.validation = &domain.CheckpointValidation{TreeHash: validationTree}
+			}
+			result := domain.CheckpointValidationResult{
 				CommandID: effect.CommandID, CommandVersion: effect.CommandVersion,
-				Passed:         effect.ValidationKnown && effect.ValidationPassed,
+				TreeHash: validationTree, Passed: effect.ValidationKnown && effect.ValidationPassed,
 				OutputArtifact: effect.ArtifactRef, OutputHash: effect.ContentHash,
 			}
-		case domain.LifecycleEffectPublication:
-			tracker.publication = &domain.CheckpointPublication{
-				BranchRef: effect.BranchRef, TargetBranch: effect.TargetBranch, CommitHash: effect.CommitHash,
-				DraftChangeRef: effect.DraftChangeRef, CompareURL: effect.CompareURL,
-				HumanReviewOnly: true,
+			tracker.validation.CommandID = result.CommandID
+			tracker.validation.CommandVersion = result.CommandVersion
+			tracker.validation.OutputArtifact = result.OutputArtifact
+			tracker.validation.OutputHash = result.OutputHash
+			tracker.validation.Results = append(tracker.validation.Results, result)
+			if tracker.workspace != nil {
+				tracker.validation.Passed = validationSetPassed(tracker.validation, tracker.validationCommands, tracker.workspace.CurrentTreeHash)
 			}
+		case domain.LifecycleEffectPublication, domain.LifecycleEffectGitPublish, domain.LifecycleEffectChangeRequest:
+			publication := tracker.publication
+			if publication == nil {
+				publication = &domain.CheckpointPublication{}
+			}
+			if effect.BranchRef != "" {
+				publication.BranchRef = effect.BranchRef
+			}
+			if effect.TargetBranch != "" {
+				publication.TargetBranch = effect.TargetBranch
+			}
+			if effect.CommitHash != "" {
+				publication.CommitHash = effect.CommitHash
+			}
+			if effect.DraftChangeRef != "" {
+				publication.DraftChangeRef = effect.DraftChangeRef
+			}
+			if effect.CompareURL != "" {
+				publication.CompareURL = effect.CompareURL
+			}
+			publication.HumanReviewOnly = true
+			if targetDiverged, found := targetDivergenceState(effect.Summary); found {
+				publication.TargetDiverged = targetDiverged
+			}
+			tracker.publication = publication
 		}
 	}
 	return tracker, nil
@@ -539,6 +735,7 @@ func (c *RemediationCoordinator) ensureLifecycleWorkspace(ctx context.Context, b
 	operationCtx, cancel := budget.operationContext(ctx)
 	workspaceRequest := domain.WorkspaceRequest{
 		RunID: run.RunID, ProjectID: run.ProjectID, BaselineCommit: run.DeployedCommit, IdempotencyKey: key,
+		Profile: run.ExecutionProfile, Repository: run.PublicationSnapshot, ChangePolicy: run.ChangePolicySnapshot,
 	}
 	if err := workspaceRequest.Validate(); err != nil {
 		return c.handleLifecycleExternalFailure(ctx, budget, run, tracker, domain.LifecycleEffectWorkspace, key, attempt, &domain.LifecycleRuntimeError{Code: "workspace_invalid", Cause: err}, domain.RunStatePatching, "workspace.ensure")
@@ -642,7 +839,7 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 			}
 			return c.transitionToValidation(ctx, budget, run.RunID)
 		case "stop":
-			done, err := c.handleLifecycleStop(ctx, budget, run.RunID, domain.RunStatePatching)
+			done, err := c.handleLifecycleStop(ctx, budget, run.RunID, domain.RunStatePatching, env.Stop)
 			if err != nil || done {
 				return err
 			}
@@ -659,20 +856,23 @@ func (c *RemediationCoordinator) runPatching(ctx context.Context, budget *runBud
 }
 
 func (c *RemediationCoordinator) transitionToValidation(ctx context.Context, budget *runBudget, runID string) error {
+	run, err := c.store.Get(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("load run after patching: %w", err)
+	}
+	plan, err := selectRepairPlan(run, resilientStateFrom(ctx).lifecyclePlanID)
+	if err != nil {
+		return err
+	}
+	if !localValidationEnabled(run.Run.ExecutionProfile) {
+		return c.transitionToPublication(ctx, budget, runID, plan)
+	}
 	if exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStatePatching, domain.RunStateValidating, domain.Effect{}); err != nil || exhausted {
 		return err
 	}
 	tracker := resilientStateFrom(ctx)
 	if err := c.checkpointRun(ctx, tracker, domain.RunStateValidating, domain.CheckpointReasonPhaseBoundary); err != nil {
 		return c.fail(ctx, runID, domain.RunStateValidating, markPersistenceFailure(err))
-	}
-	run, err := c.store.Get(ctx, runID)
-	if err != nil {
-		return fmt.Errorf("load validating run: %w", err)
-	}
-	plan, err := selectRepairPlan(run, tracker.lifecyclePlanID)
-	if err != nil {
-		return err
 	}
 	return c.runValidation(ctx, budget, run.Run, plan)
 }
@@ -743,9 +943,15 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 			if tracker.validation.Passed {
 				return c.transitionToPublication(ctx, budget, run.RunID, plan)
 			}
+			if validationResultsPassButIncomplete(tracker.validation) {
+				if err := c.appendLifecycleChallenge(ctx, domain.RecoveryChallengeKindValidationRevision, "validation_commands_incomplete", "validationAssessment", []string{"validation"}, []string{"run_remaining_validation"}, "Run every required validation command on the current tree before publication."); err != nil {
+					return err
+				}
+				continue
+			}
 			return c.reviseAfterValidationFailure(ctx, budget, run, plan)
 		case "stop":
-			done, err := c.handleLifecycleStop(ctx, budget, run.RunID, domain.RunStateValidating)
+			done, err := c.handleLifecycleStop(ctx, budget, run.RunID, domain.RunStateValidating, env.Stop)
 			if err != nil || done {
 				return err
 			}
@@ -762,7 +968,11 @@ func (c *RemediationCoordinator) runValidation(ctx context.Context, budget *runB
 }
 
 func (c *RemediationCoordinator) transitionToPublication(ctx context.Context, budget *runBudget, runID string, plan domain.RepairPlanCandidate) error {
-	if exhausted, err := c.transitionBudgeted(ctx, budget, runID, domain.RunStateValidating, domain.RunStatePublishing, domain.Effect{}); err != nil || exhausted {
+	from := domain.RunStateValidating
+	if tracker := resilientStateFrom(ctx); tracker != nil && tracker.lifecyclePhase == domain.RunStatePatching {
+		from = domain.RunStatePatching
+	}
+	if exhausted, err := c.transitionBudgeted(ctx, budget, runID, from, domain.RunStatePublishing, domain.Effect{}); err != nil || exhausted {
 		return err
 	}
 	tracker := resilientStateFrom(ctx)
@@ -808,7 +1018,7 @@ func (c *RemediationCoordinator) runPublication(ctx context.Context, budget *run
 	if tracker != nil {
 		tracker.lifecyclePhase = domain.RunStatePublishing
 	}
-	if tracker == nil || tracker.workspace == nil || tracker.validation == nil || !tracker.validation.Passed {
+	if tracker == nil || tracker.workspace == nil || (localValidationEnabled(run.ExecutionProfile) && (tracker.validation == nil || !tracker.validation.Passed)) {
 		return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, "publication_validation_required")
 	}
 	patchArtifact, ok := latestCheckpointArtifact(tracker.artifacts, "patch")
@@ -826,18 +1036,37 @@ func (c *RemediationCoordinator) runPublication(ctx context.Context, budget *run
 		policy = LifecyclePublicationPolicy{TargetBranch: tracker.publicationPolicy.TargetBranch, BranchPrefix: tracker.publicationPolicy.BranchPrefix}
 	}
 	if policy.TargetBranch == "" {
-		policy.TargetBranch = defaultPublicationTarget
+		return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, "publication_target_required")
 	}
 	if policy.BranchPrefix == "" {
 		policy.BranchPrefix = defaultPublicationPrefix
 	}
-	branchRef := strings.TrimSuffix(policy.BranchPrefix, "/") + "/" + shortLifecycleID(run.RunID)
-	key := lifecycleEffectKey("publication", run.RunID, patchArtifact.ContentHash+"\x00"+tracker.workspace.CurrentTreeHash)
-	existing, err := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, domain.LifecycleEffectPublication, key)
+	branchRef := strings.TrimSuffix(policy.BranchPrefix, "/") + "/" + run.IncidentID + "/" + run.RunID
+	publicationEffectKind := domain.LifecycleEffectPublication
+	publicationEffectName := "publication"
+	if c.gitPublication != nil {
+		publicationEffectKind = domain.LifecycleEffectGitPublish
+		publicationEffectName = "git_publish"
+	}
+	key := lifecycleEffectKey(publicationEffectName, run.RunID, patchArtifact.ContentHash+"\x00"+tracker.workspace.CurrentTreeHash)
+	existing, err := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, publicationEffectKind, key)
 	if err == nil {
 		switch existing.State {
 		case domain.LifecycleEffectSucceeded:
-			tracker.publication = &domain.CheckpointPublication{BranchRef: existing.BranchRef, TargetBranch: existing.TargetBranch, CommitHash: existing.CommitHash, DraftChangeRef: existing.DraftChangeRef, CompareURL: existing.CompareURL, HumanReviewOnly: true}
+			targetDiverged := hasTargetDivergence(existing.Summary)
+			tracker.publication = &domain.CheckpointPublication{
+				BranchRef: existing.BranchRef, TargetBranch: existing.TargetBranch, CommitHash: existing.CommitHash,
+				DraftChangeRef: existing.DraftChangeRef, CompareURL: existing.CompareURL,
+				HumanReviewOnly: true, TargetDiverged: targetDiverged,
+			}
+			if publicationEffectKind == domain.LifecycleEffectGitPublish {
+				return c.runChangeRequest(ctx, budget, run, tracker, domain.PublicationResult{
+					BranchRef: existing.BranchRef, TargetBranch: existing.TargetBranch,
+					CommitHash: existing.CommitHash, BaselineCommit: existing.BaselineCommit,
+					HumanReviewRequired: true, AlreadyPublished: true, TargetDiverged: targetDiverged,
+					Summary: existing.Summary,
+				}, plan)
+			}
 			return c.finishPublication(ctx, budget, run.RunID)
 		case domain.LifecycleEffectFailed:
 			if existing.Attempt >= maxLifecycleRecoveryAttempts {
@@ -874,7 +1103,7 @@ func (c *RemediationCoordinator) runPublication(ctx context.Context, budget *run
 		attempt = existing.Attempt + 1
 	}
 	started := domain.LifecycleEffect{
-		RunID: run.RunID, Kind: domain.LifecycleEffectPublication, IdempotencyKey: key,
+		RunID: run.RunID, Kind: publicationEffectKind, IdempotencyKey: key,
 		State: domain.LifecycleEffectStarted, Attempt: attempt, BaselineCommit: run.DeployedCommit,
 		WorkspaceID: tracker.workspace.WorkspaceID, ResultTreeHash: tracker.workspace.CurrentTreeHash,
 		ArtifactRef: patchArtifact.Reference, ContentHash: patchArtifact.ContentHash,
@@ -896,33 +1125,117 @@ func (c *RemediationCoordinator) runPublication(ctx context.Context, budget *run
 		CommitMessage:    "fix(remediation): apply " + boundedContinuationText(plan.PlanID, 96),
 		PatchArtifactRef: patchArtifact.Reference, PatchContentHash: patchArtifact.ContentHash,
 		ExpectedTreeHash: tracker.workspace.CurrentTreeHash, IdempotencyKey: key,
+		Repository: run.PublicationSnapshot, ChangePolicy: run.ChangePolicySnapshot,
+		WorkspaceLimitMiB: run.ExecutionProfile.WorkspaceLimitMiB,
 	}
 	if err := publicationRequest.Validate(); err != nil {
-		return c.handlePublicationFailure(ctx, budget, run, tracker, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_invalid_response", Retryable: false, Cause: err})
+		return c.handlePublicationFailure(ctx, budget, run, tracker, publicationEffectKind, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_invalid_response", Retryable: false, Cause: err})
 	}
-	result, callErr := c.publication.Publish(operationCtx, publicationRequest)
+	gitResult := domain.GitPublicationResult{}
+	var result domain.PublicationResult
+	var callErr error
+	if c.gitPublication != nil {
+		gitRequest := domain.GitPublicationRequest{
+			PublicationRequest: publicationRequest,
+			AuthoredAt:         run.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		gitResult, callErr = c.gitPublication.PublishGit(operationCtx, gitRequest)
+		if callErr == nil && (!gitResult.RemoteVerified || gitResult.ExpectedTreeHash != publicationRequest.ExpectedTreeHash) {
+			callErr = &domain.LifecycleRuntimeError{Code: "publication_tree_mismatch", Retryable: false}
+		}
+		result = domain.PublicationResult{
+			BranchRef: gitResult.BranchRef, CommitHash: gitResult.CommitHash,
+			BaselineCommit: gitResult.BaselineCommit, TargetBranch: gitResult.TargetBranch,
+			HumanReviewRequired: true, AlreadyPublished: gitResult.AlreadyPublished,
+			TargetDiverged: gitResult.TargetDiverged, Summary: gitResult.Summary,
+		}
+	} else {
+		result, callErr = c.publication.Publish(operationCtx, publicationRequest)
+	}
 	runDeadlineExceeded := runWorkDeadlineExceeded(operationCtx)
 	cancel()
 	if runDeadlineExceeded {
 		return c.handleLifecycleDeadline(ctx, budget, run.RunID, domain.RunStatePublishing)
 	}
 	if callErr != nil {
-		return c.handlePublicationFailure(ctx, budget, run, tracker, key, attempt, callErr)
+		return c.handlePublicationFailure(ctx, budget, run, tracker, publicationEffectKind, key, attempt, callErr)
 	}
 	if err := result.Validate(); err != nil {
-		return c.handlePublicationFailure(ctx, budget, run, tracker, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_invalid_response", Retryable: false, Cause: err})
+		return c.handlePublicationFailure(ctx, budget, run, tracker, publicationEffectKind, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_invalid_response", Retryable: false, Cause: err})
 	}
 	if result.BaselineCommit != run.DeployedCommit || result.TargetBranch != policy.TargetBranch || result.BranchRef != branchRef {
-		return c.handlePublicationFailure(ctx, budget, run, tracker, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_baseline_mismatch", Retryable: false})
+		return c.handlePublicationFailure(ctx, budget, run, tracker, publicationEffectKind, key, attempt, &domain.LifecycleRuntimeError{Code: "publication_baseline_mismatch", Retryable: false})
 	}
-	tracker.publication = &domain.CheckpointPublication{BranchRef: result.BranchRef, TargetBranch: result.TargetBranch, CommitHash: result.CommitHash, DraftChangeRef: result.DraftChangeRef, CompareURL: result.CompareURL, HumanReviewOnly: true}
+	tracker.publication = &domain.CheckpointPublication{
+		BranchRef: result.BranchRef, TargetBranch: result.TargetBranch, CommitHash: result.CommitHash,
+		DraftChangeRef: result.DraftChangeRef, CompareURL: result.CompareURL,
+		HumanReviewOnly: true, TargetDiverged: result.TargetDiverged,
+	}
+	publicationSummary := strings.TrimSpace(result.Summary)
+	if publicationSummary == "" {
+		publicationSummary = "branch published; human review required"
+	}
+	publicationSummary = targetDivergenceSummary(result.TargetDiverged, publicationSummary)
 	if _, err := c.lifecycleStore.UpsertLifecycleEffect(ctx, domain.LifecycleEffect{
-		RunID: run.RunID, Kind: domain.LifecycleEffectPublication, IdempotencyKey: key,
+		RunID: run.RunID, Kind: publicationEffectKind, IdempotencyKey: key,
 		State: domain.LifecycleEffectSucceeded, Attempt: attempt, BaselineCommit: run.DeployedCommit,
 		WorkspaceID: tracker.workspace.WorkspaceID, ResultTreeHash: tracker.workspace.CurrentTreeHash,
 		ArtifactRef: patchArtifact.Reference, ContentHash: patchArtifact.ContentHash,
 		BranchRef: result.BranchRef, TargetBranch: result.TargetBranch, CommitHash: result.CommitHash, DraftChangeRef: result.DraftChangeRef,
-		CompareURL: result.CompareURL, Summary: "publication completed; human review required",
+		CompareURL: result.CompareURL, Summary: publicationSummary,
+	}); err != nil {
+		return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(err))
+	}
+	if err := c.checkpointRun(ctx, tracker, domain.RunStatePublishing, domain.CheckpointReasonPhaseBoundary); err != nil {
+		return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(err))
+	}
+	if publicationEffectKind == domain.LifecycleEffectGitPublish {
+		return c.runChangeRequest(ctx, budget, run, tracker, result, plan)
+	}
+	return c.finishPublication(ctx, budget, run.RunID)
+}
+
+func (c *RemediationCoordinator) runChangeRequest(ctx context.Context, budget *runBudget, run domain.Run, tracker *resilientRunState, publication domain.PublicationResult, plan domain.RepairPlanCandidate) error {
+	if c.changeRequests == nil {
+		return c.finishPublication(ctx, budget, run.RunID)
+	}
+	capabilities, err := c.changeRequests.ProbeCapabilities(ctx, run.ProjectID, run.PublicationSnapshot)
+	if err != nil {
+		return c.handlePublicationFailure(ctx, budget, run, tracker, domain.LifecycleEffectChangeRequest,
+			lifecycleEffectKey("change_request", run.RunID, publication.CommitHash), 1, err)
+	}
+	if capabilities.Status == domain.CapabilityUnsupported || (capabilities.Status == domain.CapabilitySupported && !capabilities.DraftSupported) {
+		return c.finishPublication(ctx, budget, run.RunID)
+	}
+	if capabilities.Status != domain.CapabilitySupported {
+		return c.blockLifecycleForPolicy(ctx, budget, run.RunID, domain.RunStatePublishing, "change_request_capability_unknown")
+	}
+	lookup := domain.ChangeRequestLookup{
+		ProjectID: run.ProjectID, RepositoryID: capabilities.RepositoryID,
+		SourceBranch: publication.BranchRef, TargetBranch: publication.TargetBranch,
+		PublicationSnapshot: run.PublicationSnapshot,
+	}
+	change, err := c.changeRequests.FindChangeRequest(ctx, lookup)
+	if err == nil && change.Reference == "" {
+		change, err = c.changeRequests.CreateChangeRequest(ctx, domain.ChangeRequestRequest{
+			ChangeRequestLookup: lookup,
+			Title:               "Hotfix for incident " + run.IncidentID,
+			Body:                "Incident: " + run.IncidentID + "\n\nBaseline: " + run.DeployedCommit + "\n\nPlan: " + plan.PlanID,
+			Draft:               capabilities.DraftSupported, CommitHash: publication.CommitHash,
+			IdempotencyKey: lifecycleEffectKey("change_request", run.RunID, publication.CommitHash),
+		})
+	}
+	key := lifecycleEffectKey("change_request", run.RunID, publication.CommitHash)
+	if err != nil {
+		return c.handlePublicationFailure(ctx, budget, run, tracker, domain.LifecycleEffectChangeRequest, key, 1, err)
+	}
+	tracker.publication.DraftChangeRef = change.Reference
+	tracker.publication.CompareURL = change.URL
+	if _, err := c.lifecycleStore.UpsertLifecycleEffect(ctx, domain.LifecycleEffect{
+		RunID: run.RunID, Kind: domain.LifecycleEffectChangeRequest, IdempotencyKey: key,
+		State: domain.LifecycleEffectSucceeded, Attempt: 1, BaselineCommit: run.DeployedCommit,
+		BranchRef: publication.BranchRef, TargetBranch: publication.TargetBranch, CommitHash: publication.CommitHash,
+		DraftChangeRef: change.Reference, CompareURL: change.URL, Summary: "change request ready for human review",
 	}); err != nil {
 		return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(err))
 	}
@@ -939,24 +1252,30 @@ func (c *RemediationCoordinator) finishPublication(ctx context.Context, budget *
 	return c.notifyTerminal(ctx, runID, domain.RunStateAwaitingHumanReview, domain.FixabilityCodeFixable)
 }
 
-func (c *RemediationCoordinator) handlePublicationFailure(ctx context.Context, budget *runBudget, run domain.Run, tracker *resilientRunState, key string, attempt int, cause error) error {
+func (c *RemediationCoordinator) handlePublicationFailure(ctx context.Context, budget *runBudget, run domain.Run, tracker *resilientRunState, kind domain.LifecycleEffectKind, key string, attempt int, cause error) error {
 	code, retryable := lifecycleErrorInfo(cause)
 	state := domain.LifecycleEffectRecoverable
 	if !retryable || attempt >= maxLifecycleRecoveryAttempts {
 		state = domain.LifecycleEffectFailed
 	}
 	projection := domain.LifecycleEffect{
-		RunID: run.RunID, Kind: domain.LifecycleEffectPublication, IdempotencyKey: key,
+		RunID: run.RunID, Kind: kind, IdempotencyKey: key,
 		State: state, Attempt: attempt, BaselineCommit: run.DeployedCommit,
 		WorkspaceID: tracker.workspace.WorkspaceID, TargetBranch: publicationTargetBranch(tracker, c.publicationPolicy),
 		ErrorCode: code, Summary: lifecycleSafeMessage(code),
 	}
-	if previous, getErr := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, domain.LifecycleEffectPublication, key); getErr == nil {
+	if previous, getErr := c.lifecycleStore.GetLifecycleEffect(ctx, run.RunID, kind, key); getErr == nil {
 		projection.BranchRef = previous.BranchRef
 		projection.TargetBranch = previous.TargetBranch
+		projection.CommitHash = previous.CommitHash
+		projection.DraftChangeRef = previous.DraftChangeRef
+		projection.CompareURL = previous.CompareURL
 		projection.ResultTreeHash = previous.ResultTreeHash
 		projection.ArtifactRef = previous.ArtifactRef
 		projection.ContentHash = previous.ContentHash
+		if hasTargetDivergence(previous.Summary) {
+			projection.Summary = targetDivergenceSummary(true, lifecycleSafeMessage(code))
+		}
 	} else if !errors.Is(getErr, domain.ErrLifecycleEffectNotFound) {
 		return c.fail(ctx, run.RunID, domain.RunStatePublishing, markPersistenceFailure(getErr))
 	}
@@ -1068,12 +1387,15 @@ func (c *RemediationCoordinator) runLifecycleTool(ctx context.Context, budget *r
 	var callErr error
 	runDeadlineExceeded := false
 	if cached != nil {
-		result = lifecycleToolResultFromEffect(tool, *cached)
+		result = lifecycleToolResultFromEffect(tool, *cached, tracker.workspace.CurrentTreeHash)
 	} else {
 		operationCtx, cancel := budget.operationContext(ctx)
 		workspace := checkpointWorkspaceIdentity(*tracker.workspace)
 		workspace.RunID = run.RunID
-		result, callErr = c.lifecycleTools.Execute(operationCtx, phase, workspace, tracker.validationCommands, key, tool, req.Parameters)
+		result, callErr = c.lifecycleTools.Execute(
+			operationCtx, phase, workspace, tracker.validationCommands,
+			run.ExecutionProfile, run.ChangePolicySnapshot, key, tool, req.Parameters,
+		)
 		runDeadlineExceeded = runWorkDeadlineExceeded(operationCtx)
 		cancel()
 		if runDeadlineExceeded {
@@ -1288,14 +1610,40 @@ func (c *RemediationCoordinator) persistLifecycleToolSuccess(ctx context.Context
 		if !ok {
 			return c.fail(ctx, run.RunID, phase, markPersistenceFailure(fmt.Errorf("validation result type is invalid")))
 		}
-		tracker.validation = &domain.CheckpointValidation{CommandID: validation.CommandID, CommandVersion: validation.CommandVersion, Passed: validation.Passed, OutputArtifact: validation.OutputArtifactRef, OutputHash: validation.OutputHash}
+		resultEntry := domain.CheckpointValidationResult{
+			CommandID: validation.CommandID, CommandVersion: validation.CommandVersion,
+			TreeHash: validation.TreeHash, ImageDigest: validation.ImageDigest, Passed: validation.Passed,
+			OutputArtifact: validation.OutputArtifactRef, OutputHash: validation.OutputHash,
+		}
+		results := []domain.CheckpointValidationResult{}
+		if tracker.validation != nil && tracker.validation.TreeHash == validation.TreeHash {
+			results = append(results, tracker.validation.Results...)
+		}
+		replaced := false
+		for index := range results {
+			if results[index].CommandID == validation.CommandID {
+				results[index] = resultEntry
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			results = append(results, resultEntry)
+		}
+		tracker.validation = &domain.CheckpointValidation{
+			CommandID: validation.CommandID, CommandVersion: validation.CommandVersion,
+			OutputArtifact: validation.OutputArtifactRef, OutputHash: validation.OutputHash,
+			TreeHash: validation.TreeHash, Results: results,
+		}
+		tracker.validation.Passed = validationSetPassed(tracker.validation, tracker.validationCommands, tracker.workspace.CurrentTreeHash)
 		if validation.OutputArtifactRef != "" {
 			appendCheckpointArtifact(&tracker.artifacts, domain.CheckpointArtifact{Kind: "validation", Reference: validation.OutputArtifactRef, ContentHash: validation.OutputHash, SizeBytes: validation.BytesRetrieved})
 		}
 		if _, err := c.lifecycleStore.UpsertLifecycleEffect(ctx, domain.LifecycleEffect{
 			RunID: run.RunID, Kind: domain.LifecycleEffectValidation, IdempotencyKey: key, State: domain.LifecycleEffectSucceeded,
 			Attempt: attempt, BaselineCommit: run.DeployedCommit, WorkspaceID: validation.WorkspaceID,
-			CommandID: validation.CommandID, CommandVersion: validation.CommandVersion,
+			ResultTreeHash: validation.TreeHash,
+			CommandID:      validation.CommandID, CommandVersion: validation.CommandVersion,
 			ValidationKnown: true, ValidationPassed: validation.Passed,
 			ArtifactRef: validation.OutputArtifactRef, ContentHash: validation.OutputHash, Summary: sanitizeReviewText(validation.Summary),
 		}); err != nil {
@@ -1308,7 +1656,37 @@ func (c *RemediationCoordinator) persistLifecycleToolSuccess(ctx context.Context
 	return nil
 }
 
-func lifecycleToolResultFromEffect(tool string, effect domain.LifecycleEffect) ToolResult {
+func validationResultsPassButIncomplete(validation *domain.CheckpointValidation) bool {
+	if validation == nil || len(validation.Results) == 0 {
+		return false
+	}
+	for _, result := range validation.Results {
+		if !result.Passed {
+			return false
+		}
+	}
+	return true
+}
+
+func validationSetPassed(validation *domain.CheckpointValidation, commands map[string]int64, treeHash string) bool {
+	if validation == nil || len(commands) == 0 || validation.TreeHash != treeHash {
+		return false
+	}
+	passed := make(map[string]int64, len(validation.Results))
+	for _, result := range validation.Results {
+		if result.Passed && result.TreeHash == treeHash {
+			passed[result.CommandID] = result.CommandVersion
+		}
+	}
+	for commandID, version := range commands {
+		if passed[commandID] != version {
+			return false
+		}
+	}
+	return true
+}
+
+func lifecycleToolResultFromEffect(tool string, effect domain.LifecycleEffect, currentTreeHash string) ToolResult {
 	switch tool {
 	case ToolWorkspaceApplyPatch:
 		return ToolResult{Tool: tool, Summary: effect.Summary, BytesRetrieved: 0, Payload: domain.PatchResult{
@@ -1316,9 +1694,13 @@ func lifecycleToolResultFromEffect(tool string, effect domain.LifecycleEffect) T
 			ContentHash: effect.ContentHash, ResultTreeHash: effect.ResultTreeHash, Summary: effect.Summary,
 		}}
 	case ToolWorkspaceRunValidation:
+		validationTree := effect.ResultTreeHash
+		if validationTree == "" {
+			validationTree = currentTreeHash
+		}
 		return ToolResult{Tool: tool, Summary: effect.Summary, Payload: domain.ValidationResult{
 			RunID: effect.RunID, WorkspaceID: effect.WorkspaceID, CommandID: effect.CommandID,
-			CommandVersion: effect.CommandVersion, Passed: effect.ValidationPassed,
+			CommandVersion: effect.CommandVersion, TreeHash: validationTree, Passed: effect.ValidationPassed,
 			OutputArtifactRef: effect.ArtifactRef, OutputHash: effect.ContentHash, Summary: effect.Summary,
 		}}
 	default:
@@ -1361,7 +1743,16 @@ func (c *RemediationCoordinator) handleLifecycleTurnError(ctx context.Context, b
 	}
 	tracker.recordLifecycleFailure("model_turn\x00" + code)
 	if tracker.lifecycleRecoveryAttempts >= maxLifecycleRecoveryAttempts {
-		return true, c.blockLifecycleForPolicy(ctx, budget, runID, phase, "lifecycle_model_no_progress")
+		reason := "lifecycle_model_no_progress"
+		if errors.Is(cause, ErrInvalidEnvelope) {
+			switch phase {
+			case domain.RunStatePatching:
+				reason = "patch_protocol_no_progress"
+			case domain.RunStateValidating:
+				reason = "validation_protocol_no_progress"
+			}
+		}
+		return true, c.blockLifecycleForPolicy(ctx, budget, runID, phase, reason)
 	}
 	kind := domain.RecoveryChallengeKindContextRehydration
 	suggested := []string{"retry_transient", "rehydrate_context"}
@@ -1379,12 +1770,17 @@ func (c *RemediationCoordinator) handleLifecycleTurnError(ctx context.Context, b
 	return false, nil
 }
 
-func (c *RemediationCoordinator) handleLifecycleStop(ctx context.Context, budget *runBudget, runID string, phase domain.RunState) (bool, error) {
+func (c *RemediationCoordinator) handleLifecycleStop(ctx context.Context, budget *runBudget, runID string, phase domain.RunState, output *StopOutput) (bool, error) {
 	tracker := resilientStateFrom(ctx)
 	if tracker == nil {
 		return true, ErrLifecycleUnavailable
 	}
+	tracker.resetLifecycleProtocolNoProgress()
 	tracker.lifecycleStopAttempts++
+	if phase == domain.RunStatePatching && output != nil && output.Code == "selected_change_absent_at_baseline" {
+		tracker.nextActions = []string{"Reconcile the selected repair plan with the deployed baseline commit and workspace tree; review the incident evidence before selecting a new plan. Do not patch or publish the mismatched plan."}
+		return true, c.blockLifecycleForPolicy(ctx, budget, runID, phase, "patch_plan_precondition_mismatch")
+	}
 	if tracker.lifecycleStopAttempts >= maxLifecycleRecoveryAttempts {
 		return true, c.blockLifecycleForPolicy(ctx, budget, runID, phase, "agent_stop_no_progress")
 	}
@@ -1449,6 +1845,12 @@ func lifecycleRemainingBudget(ctx context.Context) map[string]int64 {
 }
 
 func (c *RemediationCoordinator) blockLifecycleForPolicy(ctx context.Context, budget *runBudget, runID string, phase domain.RunState, reason string) error {
+	if tracker := resilientStateFrom(ctx); tracker != nil {
+		switch reason {
+		case "patch_protocol_no_progress", "validation_protocol_no_progress", "lifecycle_model_no_progress", "agent_stop_no_progress":
+			tracker.nextActions = []string{"Review the lifecycle protocol failures and reconcile the selected repair plan with the deployed baseline and persisted workspace results before retrying. Do not publish an unvalidated or unchanged patch."}
+		}
+	}
 	if _, err := c.transitionBudgeted(ctx, budget, runID, phase, domain.RunStateBlockedManualReview, domain.Effect{TerminalReason: safeLifecycleTerminalReason(reason)}); err != nil {
 		return err
 	}
@@ -1461,7 +1863,7 @@ func safeLifecycleTerminalReason(reason string) string {
 		"publication_retry_exhausted", "workspace_retry_exhausted", "patch_retry_exhausted", "validation_retry_exhausted",
 		"publication_validation_required", "publication_patch_artifact_required",
 		"patch_protocol_no_progress", "validation_protocol_no_progress", "validation_no_progress",
-		"lifecycle_tool_no_progress", "lifecycle_model_no_progress", "agent_stop_no_progress":
+		"lifecycle_tool_no_progress", "lifecycle_model_no_progress", "agent_stop_no_progress", "patch_plan_precondition_mismatch":
 		return reason
 	default:
 		if safe := safeLifecycleErrorCode(reason); safe != "lifecycle_failure" {

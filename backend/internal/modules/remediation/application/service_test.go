@@ -113,6 +113,21 @@ func (f *fakeBackgroundTrigger) QueueContinuation(_ context.Context, input domai
 	return f.continueRun, nil
 }
 
+type fakeReconfiguredTrigger struct {
+	*fakeTriggerStarter
+	reconfigureCalls int
+	reconfiguredRun  domain.Run
+}
+
+func (f *fakeReconfiguredTrigger) QueueReconfiguredAttempt(_ context.Context, input domain.NextAttempt) (domain.Run, error) {
+	f.reconfigureCalls++
+	f.next = input
+	if f.continueErr != nil {
+		return domain.Run{}, f.continueErr
+	}
+	return f.reconfiguredRun, nil
+}
+
 func TestNewServiceRequiresDependencies(t *testing.T) {
 	if _, err := application.NewService(application.ServiceOptions{}); err == nil {
 		t.Fatal("NewService() error = nil")
@@ -153,6 +168,70 @@ func TestContinueRemediationCreatesTheNextAttemptWithOptimisticPredecessor(t *te
 		trigger.next.ContextVersion != 9 || trigger.next.TriggerReason != domain.TriggerOriginManualContinue ||
 		trigger.next.ContinuationReason != "operator requested continuation" {
 		t.Fatalf("continuation request = %#v", trigger.next)
+	}
+}
+
+func TestRepairWithCurrentPolicyCreatesFreshAutoHotfixAttempt(t *testing.T) {
+	lookup := &fakeIncidentLookup{identity: application.IncidentIdentity{
+		ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 9,
+	}}
+	trigger := &fakeReconfiguredTrigger{
+		fakeTriggerStarter: &fakeTriggerStarter{},
+		reconfiguredRun: domain.Run{
+			RunID: "run-2", SeriesID: "series-1", IncidentID: testIncidentUUID,
+			LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 2, State: domain.RunStateQueued,
+			ExecutionMode: domain.ExecutionModeAutoHotfix, AgentLoopMode: domain.AgentLoopModeResilientV1,
+		},
+	}
+	reviews := &fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{
+		RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID,
+		LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1,
+		State: domain.RunStateDiagnosisReadyForReview, ContextVersion: 9, Version: 4,
+	}}}
+	service := newManualServiceWithReviews(t,
+		&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}}, lookup, trigger, reviews,
+	)
+	child, err := service.RepairWithCurrentPolicy(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4)
+	if err != nil {
+		t.Fatalf("RepairWithCurrentPolicy() error = %v", err)
+	}
+	if child.RunID != "run-2" || trigger.reconfigureCalls != 1 {
+		t.Fatalf("child/calls = %#v/%d", child, trigger.reconfigureCalls)
+	}
+	if trigger.next.TriggerReason != domain.TriggerOriginManualReconfigure || trigger.next.ContinuationOfRunID != "run-1" ||
+		trigger.next.ContextVersion != 9 || trigger.next.ExpectedPreviousVersion != 4 {
+		t.Fatalf("reconfigure request = %#v", trigger.next)
+	}
+}
+
+func TestRepairWithCurrentPolicyAllowsOnlyTerminalReviewStates(t *testing.T) {
+	for _, state := range []domain.RunState{domain.RunStateFailed, domain.RunStateBudgetExhausted, domain.RunStateBlockedManualReview, domain.RunStateDiagnosisReadyForReview} {
+		t.Run(string(state), func(t *testing.T) {
+			trigger := &fakeReconfiguredTrigger{fakeTriggerStarter: &fakeTriggerStarter{}, reconfiguredRun: domain.Run{
+				RunID: "run-2", SeriesID: "series-1", AttemptNumber: 2, ExecutionMode: domain.ExecutionModeAutoHotfix,
+			}}
+			service := newManualServiceWithReviews(t,
+				&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
+				&fakeIncidentLookup{identity: application.IncidentIdentity{ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 1}},
+				trigger,
+				&fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID, LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1, State: state, Version: 4}}},
+			)
+			if _, err := service.RepairWithCurrentPolicy(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4); err != nil {
+				t.Fatalf("state %s error = %v", state, err)
+			}
+		})
+	}
+	for _, state := range []domain.RunState{domain.RunStateCompletedNonCode} {
+		trigger := &fakeReconfiguredTrigger{fakeTriggerStarter: &fakeTriggerStarter{}}
+		service := newManualServiceWithReviews(t,
+			&fakeProjectAccess{project: projectdomain.Project{ID: testProjectID}},
+			&fakeIncidentLookup{identity: application.IncidentIdentity{ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 2, DeployedCommit: "abc123", ContextVersion: 1}},
+			trigger,
+			&fakeReviewQuery{agg: domain.RunAggregate{Run: domain.Run{RunID: "run-1", SeriesID: "series-1", IncidentID: testIncidentUUID, LifecycleGeneration: 2, DeployedCommit: "abc123", AttemptNumber: 1, State: state, Version: 4}}},
+		)
+		if _, err := service.RepairWithCurrentPolicy(context.Background(), authdomain.User{ID: "operator"}, "payments", "INC-2049", 2, "run-1", 4); !errors.Is(err, application.ErrUnsupportedContinuation) {
+			t.Fatalf("state %s error = %v", state, err)
+		}
 	}
 }
 

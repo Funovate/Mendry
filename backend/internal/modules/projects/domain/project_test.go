@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -210,5 +211,39 @@ func TestValidateWebhookTokenColumns(t *testing.T) {
 	url, err := InboundWebhookURL("http://127.0.0.1:8080", token)
 	if err != nil || url != "http://127.0.0.1:8080/hooks/"+token {
 		t.Fatalf("InboundWebhookURL() = %q, %v", url, err)
+	}
+}
+
+func TestValidateRemediationPolicyCompatibilityAndAutoRequirements(t *testing.T) {
+	legacy := RemediationPolicy{AgentLoopMode: AgentLoopModeResilientV1}
+	if err := ValidateRemediationPolicy(legacy); err != nil {
+		t.Fatalf("legacy policy must remain analysis-only compatible: %v", err)
+	}
+
+	auto := DefaultRemediationPolicy()
+	auto.AgentLoopMode = AgentLoopModeResilientV1
+	auto.ExecutionMode = RemediationExecutionAutoHotfix
+	auto.Publication.GitCredentialSecretID = "credential-id"
+	if err := ValidateRemediationPolicy(auto); err != nil {
+		t.Fatalf("valid basic auto policy rejected: %v", err)
+	}
+
+	enhanced := true
+	auto.ValidationProfile.Enabled = &enhanced
+	auto.ValidationProfile.ImageDigest = "sha256:" + strings.Repeat("a", 64)
+	auto.ValidationProfile.WorkingDirectory = "."
+	auto.ValidationProfile.RequiredCommands = []ValidationCommand{{ID: "unit", Version: 1, Argv: []string{"go", "test", "./..."}, TimeoutSeconds: 600}}
+	if err := ValidateRemediationPolicy(auto); err != nil {
+		t.Fatalf("valid auto policy rejected: %v", err)
+	}
+
+	auto.AgentLoopMode = AgentLoopModeLegacy
+	if err := ValidateRemediationPolicy(auto); err == nil {
+		t.Fatal("auto hotfix accepted legacy loop mode")
+	}
+	auto.AgentLoopMode = AgentLoopModeResilientV1
+	auto.ValidationProfile.RequiredCommands = nil
+	if err := ValidateRemediationPolicy(auto); err == nil {
+		t.Fatal("auto hotfix accepted missing required commands")
 	}
 }

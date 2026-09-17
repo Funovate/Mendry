@@ -149,6 +149,34 @@ func continuationTriggerRequest(in domain.NextAttempt) TriggerRequest {
 	}
 }
 
+// QueueReconfiguredAttempt creates a queued child using the current project policy,
+// then starts a fresh diagnosis in the background. It intentionally does not use
+// prepareContinuation, which can resume planning checkpoints from the predecessor.
+func (t *Trigger) QueueReconfiguredAttempt(ctx context.Context, in domain.NextAttempt) (domain.Run, error) {
+	if err := in.Validate(); err != nil {
+		return domain.Run{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+	}
+	attempts, ok := t.store.(domain.ReconfiguredAttemptStore)
+	if !ok {
+		return domain.Run{}, domain.ErrReconfigurationUnavailable
+	}
+	if t.coordinator == nil {
+		return attempts.CreateReconfiguredAttempt(ctx, in)
+	}
+	prepared, err := t.coordinator.prepareReconfigured(ctx, in, nil)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	background := context.WithoutCancel(ctx)
+	go func() {
+		if _, driveErr := t.coordinator.runQueued(background, prepared.child, prepared.brief, "", "",
+			prepared.resumePhase, prepared.child.TriggerReason, "", nil); driveErr != nil {
+			t.reportFailure(background, continuationTriggerRequest(in), driveErr)
+		}
+	}()
+	return prepared.child, nil
+}
+
 const maxAutomaticContinuations = 3
 
 func (t *Trigger) emitAutomatic(ctx context.Context, req TriggerRequest) (domain.Run, error) {

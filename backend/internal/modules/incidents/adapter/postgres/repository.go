@@ -201,13 +201,21 @@ func (r *Repository) RecordOccurrence(ctx context.Context, projectID, fingerprin
 	return mapIncident(incidentRowFromOccurrence(row))
 }
 
-func (r *Repository) List(ctx context.Context, projectID string, limit int32) (application.ListResult, error) {
+func (r *Repository) List(ctx context.Context, projectID string, query application.ListQuery) (application.ListResult, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
 	if err != nil {
 		return application.ListResult{}, err
 	}
+	var statusFilter *string
+	if query.Status != nil {
+		s := string(*query.Status)
+		statusFilter = &s
+	}
 	rows, err := r.queries.ListIncidents(platformpostgres.WithOperation(ctx, "incident.list"), incidentdb.ListIncidentsParams{
-		ProjectID: projectUUID, ResultLimit: limit,
+		ProjectID:    projectUUID,
+		Status:       statusFilter,
+		ResultLimit:  query.Limit,
+		ResultOffset: query.Offset,
 	})
 	if err != nil {
 		return application.ListResult{}, newRepositoryError("list incidents", err)

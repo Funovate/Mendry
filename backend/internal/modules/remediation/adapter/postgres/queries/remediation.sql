@@ -36,15 +36,70 @@ INSERT INTO remediation_run (
     trigger_reason,
     analysis_only,
     agent_loop_mode,
-    agent_loop_policy_version
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
 )
 SELECT sqlc.arg(series_id), sqlc.arg(attempt_number), sqlc.arg(state),
        sqlc.arg(context_version), sqlc.arg(trigger_reason), sqlc.arg(analysis_only),
-       project.agent_loop_mode, project.agent_loop_policy_version
+       project.agent_loop_mode, project.agent_loop_policy_version,
+       project.remediation_execution_mode,
+       COALESCE((SELECT jsonb_object_agg(command->>'id', (command->>'version')::bigint)
+                 FROM jsonb_array_elements(project.remediation_validation_profile->'requiredCommands') AS command), '{}'::jsonb),
+       project.remediation_validation_profile->>'imageDigest',
+       project.remediation_validation_profile,
+       jsonb_build_object(
+           'remoteUrl', COALESCE(repository.remote_url, ''),
+           'scmProvider', COALESCE(repository.scm_provider, ''),
+           'transport', COALESCE(repository.transport, ''),
+           'productionBranch', COALESCE(repository.production_branch, ''),
+           'repositoryCredentialSecretId', COALESCE(repository.credential_secret_id::text, ''),
+           'repositoryCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id AND secret.id = repository.credential_secret_id
+           ), 0),
+           'gitCredentialSecretId', COALESCE(project.remediation_publication->>'gitCredentialSecretId', ''),
+           'gitCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+           ), 0),
+           'apiCredentialSecretId', COALESCE(project.remediation_publication->>'apiCredentialSecretId', ''),
+           'apiCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'apiCredentialSecretId', '')::uuid
+           ), 0),
+           'apiBaseUrl', COALESCE(project.remediation_publication->>'apiBaseUrl', '')
+       ),
+       project.remediation_change_policy,
+       COALESCE(repository.production_branch, ''),
+       COALESCE(project.remediation_publication->>'branchPrefix', 'hotfix/remediation')
 FROM remediation_series AS series
 JOIN incidents AS incident ON incident.id = series.incident_id
 JOIN projects AS project ON project.id = incident.project_id
+LEFT JOIN project_repositories AS repository ON repository.project_id = project.id
 WHERE series.id = sqlc.arg(series_id)
+  AND (
+      project.remediation_execution_mode <> 'auto_hotfix'
+      OR (
+          project.remediation_validation_profile ? 'enabled'
+          AND COALESCE((project.remediation_validation_profile->>'enabled')::boolean, false) = false
+          AND COALESCE(project.remediation_validation_profile->>'imageDigest', '') = ''
+      )
+      OR (
+          project.remediation_validation_profile->>'preparedCommit' = series.deployed_commit
+          AND project.remediation_validation_profile->>'toolchainId' <> ''
+          AND project.remediation_validation_profile->>'buildPlanVersion' <> ''
+          AND project.remediation_validation_profile->>'dependencyHash' ~ '^[0-9a-f]{64}$'
+      )
+  )
 RETURNING *;
 
 -- name: CreateRemediationNextRun :one
@@ -58,15 +113,125 @@ INSERT INTO remediation_run (
     context_version,
     analysis_only,
     agent_loop_mode,
-    agent_loop_policy_version
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
 ) VALUES (
     sqlc.arg(series_id), sqlc.arg(attempt_number), 'queued',
     sqlc.arg(continuation_of_run_id), sqlc.arg(trigger_reason),
     sqlc.arg(continuation_reason), sqlc.arg(context_version),
     (SELECT analysis_only FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
     (SELECT agent_loop_mode FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
-    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id))
+    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT execution_mode FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT validation_commands FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT validation_image_digest FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT execution_profile FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT publication_snapshot FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT change_policy FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT publication_target_branch FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id)),
+    (SELECT publication_branch_prefix FROM remediation_run WHERE id = sqlc.arg(continuation_of_run_id))
 )
+RETURNING *;
+
+-- name: CreateRemediationReconfiguredRun :one
+-- Unlike CreateRemediationNextRun, this query snapshots the current project
+-- policy and repository state. It is used only by manual_reconfigure.
+INSERT INTO remediation_run (
+    series_id,
+    attempt_number,
+    state,
+    continuation_of_run_id,
+    trigger_reason,
+    continuation_reason,
+    context_version,
+    analysis_only,
+    agent_loop_mode,
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
+)
+SELECT sqlc.arg(series_id), sqlc.arg(attempt_number), 'queued',
+       sqlc.arg(continuation_of_run_id), 'manual_reconfigure',
+       sqlc.arg(continuation_reason), sqlc.arg(context_version), false,
+       project.agent_loop_mode, project.agent_loop_policy_version,
+       project.remediation_execution_mode,
+       COALESCE((SELECT jsonb_object_agg(command->>'id', (command->>'version')::bigint)
+                 FROM jsonb_array_elements(project.remediation_validation_profile->'requiredCommands') AS command), '{}'::jsonb),
+       project.remediation_validation_profile->>'imageDigest',
+       project.remediation_validation_profile,
+       jsonb_build_object(
+           'remoteUrl', COALESCE(repository.remote_url, ''),
+           'scmProvider', COALESCE(repository.scm_provider, ''),
+           'transport', COALESCE(repository.transport, ''),
+           'productionBranch', COALESCE(repository.production_branch, ''),
+           'repositoryCredentialSecretId', COALESCE(repository.credential_secret_id::text, ''),
+           'repositoryCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id AND secret.id = repository.credential_secret_id
+           ), 0),
+           'gitCredentialSecretId', COALESCE(project.remediation_publication->>'gitCredentialSecretId', ''),
+           'gitCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+           ), 0),
+           'apiCredentialSecretId', COALESCE(project.remediation_publication->>'apiCredentialSecretId', ''),
+           'apiCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'apiCredentialSecretId', '')::uuid
+           ), 0),
+           'apiBaseUrl', COALESCE(project.remediation_publication->>'apiBaseUrl', '')
+       ),
+       project.remediation_change_policy,
+       COALESCE(repository.production_branch, ''),
+       COALESCE(project.remediation_publication->>'branchPrefix', 'hotfix/remediation')
+FROM remediation_series AS series
+JOIN remediation_run AS predecessor ON predecessor.id = sqlc.arg(continuation_of_run_id)
+JOIN incidents AS incident ON incident.id = series.incident_id
+JOIN projects AS project ON project.id = incident.project_id
+JOIN project_repositories AS repository ON repository.project_id = project.id
+WHERE series.id = sqlc.arg(series_id)
+  AND predecessor.series_id = series.id
+  AND incident.status = 'Open'
+  AND repository.deployed_commit = series.deployed_commit
+  AND project.agent_loop_mode = 'resilient_v1'
+  AND project.remediation_execution_mode = 'auto_hotfix'
+  AND (
+      (
+          project.remediation_validation_profile ? 'enabled'
+          AND COALESCE((project.remediation_validation_profile->>'enabled')::boolean, false) = false
+          AND COALESCE(project.remediation_validation_profile->>'imageDigest', '') = ''
+      )
+      OR (
+          project.remediation_validation_profile->>'preparedCommit' = series.deployed_commit
+          AND project.remediation_validation_profile->>'toolchainId' <> ''
+          AND project.remediation_validation_profile->>'buildPlanVersion' <> ''
+          AND project.remediation_validation_profile->>'dependencyHash' ~ '^[0-9a-f]{64}$'
+          AND project.remediation_validation_profile->>'imageDigest' ~ '^sha256:[0-9a-f]{64}$'
+          AND jsonb_array_length(COALESCE(project.remediation_validation_profile->'requiredCommands', '[]'::jsonb)) > 0
+      )
+  )
+  AND NULLIF(project.remediation_publication->>'gitCredentialSecretId', '') IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM project_secrets AS secret
+      WHERE secret.project_id = project.id
+        AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+        AND secret.kind = 'git_credential'
+  )
 RETURNING *;
 
 -- name: GetRemediationRun :one
@@ -95,6 +260,9 @@ LIMIT 1;
 
 -- name: LockRemediationIncidentContextVersion :one
 SELECT version FROM incidents WHERE id = $1 FOR SHARE;
+
+-- name: GetRemediationIncidentStatus :one
+SELECT status FROM incidents WHERE id = $1 FOR SHARE;
 
 -- name: UpdateRemediationRunState :one
 UPDATE remediation_run

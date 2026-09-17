@@ -64,13 +64,13 @@ func (r *Repository) Create(ctx context.Context, observation domain.Observation)
 	return mapObservation(row)
 }
 
-func (r *Repository) List(ctx context.Context, projectID string, limit int32) (application.ListResult, error) {
+func (r *Repository) List(ctx context.Context, projectID string, limit, offset int32) (application.ListResult, error) {
 	projectUUID, err := uuidParameter(projectID, "project")
 	if err != nil {
 		return application.ListResult{}, err
 	}
 	rows, err := r.queries.ListObservations(platformpostgres.WithOperation(ctx, "observation.list"), observationdb.ListObservationsParams{
-		ProjectID: projectUUID, ResultLimit: limit,
+		ProjectID: projectUUID, ResultLimit: limit, ResultOffset: offset,
 	})
 	if err != nil {
 		return application.ListResult{}, newRepositoryError("list observations", err)

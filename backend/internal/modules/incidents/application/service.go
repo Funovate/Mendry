@@ -35,13 +35,20 @@ type ListResult struct {
 	Total int64
 }
 
+// ListQuery carries pagination and filter parameters for listing incidents.
+type ListQuery struct {
+	Limit  int32
+	Offset int32
+	Status *domain.Status
+}
+
 // Repository 是事故用例需要的最小 persistence contract。
 type Repository interface {
 	Create(context.Context, domain.Incident, *RemediationRequest) (domain.Incident, error)
 	GetByNumber(context.Context, string, int64) (domain.Incident, error)
 	GetByFingerprint(context.Context, string, string) (domain.Incident, error)
 	RecordOccurrence(context.Context, string, string, time.Time) (domain.Incident, error)
-	List(context.Context, string, int32) (ListResult, error)
+	List(context.Context, string, ListQuery) (ListResult, error)
 	UpdateStatus(context.Context, string, int64, domain.Status, int64, string, *RemediationRequest) (domain.Incident, error)
 }
 
@@ -122,15 +129,20 @@ func NewService(options Options) (*Service, error) {
 }
 
 // List 返回按最近观测时间倒序排列的有界事故集合。
-func (s *Service) List(ctx context.Context, principal authdomain.User, projectKey string, limit int32) (ListResult, error) {
+func (s *Service) List(ctx context.Context, principal authdomain.User, projectKey string, query ListQuery) (ListResult, error) {
 	project, err := s.projects.ResolveAccess(ctx, principal, projectKey)
 	if err != nil {
 		return ListResult{}, err
 	}
-	if limit < 1 || limit > MaximumListLimit {
+	if query.Limit < 1 || query.Limit > MaximumListLimit || query.Offset < 0 {
 		return ListResult{}, ErrInvalidInput
 	}
-	incidents, err := s.repository.List(ctx, project.ID, limit)
+	if query.Status != nil {
+		if _, err := domain.ParseStatus(string(*query.Status)); err != nil {
+			return ListResult{}, ErrInvalidInput
+		}
+	}
+	incidents, err := s.repository.List(ctx, project.ID, query)
 	if err != nil {
 		return ListResult{}, fmt.Errorf("list incidents: %w", err)
 	}

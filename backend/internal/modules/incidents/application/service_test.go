@@ -71,7 +71,7 @@ func (f *fakeRepository) RecordOccurrence(_ context.Context, projectID, fingerpr
 	incident.Version++
 	return incident, nil
 }
-func (f *fakeRepository) List(_ context.Context, projectID string, _ int32) (ListResult, error) {
+func (f *fakeRepository) List(_ context.Context, projectID string, _ ListQuery) (ListResult, error) {
 	f.projectID = projectID
 	return ListResult{Items: f.incidents, Total: int64(len(f.incidents))}, f.error
 }
@@ -192,12 +192,19 @@ func TestReadAndStatusUpdateAreProjectScoped(t *testing.T) {
 func TestListUsesProjectAccessAndNormalizesEmptyResult(t *testing.T) {
 	repository := &fakeRepository{}
 	service := newTestService(t, repository, &fakeProjects{}, time.Now(), nil, nil)
-	incidents, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", DefaultListLimit)
+	incidents, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", ListQuery{Limit: DefaultListLimit})
 	if err != nil || incidents.Items == nil || len(incidents.Items) != 0 || incidents.Total != 0 || repository.projectID != testProjectID {
 		t.Fatalf("List() = %#v, %v", incidents, err)
 	}
-	if _, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", MaximumListLimit+1); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", ListQuery{Limit: MaximumListLimit + 1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("unbounded List() error = %v", err)
+	}
+	if _, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", ListQuery{Limit: DefaultListLimit, Offset: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative offset List() error = %v", err)
+	}
+	invalidStatus := domain.Status("Invalid")
+	if _, err := service.List(context.Background(), authdomain.User{ID: "user", Enabled: true}, "payments", ListQuery{Limit: DefaultListLimit, Status: &invalidStatus}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid status List() error = %v", err)
 	}
 }
 

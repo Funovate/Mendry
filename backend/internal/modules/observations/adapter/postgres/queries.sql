@@ -28,4 +28,5 @@ SELECT id, project_id, environment_id, source_id, service, occurred_at, level,
 FROM observations
 WHERE project_id = sqlc.arg(project_id)
 ORDER BY occurred_at DESC, id DESC
-LIMIT sqlc.arg(result_limit);
+LIMIT sqlc.arg(result_limit)
+OFFSET sqlc.arg(result_offset);

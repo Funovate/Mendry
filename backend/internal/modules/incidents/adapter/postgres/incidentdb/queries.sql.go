@@ -420,13 +420,17 @@ SELECT id, project_id, environment_id, source_id, incident_number, title,
        COUNT(*) OVER() AS total_count
 FROM incidents
 WHERE project_id = $1
+  AND ($2::text IS NULL OR status = $2::text)
 ORDER BY last_seen DESC, incident_number DESC
-LIMIT $2
+LIMIT $4
+OFFSET $3
 `
 
 type ListIncidentsParams struct {
-	ProjectID   pgtype.UUID
-	ResultLimit int32
+	ProjectID    pgtype.UUID
+	Status       *string
+	ResultOffset int32
+	ResultLimit  int32
 }
 
 type ListIncidentsRow struct {
@@ -455,7 +459,12 @@ type ListIncidentsRow struct {
 }
 
 func (q *Queries) ListIncidents(ctx context.Context, arg ListIncidentsParams) ([]ListIncidentsRow, error) {
-	rows, err := q.db.Query(ctx, listIncidents, arg.ProjectID, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listIncidents,
+		arg.ProjectID,
+		arg.Status,
+		arg.ResultOffset,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

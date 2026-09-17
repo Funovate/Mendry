@@ -41,6 +41,32 @@ func TestEvaluateEvidenceGateDoesNotGloballyRequireCorrelation(t *testing.T) {
 	}
 }
 
+func TestEvaluateEvidenceGateDoesNotPromoteNonMaterialTimeContradiction(t *testing.T) {
+	decision := EvaluateEvidenceGate(EvidenceGateInput{
+		Fixability:      FixabilityCodeFixable,
+		ModelConfidence: 0.91,
+		Citations:       []EvidenceCitation{{EvidenceID: "ev-fault", Classification: EvidenceDirectFault}},
+		Resolution: EvidenceResolution{
+			Records: []EvidenceRecord{{
+				EvidenceID: "ev-fault", Classification: EvidenceDirectFault, Available: true,
+			}},
+			Time: &TimeAssessment{
+				OriginalValues: []string{"2026-08-24T07:16:29Z", "2026-08-24T07:17:05Z"},
+				Basis:          "paired_epoch",
+				Certainty:      "high",
+				Contradictory:  true,
+			},
+		},
+		CausalClosure: &CausalClosure{ExplainsOriginalSymptom: true},
+	})
+	if decision.ConfidenceCap != 1 || decision.EffectiveConfidence != 0.91 {
+		t.Fatalf("decision = %#v, non-material time mismatch must not cap confidence", decision)
+	}
+	if !decision.PlanningEligible || len(decision.Contradictions) != 0 {
+		t.Fatalf("decision = %#v, raw time mismatch must remain audit-only", decision)
+	}
+}
+
 func TestEvaluateEvidenceGateClassificationMismatchIsNotContradiction(t *testing.T) {
 	// R7/AC5：模型声明的分类与存储权威分类不一致是 correctable metadata，
 	// 不产生 material contradiction，也不独立 cap confidence 或阻止 planning。

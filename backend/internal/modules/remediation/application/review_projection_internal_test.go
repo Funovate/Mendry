@@ -376,3 +376,18 @@ func TestResetDiagnosisNoProgressClearsEscalatedStreaksAfterConvergence(t *testi
 		t.Fatalf("unrelated recovery progress changed: %#v", tracker)
 	}
 }
+
+func TestSafeReviewTerminalReasonPreservesLifecycleReasons(t *testing.T) {
+	for _, reason := range []string{
+		"patch_protocol_no_progress",
+		"validation_protocol_no_progress",
+		"lifecycle_model_no_progress",
+	} {
+		if got := safeReviewTerminalReason(reason); got != reason {
+			t.Errorf("safeReviewTerminalReason(%q) = %q", reason, got)
+		}
+	}
+	if got := safeReviewTerminalReason("private provider detail"); got != "unknown" {
+		t.Fatalf("unsafe terminal reason = %q, want unknown", got)
+	}
+}

@@ -47,6 +47,8 @@ const (
 	protocolCorrectionPlanningAffectedFiles         = "invalid_plan_affected_files"
 	protocolCorrectionPlanningBehavior              = "invalid_plan_intended_behavior"
 	protocolCorrectionPlanningRollback              = "invalid_plan_rollback_strategy"
+	protocolCorrectionPatchingMessage               = "previous response was not a valid patching envelope. Return exactly one of: a requestTool envelope for an advertised workspace tool; {\"schemaVersion\":\"v1\",\"kind\":\"patchComplete\",\"patchComplete\":{\"success\":true,\"message\":\"...\"}} only after workspace.apply_patch produced a persisted patch artifact; or a stop envelope with code selected_change_absent_at_baseline, non-empty reason and recommendedNextAction when the selected change is absent at the deployed baseline; the service blocks for reconciliation and manual review, not successful no-op completion or a return to planning. Other unsafe stops require non-empty reason and recommendedNextAction. requestTool must use toolName, never the tool alias. Do not return diagnosis or place patchComplete fields at the top level."
+	protocolCorrectionValidationMessage             = "previous response was not a valid validating envelope. Return exactly one of: a requestTool envelope for an advertised validation or workspace tool; {\"schemaVersion\":\"v1\",\"kind\":\"validationAssessment\",\"validationAssessment\":{\"passed\":false,\"summary\":\"...\"}} after inspecting the persisted validation result; or a stop envelope with non-empty reason and recommendedNextAction. Do not return diagnosis or place validationAssessment fields at the top level."
 )
 
 // ProtocolCorrection 是一次被拒绝模型信封的有界 provider-neutral 修正；进入
@@ -106,6 +108,12 @@ func ProtocolCorrectionFor(phase domain.RunState, cause error) ProtocolCorrectio
 
 	if phase == domain.RunStatePlanning {
 		return planningProtocolCorrection(cause)
+	}
+	if phase == domain.RunStatePatching {
+		return ProtocolCorrection{Code: protocolCorrectionInvalidEnvelope, Path: "envelope", ExpectedField: "requestTool|patchComplete|stop", Message: protocolCorrectionPatchingMessage}
+	}
+	if phase == domain.RunStateValidating {
+		return ProtocolCorrection{Code: protocolCorrectionInvalidEnvelope, Path: "envelope", ExpectedField: "requestTool|validationAssessment|stop", Message: protocolCorrectionValidationMessage}
 	}
 
 	var fieldErr *domain.EvidenceCitationFieldError
@@ -253,6 +261,12 @@ func genericProtocolCorrection(phase domain.RunState) ProtocolCorrection {
 	if phase == domain.RunStatePlanning {
 		return planningProtocolCorrection(nil)
 	}
+	if phase == domain.RunStatePatching {
+		return ProtocolCorrection{Code: protocolCorrectionInvalidEnvelope, Path: "envelope", ExpectedField: "requestTool|patchComplete|stop", Message: protocolCorrectionPatchingMessage}
+	}
+	if phase == domain.RunStateValidating {
+		return ProtocolCorrection{Code: protocolCorrectionInvalidEnvelope, Path: "envelope", ExpectedField: "requestTool|validationAssessment|stop", Message: protocolCorrectionValidationMessage}
+	}
 	return ProtocolCorrection{Code: protocolCorrectionInvalidEnvelope, Message: protocolCorrectionDiagnosisMessage}
 }
 
@@ -261,6 +275,9 @@ func normalizeProtocolCorrection(phase domain.RunState, correction ProtocolCorre
 		if isTrustedPlanningCorrection(correction) {
 			return correction
 		}
+		return genericProtocolCorrection(phase)
+	}
+	if phase == domain.RunStatePatching || phase == domain.RunStateValidating {
 		return genericProtocolCorrection(phase)
 	}
 	if (phase == domain.RunStateDiagnosing || phase == domain.RunStateCollectingMoreContext) &&

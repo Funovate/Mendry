@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 20 {
-		t.Fatalf("migration count = %d, want 20", len(migrations))
+	if len(migrations) != 24 {
+		t.Fatalf("migration count = %d, want 24", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {
@@ -386,6 +386,18 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	for _, fragment := range requiredEvidenceDedupScope {
 		if !strings.Contains(migrations[13].SQL, fragment) {
 			t.Errorf("migration 000014 does not contain %q", fragment)
+		}
+	}
+	requiredAutoHotfixPolicy := []string{
+		"remediation_execution_mode",
+		"remediation_validation_profile",
+		"remediation_publication",
+		"remediation_change_policy",
+		"projects_auto_hotfix_resilient",
+	}
+	for _, fragment := range requiredAutoHotfixPolicy {
+		if !strings.Contains(migrations[21].SQL, fragment) {
+			t.Errorf("migration 000022 does not contain %q", fragment)
 		}
 	}
 }

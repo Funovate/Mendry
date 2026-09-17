@@ -116,17 +116,201 @@ const (
 	AgentLoopModeResilientV1 AgentLoopMode = "resilient_v1"
 )
 
+type RemediationExecutionMode string
+
+const (
+	RemediationExecutionAnalysisOnly RemediationExecutionMode = "analysis_only"
+	RemediationExecutionAutoHotfix   RemediationExecutionMode = "auto_hotfix"
+)
+
+type ValidationCommand struct {
+	ID             string   `json:"id"`
+	Version        int64    `json:"version"`
+	Argv           []string `json:"argv"`
+	TimeoutSeconds int      `json:"timeoutSeconds"`
+}
+
+type ValidationProfile struct {
+	Enabled           *bool               `json:"enabled"`
+	ImageDigest       string              `json:"imageDigest"`
+	WorkingDirectory  string              `json:"workingDirectory"`
+	PreparedCommit    string              `json:"preparedCommit,omitempty"`
+	ToolchainID       string              `json:"toolchainId,omitempty"`
+	BuildPlanVersion  string              `json:"buildPlanVersion,omitempty"`
+	DependencyHash    string              `json:"dependencyHash,omitempty"`
+	Preparation       []ValidationCommand `json:"preparation"`
+	RequiredCommands  []ValidationCommand `json:"requiredCommands"`
+	CPULimit          int                 `json:"cpuLimit"`
+	MemoryLimitMiB    int                 `json:"memoryLimitMiB"`
+	WorkspaceLimitMiB int                 `json:"workspaceLimitMiB"`
+}
+
+type RemediationPublication struct {
+	BranchPrefix          string `json:"branchPrefix"`
+	GitCredentialSecretID string `json:"gitCredentialSecretId"`
+	APICredentialSecretID string `json:"apiCredentialSecretId"`
+	APIBaseURL            string `json:"apiBaseUrl"`
+}
+
+type RemediationChangePolicy struct {
+	AllowedPaths    []string `json:"allowedPaths"`
+	DeniedPaths     []string `json:"deniedPaths"`
+	MaxChangedFiles int      `json:"maxChangedFiles"`
+	MaxChangedLines int      `json:"maxChangedLines"`
+}
+
 type RemediationPolicy struct {
-	AgentLoopMode AgentLoopMode
-	Version       int64
+	AgentLoopMode     AgentLoopMode
+	ExecutionMode     RemediationExecutionMode
+	ValidationProfile ValidationProfile
+	Publication       RemediationPublication
+	ChangePolicy      RemediationChangePolicy
+	Version           int64
 }
 
 func ValidateRemediationPolicy(policy RemediationPolicy) error {
+	policy = NormalizeRemediationPolicy(policy)
 	if policy.AgentLoopMode != AgentLoopModeLegacy && policy.AgentLoopMode != AgentLoopModeResilientV1 {
 		return fmt.Errorf("remediation policy agent loop mode is invalid")
 	}
 	if policy.Version < 0 {
 		return fmt.Errorf("remediation policy version is invalid")
+	}
+	if policy.ExecutionMode != RemediationExecutionAnalysisOnly && policy.ExecutionMode != RemediationExecutionAutoHotfix {
+		return fmt.Errorf("remediation execution mode is invalid")
+	}
+	if policy.ExecutionMode == RemediationExecutionAutoHotfix {
+		if policy.AgentLoopMode != AgentLoopModeResilientV1 {
+			return fmt.Errorf("auto hotfix requires resilient_v1")
+		}
+		if localValidationEnabled(policy.ValidationProfile) {
+			if err := validateValidationProfile(policy.ValidationProfile); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(policy.Publication.GitCredentialSecretID) == "" {
+			return fmt.Errorf("auto hotfix requires a Git write credential")
+		}
+	}
+	if err := validatePublicationPolicy(policy.Publication); err != nil {
+		return err
+	}
+	if err := validateChangePolicy(policy.ChangePolicy); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DefaultRemediationPolicy() RemediationPolicy {
+	localValidation := false
+	return RemediationPolicy{
+		AgentLoopMode: AgentLoopModeLegacy,
+		ExecutionMode: RemediationExecutionAnalysisOnly,
+		ValidationProfile: ValidationProfile{
+			Enabled: &localValidation, Preparation: []ValidationCommand{}, RequiredCommands: []ValidationCommand{},
+			CPULimit: 2, MemoryLimitMiB: 4096, WorkspaceLimitMiB: 10240,
+		},
+		Publication:  RemediationPublication{BranchPrefix: "hotfix/remediation"},
+		ChangePolicy: RemediationChangePolicy{AllowedPaths: []string{"**"}, DeniedPaths: []string{}, MaxChangedFiles: 10, MaxChangedLines: 400},
+		Version:      1,
+	}
+}
+
+// NormalizeRemediationPolicy preserves old API/database rows as analysis-only.
+func NormalizeRemediationPolicy(policy RemediationPolicy) RemediationPolicy {
+	defaults := DefaultRemediationPolicy()
+	if policy.ExecutionMode == "" {
+		policy.ExecutionMode = defaults.ExecutionMode
+	}
+	if policy.Publication.BranchPrefix == "" {
+		policy.Publication.BranchPrefix = defaults.Publication.BranchPrefix
+	}
+	if len(policy.ChangePolicy.AllowedPaths) == 0 && len(policy.ChangePolicy.DeniedPaths) == 0 && policy.ChangePolicy.MaxChangedFiles == 0 && policy.ChangePolicy.MaxChangedLines == 0 {
+		policy.ChangePolicy = defaults.ChangePolicy
+	}
+	if policy.ValidationProfile.CPULimit == 0 {
+		policy.ValidationProfile.CPULimit = defaults.ValidationProfile.CPULimit
+	}
+	if policy.ValidationProfile.MemoryLimitMiB == 0 {
+		policy.ValidationProfile.MemoryLimitMiB = defaults.ValidationProfile.MemoryLimitMiB
+	}
+	if policy.ValidationProfile.WorkspaceLimitMiB == 0 {
+		policy.ValidationProfile.WorkspaceLimitMiB = defaults.ValidationProfile.WorkspaceLimitMiB
+	}
+	if policy.ValidationProfile.Preparation == nil {
+		policy.ValidationProfile.Preparation = []ValidationCommand{}
+	}
+	if policy.ValidationProfile.RequiredCommands == nil {
+		policy.ValidationProfile.RequiredCommands = []ValidationCommand{}
+	}
+	if policy.ChangePolicy.DeniedPaths == nil {
+		policy.ChangePolicy.DeniedPaths = []string{}
+	}
+	return policy
+}
+
+var validationImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var validationCommandIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+func localValidationEnabled(profile ValidationProfile) bool {
+	// Profiles created before the enabled flag remain enhanced profiles.
+	return profile.Enabled == nil || *profile.Enabled
+}
+
+func validateValidationProfile(profile ValidationProfile) error {
+	if !validationImageDigestPattern.MatchString(profile.ImageDigest) {
+		return fmt.Errorf("validation image must use an immutable sha256 digest")
+	}
+	if profile.WorkingDirectory == "" || strings.HasPrefix(profile.WorkingDirectory, "/") || strings.Contains(profile.WorkingDirectory, "..") {
+		return fmt.Errorf("validation working directory is invalid")
+	}
+	if profile.CPULimit < 1 || profile.CPULimit > 16 || profile.MemoryLimitMiB < 256 || profile.MemoryLimitMiB > 65536 || profile.WorkspaceLimitMiB < 1024 || profile.WorkspaceLimitMiB > 102400 {
+		return fmt.Errorf("validation resource limits are invalid")
+	}
+	if len(profile.RequiredCommands) == 0 || len(profile.RequiredCommands) > 32 || len(profile.Preparation) > 16 {
+		return fmt.Errorf("validation commands are invalid")
+	}
+	seen := make(map[string]struct{}, len(profile.RequiredCommands)+len(profile.Preparation))
+	commands := append(append([]ValidationCommand(nil), profile.Preparation...), profile.RequiredCommands...)
+	for _, command := range commands {
+		if !validationCommandIDPattern.MatchString(command.ID) || command.Version < 1 || len(command.Argv) == 0 || len(command.Argv) > 64 || command.TimeoutSeconds < 1 || command.TimeoutSeconds > 3600 {
+			return fmt.Errorf("validation command is invalid")
+		}
+		if _, exists := seen[command.ID]; exists {
+			return fmt.Errorf("validation command IDs must be unique")
+		}
+		seen[command.ID] = struct{}{}
+		for _, arg := range command.Argv {
+			if strings.TrimSpace(arg) == "" || len(arg) > 4096 || strings.ContainsRune(arg, '\x00') {
+				return fmt.Errorf("validation command argv is invalid")
+			}
+		}
+	}
+	return nil
+}
+
+func validatePublicationPolicy(policy RemediationPublication) error {
+	if policy.BranchPrefix != "hotfix/remediation" {
+		return fmt.Errorf("publication branch prefix is not supported")
+	}
+	if policy.APIBaseURL != "" {
+		parsed, err := url.Parse(policy.APIBaseURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil {
+			return fmt.Errorf("publication API base URL is invalid")
+		}
+	}
+	return nil
+}
+
+func validateChangePolicy(policy RemediationChangePolicy) error {
+	if len(policy.AllowedPaths) == 0 || len(policy.AllowedPaths) > 64 || len(policy.DeniedPaths) > 64 || policy.MaxChangedFiles < 1 || policy.MaxChangedFiles > 30 || policy.MaxChangedLines < 1 || policy.MaxChangedLines > 5000 {
+		return fmt.Errorf("remediation change policy is invalid")
+	}
+	patterns := append(append([]string(nil), policy.AllowedPaths...), policy.DeniedPaths...)
+	for _, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" || strings.HasPrefix(pattern, "/") || strings.Contains(pattern, "..") || len(pattern) > 256 {
+			return fmt.Errorf("remediation path policy is invalid")
+		}
 	}
 	return nil
 }

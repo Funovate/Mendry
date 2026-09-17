@@ -332,7 +332,6 @@ func (t *resilientRunState) resetLifecycleProtocolNoProgress() {
 		t.lastLifecycleRecoveryFingerprint = ""
 		t.lastLifecycleRecoveryClass = ""
 	}
-	t.lifecycleStopAttempts = 0
 }
 
 func (t *resilientRunState) resetLifecycleNoProgress() {

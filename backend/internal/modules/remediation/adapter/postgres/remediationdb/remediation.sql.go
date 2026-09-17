@@ -306,16 +306,32 @@ INSERT INTO remediation_run (
     context_version,
     analysis_only,
     agent_loop_mode,
-    agent_loop_policy_version
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
 ) VALUES (
     $1, $2, 'queued',
     $3, $4,
     $5, $6,
     (SELECT analysis_only FROM remediation_run WHERE id = $3),
     (SELECT agent_loop_mode FROM remediation_run WHERE id = $3),
-    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = $3)
+    (SELECT agent_loop_policy_version FROM remediation_run WHERE id = $3),
+    (SELECT execution_mode FROM remediation_run WHERE id = $3),
+    (SELECT validation_commands FROM remediation_run WHERE id = $3),
+    (SELECT validation_image_digest FROM remediation_run WHERE id = $3),
+    (SELECT execution_profile FROM remediation_run WHERE id = $3),
+    (SELECT publication_snapshot FROM remediation_run WHERE id = $3),
+    (SELECT change_policy FROM remediation_run WHERE id = $3),
+    (SELECT publication_target_branch FROM remediation_run WHERE id = $3),
+    (SELECT publication_branch_prefix FROM remediation_run WHERE id = $3)
 )
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix
 `
 
 type CreateRemediationNextRunParams struct {
@@ -364,6 +380,15 @@ func (q *Queries) CreateRemediationNextRun(ctx context.Context, arg CreateRemedi
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }
@@ -428,6 +453,158 @@ func (q *Queries) CreateRemediationPlan(ctx context.Context, arg CreateRemediati
 	return i, err
 }
 
+const createRemediationReconfiguredRun = `-- name: CreateRemediationReconfiguredRun :one
+INSERT INTO remediation_run (
+    series_id,
+    attempt_number,
+    state,
+    continuation_of_run_id,
+    trigger_reason,
+    continuation_reason,
+    context_version,
+    analysis_only,
+    agent_loop_mode,
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
+)
+SELECT $1, $2, 'queued',
+       $3, 'manual_reconfigure',
+       $4, $5, false,
+       project.agent_loop_mode, project.agent_loop_policy_version,
+       project.remediation_execution_mode,
+       COALESCE((SELECT jsonb_object_agg(command->>'id', (command->>'version')::bigint)
+                 FROM jsonb_array_elements(project.remediation_validation_profile->'requiredCommands') AS command), '{}'::jsonb),
+       project.remediation_validation_profile->>'imageDigest',
+       project.remediation_validation_profile,
+       jsonb_build_object(
+           'remoteUrl', COALESCE(repository.remote_url, ''),
+           'scmProvider', COALESCE(repository.scm_provider, ''),
+           'transport', COALESCE(repository.transport, ''),
+           'productionBranch', COALESCE(repository.production_branch, ''),
+           'repositoryCredentialSecretId', COALESCE(repository.credential_secret_id::text, ''),
+           'repositoryCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id AND secret.id = repository.credential_secret_id
+           ), 0),
+           'gitCredentialSecretId', COALESCE(project.remediation_publication->>'gitCredentialSecretId', ''),
+           'gitCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+           ), 0),
+           'apiCredentialSecretId', COALESCE(project.remediation_publication->>'apiCredentialSecretId', ''),
+           'apiCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'apiCredentialSecretId', '')::uuid
+           ), 0),
+           'apiBaseUrl', COALESCE(project.remediation_publication->>'apiBaseUrl', '')
+       ),
+       project.remediation_change_policy,
+       COALESCE(repository.production_branch, ''),
+       COALESCE(project.remediation_publication->>'branchPrefix', 'hotfix/remediation')
+FROM remediation_series AS series
+JOIN remediation_run AS predecessor ON predecessor.id = $3
+JOIN incidents AS incident ON incident.id = series.incident_id
+JOIN projects AS project ON project.id = incident.project_id
+JOIN project_repositories AS repository ON repository.project_id = project.id
+WHERE series.id = $1
+  AND predecessor.series_id = series.id
+  AND incident.status = 'Open'
+  AND repository.deployed_commit = series.deployed_commit
+  AND project.agent_loop_mode = 'resilient_v1'
+  AND project.remediation_execution_mode = 'auto_hotfix'
+  AND (
+      (
+          project.remediation_validation_profile ? 'enabled'
+          AND COALESCE((project.remediation_validation_profile->>'enabled')::boolean, false) = false
+          AND COALESCE(project.remediation_validation_profile->>'imageDigest', '') = ''
+      )
+      OR (
+          project.remediation_validation_profile->>'preparedCommit' = series.deployed_commit
+          AND project.remediation_validation_profile->>'toolchainId' <> ''
+          AND project.remediation_validation_profile->>'buildPlanVersion' <> ''
+          AND project.remediation_validation_profile->>'dependencyHash' ~ '^[0-9a-f]{64}$'
+          AND project.remediation_validation_profile->>'imageDigest' ~ '^sha256:[0-9a-f]{64}$'
+          AND jsonb_array_length(COALESCE(project.remediation_validation_profile->'requiredCommands', '[]'::jsonb)) > 0
+      )
+  )
+  AND NULLIF(project.remediation_publication->>'gitCredentialSecretId', '') IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM project_secrets AS secret
+      WHERE secret.project_id = project.id
+        AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+        AND secret.kind = 'git_credential'
+  )
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix
+`
+
+type CreateRemediationReconfiguredRunParams struct {
+	SeriesID            pgtype.UUID
+	AttemptNumber       int32
+	ContinuationOfRunID pgtype.UUID
+	ContinuationReason  string
+	ContextVersion      int64
+}
+
+// Unlike CreateRemediationNextRun, this query snapshots the current project
+// policy and repository state. It is used only by manual_reconfigure.
+func (q *Queries) CreateRemediationReconfiguredRun(ctx context.Context, arg CreateRemediationReconfiguredRunParams) (RemediationRun, error) {
+	row := q.db.QueryRow(ctx, createRemediationReconfiguredRun,
+		arg.SeriesID,
+		arg.AttemptNumber,
+		arg.ContinuationOfRunID,
+		arg.ContinuationReason,
+		arg.ContextVersion,
+	)
+	var i RemediationRun
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.AttemptNumber,
+		&i.State,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.ElapsedMs,
+		&i.ModelCalls,
+		&i.ModelTokensIn,
+		&i.ModelTokensOut,
+		&i.ModelCostCents,
+		&i.ModelProvider,
+		&i.ModelName,
+		&i.ToolCalls,
+		&i.EvidenceBytes,
+		&i.RepositoryBytes,
+		&i.Version,
+		&i.ContinuationOfRunID,
+		&i.TriggerReason,
+		&i.ContinuationReason,
+		&i.ContextVersion,
+		&i.TerminalReason,
+		&i.Retryable,
+		&i.AgentLoopMode,
+		&i.AgentLoopPolicyVersion,
+		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
+	)
+	return i, err
+}
+
 const createRemediationRun = `-- name: CreateRemediationRun :one
 INSERT INTO remediation_run (
     series_id,
@@ -437,16 +614,71 @@ INSERT INTO remediation_run (
     trigger_reason,
     analysis_only,
     agent_loop_mode,
-    agent_loop_policy_version
+    agent_loop_policy_version,
+    execution_mode,
+    validation_commands,
+    validation_image_digest,
+    execution_profile,
+    publication_snapshot,
+    change_policy,
+    publication_target_branch,
+    publication_branch_prefix
 )
 SELECT $1, $2, $3,
        $4, $5, $6,
-       project.agent_loop_mode, project.agent_loop_policy_version
+       project.agent_loop_mode, project.agent_loop_policy_version,
+       project.remediation_execution_mode,
+       COALESCE((SELECT jsonb_object_agg(command->>'id', (command->>'version')::bigint)
+                 FROM jsonb_array_elements(project.remediation_validation_profile->'requiredCommands') AS command), '{}'::jsonb),
+       project.remediation_validation_profile->>'imageDigest',
+       project.remediation_validation_profile,
+       jsonb_build_object(
+           'remoteUrl', COALESCE(repository.remote_url, ''),
+           'scmProvider', COALESCE(repository.scm_provider, ''),
+           'transport', COALESCE(repository.transport, ''),
+           'productionBranch', COALESCE(repository.production_branch, ''),
+           'repositoryCredentialSecretId', COALESCE(repository.credential_secret_id::text, ''),
+           'repositoryCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id AND secret.id = repository.credential_secret_id
+           ), 0),
+           'gitCredentialSecretId', COALESCE(project.remediation_publication->>'gitCredentialSecretId', ''),
+           'gitCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'gitCredentialSecretId', '')::uuid
+           ), 0),
+           'apiCredentialSecretId', COALESCE(project.remediation_publication->>'apiCredentialSecretId', ''),
+           'apiCredentialVersion', COALESCE((
+               SELECT secret.version FROM project_secrets AS secret
+               WHERE secret.project_id = project.id
+                 AND secret.id = NULLIF(project.remediation_publication->>'apiCredentialSecretId', '')::uuid
+           ), 0),
+           'apiBaseUrl', COALESCE(project.remediation_publication->>'apiBaseUrl', '')
+       ),
+       project.remediation_change_policy,
+       COALESCE(repository.production_branch, ''),
+       COALESCE(project.remediation_publication->>'branchPrefix', 'hotfix/remediation')
 FROM remediation_series AS series
 JOIN incidents AS incident ON incident.id = series.incident_id
 JOIN projects AS project ON project.id = incident.project_id
+LEFT JOIN project_repositories AS repository ON repository.project_id = project.id
 WHERE series.id = $1
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+  AND (
+      project.remediation_execution_mode <> 'auto_hotfix'
+      OR (
+          project.remediation_validation_profile ? 'enabled'
+          AND COALESCE((project.remediation_validation_profile->>'enabled')::boolean, false) = false
+          AND COALESCE(project.remediation_validation_profile->>'imageDigest', '') = ''
+      )
+      OR (
+          project.remediation_validation_profile->>'preparedCommit' = series.deployed_commit
+          AND project.remediation_validation_profile->>'toolchainId' <> ''
+          AND project.remediation_validation_profile->>'buildPlanVersion' <> ''
+          AND project.remediation_validation_profile->>'dependencyHash' ~ '^[0-9a-f]{64}$'
+      )
+  )
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix
 `
 
 type CreateRemediationRunParams struct {
@@ -495,6 +727,15 @@ func (q *Queries) CreateRemediationRun(ctx context.Context, arg CreateRemediatio
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }
@@ -728,7 +969,7 @@ func (q *Queries) GetLatestRemediationObservationForIncident(ctx context.Context
 }
 
 const getLatestRemediationPlanningCheckpoint = `-- name: GetLatestRemediationPlanningCheckpoint :one
-SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable, run.agent_loop_mode, run.agent_loop_policy_version, run.analysis_only
+SELECT run.id, run.series_id, run.attempt_number, run.state, run.started_at, run.ended_at, run.elapsed_ms, run.model_calls, run.model_tokens_in, run.model_tokens_out, run.model_cost_cents, run.model_provider, run.model_name, run.tool_calls, run.evidence_bytes, run.repository_bytes, run.version, run.continuation_of_run_id, run.trigger_reason, run.continuation_reason, run.context_version, run.terminal_reason, run.retryable, run.agent_loop_mode, run.agent_loop_policy_version, run.analysis_only, run.state_entered_at, run.execution_mode, run.validation_commands, run.validation_image_digest, run.execution_profile, run.publication_snapshot, run.change_policy, run.publication_target_branch, run.publication_branch_prefix
 FROM remediation_run AS run
 WHERE run.series_id = $1
   AND run.context_version = $2
@@ -780,6 +1021,15 @@ func (q *Queries) GetLatestRemediationPlanningCheckpoint(ctx context.Context, ar
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }
@@ -1083,6 +1333,17 @@ func (q *Queries) GetRemediationEvidenceReadCursor(ctx context.Context, arg GetR
 	return i, err
 }
 
+const getRemediationIncidentStatus = `-- name: GetRemediationIncidentStatus :one
+SELECT status FROM incidents WHERE id = $1 FOR SHARE
+`
+
+func (q *Queries) GetRemediationIncidentStatus(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getRemediationIncidentStatus, id)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const getRemediationLifecycleEffect = `-- name: GetRemediationLifecycleEffect :one
 SELECT id, run_id, effect_kind, idempotency_key, state, attempt, baseline_commit, workspace_id, base_tree_hash, result_tree_hash, artifact_ref, content_hash, command_id, command_version, validation_known, validation_passed, branch_ref, target_branch, commit_hash, draft_change_ref, compare_url, error_code, summary, created_at, updated_at FROM remediation_lifecycle_effect
 WHERE run_id = $1
@@ -1169,7 +1430,7 @@ func (q *Queries) GetRemediationPlansByRunID(ctx context.Context, runID pgtype.U
 }
 
 const getRemediationRun = `-- name: GetRemediationRun :one
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only FROM remediation_run WHERE id = $1
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix FROM remediation_run WHERE id = $1
 `
 
 func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (RemediationRun, error) {
@@ -1202,6 +1463,15 @@ func (q *Queries) GetRemediationRun(ctx context.Context, id pgtype.UUID) (Remedi
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }
@@ -1222,7 +1492,7 @@ func (q *Queries) GetRemediationRunProject(ctx context.Context, runID pgtype.UUI
 }
 
 const getRemediationRunsBySeriesID = `-- name: GetRemediationRunsBySeriesID :many
-SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only FROM remediation_run
+SELECT id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix FROM remediation_run
 WHERE series_id = $1
 ORDER BY attempt_number ASC
 `
@@ -1263,6 +1533,15 @@ func (q *Queries) GetRemediationRunsBySeriesID(ctx context.Context, seriesID pgt
 			&i.AgentLoopMode,
 			&i.AgentLoopPolicyVersion,
 			&i.AnalysisOnly,
+			&i.StateEnteredAt,
+			&i.ExecutionMode,
+			&i.ValidationCommands,
+			&i.ValidationImageDigest,
+			&i.ExecutionProfile,
+			&i.PublicationSnapshot,
+			&i.ChangePolicy,
+			&i.PublicationTargetBranch,
+			&i.PublicationBranchPrefix,
 		); err != nil {
 			return nil, err
 		}
@@ -1467,7 +1746,7 @@ SET model_calls = model_calls + $2,
     repository_bytes = repository_bytes + $10,
     version = version + 1
 WHERE id = $1
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix
 `
 
 type IncrementRunCountersParams struct {
@@ -1524,6 +1803,15 @@ func (q *Queries) IncrementRunCounters(ctx context.Context, arg IncrementRunCoun
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }
@@ -1948,7 +2236,7 @@ SET state = $2,
     retryable = CASE WHEN $3::boolean THEN $6::boolean ELSE false END,
     version = version + 1
 WHERE id = $1 AND version = $4
-RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only
+RETURNING id, series_id, attempt_number, state, started_at, ended_at, elapsed_ms, model_calls, model_tokens_in, model_tokens_out, model_cost_cents, model_provider, model_name, tool_calls, evidence_bytes, repository_bytes, version, continuation_of_run_id, trigger_reason, continuation_reason, context_version, terminal_reason, retryable, agent_loop_mode, agent_loop_policy_version, analysis_only, state_entered_at, execution_mode, validation_commands, validation_image_digest, execution_profile, publication_snapshot, change_policy, publication_target_branch, publication_branch_prefix
 `
 
 type UpdateRemediationRunStateParams struct {
@@ -1997,6 +2285,15 @@ func (q *Queries) UpdateRemediationRunState(ctx context.Context, arg UpdateRemed
 		&i.AgentLoopMode,
 		&i.AgentLoopPolicyVersion,
 		&i.AnalysisOnly,
+		&i.StateEnteredAt,
+		&i.ExecutionMode,
+		&i.ValidationCommands,
+		&i.ValidationImageDigest,
+		&i.ExecutionProfile,
+		&i.PublicationSnapshot,
+		&i.ChangePolicy,
+		&i.PublicationTargetBranch,
+		&i.PublicationBranchPrefix,
 	)
 	return i, err
 }

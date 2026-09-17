@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,53 +15,62 @@ import (
 
 // 环境变量 key 由 config 包统一维护，composition root 不应散落字符串字面量。
 const (
-	EnvironmentKey              = "MENDRY_ENVIRONMENT"
-	LogLevelKey                 = "MENDRY_LOG_LEVEL"
-	LogFormatKey                = "MENDRY_LOG_FORMAT"
-	LogFileKey                  = "MENDRY_LOG_FILE"
-	ShutdownKey                 = "MENDRY_SHUTDOWN_TIMEOUT"
-	HTTPAddressKey              = "MENDRY_HTTP_ADDR"
-	HTTPReadHeaderKey           = "MENDRY_HTTP_READ_HEADER_TIMEOUT"
-	HTTPReadKey                 = "MENDRY_HTTP_READ_TIMEOUT"
-	HTTPWriteKey                = "MENDRY_HTTP_WRITE_TIMEOUT"
-	HTTPIdleKey                 = "MENDRY_HTTP_IDLE_TIMEOUT"
-	HTTPMaxBodyBytesKey         = "MENDRY_HTTP_MAX_BODY_BYTES"
-	HTTPCORSAllowedOriginKey    = "MENDRY_HTTP_CORS_ALLOWED_ORIGIN"
-	HTTPRequestDebugKey         = "MENDRY_HTTP_REQUEST_DEBUG"
-	PublicURLKey                = "MENDRY_PUBLIC_URL"
-	AuthSessionTTLKey           = "MENDRY_AUTH_SESSION_TTL"
-	WebhookAITimeoutKey         = "MENDRY_WEBHOOK_AI_TIMEOUT"
-	RemediationModelTimeoutKey  = "MENDRY_REMEDIATION_MODEL_TIMEOUT"
-	EncryptionKey               = "MENDRY_ENCRYPTION_KEY"
-	BootstrapAdminPasswordKey   = "MENDRY_BOOTSTRAP_ADMIN_PASSWORD"
-	PostgresURLKey              = "MENDRY_POSTGRES_URL"
-	PostgresConnectTimeoutKey   = "MENDRY_POSTGRES_CONNECT_TIMEOUT"
-	PostgresAcquireTimeoutKey   = "MENDRY_POSTGRES_ACQUIRE_TIMEOUT"
-	PostgresStatementTimeoutKey = "MENDRY_POSTGRES_STATEMENT_TIMEOUT"
-	PostgresHealthTimeoutKey    = "MENDRY_POSTGRES_HEALTH_TIMEOUT"
-	PostgresMinConnsKey         = "MENDRY_POSTGRES_MIN_CONNS"
-	PostgresMaxConnsKey         = "MENDRY_POSTGRES_MAX_CONNS"
-	PostgresMaxLifetimeKey      = "MENDRY_POSTGRES_MAX_CONN_LIFETIME"
-	PostgresMaxIdleTimeKey      = "MENDRY_POSTGRES_MAX_CONN_IDLE_TIME"
-	PostgresHealthPeriodKey     = "MENDRY_POSTGRES_HEALTH_CHECK_PERIOD"
-	PostgresSlowQueryKey        = "MENDRY_POSTGRES_SLOW_QUERY_THRESHOLD"
-	PostgresQueryDebugKey       = "MENDRY_POSTGRES_QUERY_DEBUG"
-	PostgresMigrationLockKey    = "MENDRY_POSTGRES_MIGRATION_LOCK_TIMEOUT"
-	RedisURLKey                 = "MENDRY_REDIS_URL"
-	RedisDialTimeoutKey         = "MENDRY_REDIS_DIAL_TIMEOUT"
-	RedisReadTimeoutKey         = "MENDRY_REDIS_READ_TIMEOUT"
-	RedisWriteTimeoutKey        = "MENDRY_REDIS_WRITE_TIMEOUT"
-	RedisPoolTimeoutKey         = "MENDRY_REDIS_POOL_TIMEOUT"
-	RedisHealthTimeoutKey       = "MENDRY_REDIS_HEALTH_TIMEOUT"
-	RedisPoolSizeKey            = "MENDRY_REDIS_POOL_SIZE"
-	RedisMinIdleConnsKey        = "MENDRY_REDIS_MIN_IDLE_CONNS"
-	RedisMaxRetriesKey          = "MENDRY_REDIS_MAX_RETRIES"
-	RedisMinRetryBackoffKey     = "MENDRY_REDIS_MIN_RETRY_BACKOFF"
-	RedisMaxRetryBackoffKey     = "MENDRY_REDIS_MAX_RETRY_BACKOFF"
-	RedisMaxIdleTimeKey         = "MENDRY_REDIS_MAX_CONN_IDLE_TIME"
-	RedisMaxLifetimeKey         = "MENDRY_REDIS_MAX_CONN_LIFETIME"
-	RedisDatabaseKey            = "MENDRY_REDIS_DB"
-	RedisSlowCommandKey         = "MENDRY_REDIS_SLOW_COMMAND_THRESHOLD"
+	EnvironmentKey                  = "MENDRY_ENVIRONMENT"
+	LogLevelKey                     = "MENDRY_LOG_LEVEL"
+	LogFormatKey                    = "MENDRY_LOG_FORMAT"
+	LogFileKey                      = "MENDRY_LOG_FILE"
+	ShutdownKey                     = "MENDRY_SHUTDOWN_TIMEOUT"
+	HTTPAddressKey                  = "MENDRY_HTTP_ADDR"
+	HTTPReadHeaderKey               = "MENDRY_HTTP_READ_HEADER_TIMEOUT"
+	HTTPReadKey                     = "MENDRY_HTTP_READ_TIMEOUT"
+	HTTPWriteKey                    = "MENDRY_HTTP_WRITE_TIMEOUT"
+	HTTPIdleKey                     = "MENDRY_HTTP_IDLE_TIMEOUT"
+	HTTPMaxBodyBytesKey             = "MENDRY_HTTP_MAX_BODY_BYTES"
+	HTTPCORSAllowedOriginKey        = "MENDRY_HTTP_CORS_ALLOWED_ORIGIN"
+	HTTPRequestDebugKey             = "MENDRY_HTTP_REQUEST_DEBUG"
+	PublicURLKey                    = "MENDRY_PUBLIC_URL"
+	AuthSessionTTLKey               = "MENDRY_AUTH_SESSION_TTL"
+	WebhookAITimeoutKey             = "MENDRY_WEBHOOK_AI_TIMEOUT"
+	RemediationRecoveryIntervalKey  = "MENDRY_REMEDIATION_RECOVERY_INTERVAL"
+	RemediationConcurrencyKey       = "MENDRY_REMEDIATION_CONCURRENCY"
+	RemediationModelTimeoutKey      = "MENDRY_REMEDIATION_MODEL_TIMEOUT"
+	RemediationArtifactRootKey      = "MENDRY_REMEDIATION_ARTIFACT_ROOT"
+	RemediationWorkspaceRootKey     = "MENDRY_REMEDIATION_WORKSPACE_ROOT"
+	RemediationDockerCommandKey     = "MENDRY_REMEDIATION_DOCKER_COMMAND"
+	RemediationGitCommandKey        = "MENDRY_REMEDIATION_GIT_COMMAND"
+	RemediationSSHKnownHostsFileKey = "MENDRY_REMEDIATION_SSH_KNOWN_HOSTS_FILE"
+	RemediationGoBuilderImageKey    = "MENDRY_REMEDIATION_GO_BUILDER_IMAGE"
+	RemediationNodeBuilderImageKey  = "MENDRY_REMEDIATION_NODE_BUILDER_IMAGE"
+	EncryptionKey                   = "MENDRY_ENCRYPTION_KEY"
+	BootstrapAdminPasswordKey       = "MENDRY_BOOTSTRAP_ADMIN_PASSWORD"
+	PostgresURLKey                  = "MENDRY_POSTGRES_URL"
+	PostgresConnectTimeoutKey       = "MENDRY_POSTGRES_CONNECT_TIMEOUT"
+	PostgresAcquireTimeoutKey       = "MENDRY_POSTGRES_ACQUIRE_TIMEOUT"
+	PostgresStatementTimeoutKey     = "MENDRY_POSTGRES_STATEMENT_TIMEOUT"
+	PostgresHealthTimeoutKey        = "MENDRY_POSTGRES_HEALTH_TIMEOUT"
+	PostgresMinConnsKey             = "MENDRY_POSTGRES_MIN_CONNS"
+	PostgresMaxConnsKey             = "MENDRY_POSTGRES_MAX_CONNS"
+	PostgresMaxLifetimeKey          = "MENDRY_POSTGRES_MAX_CONN_LIFETIME"
+	PostgresMaxIdleTimeKey          = "MENDRY_POSTGRES_MAX_CONN_IDLE_TIME"
+	PostgresHealthPeriodKey         = "MENDRY_POSTGRES_HEALTH_CHECK_PERIOD"
+	PostgresSlowQueryKey            = "MENDRY_POSTGRES_SLOW_QUERY_THRESHOLD"
+	PostgresQueryDebugKey           = "MENDRY_POSTGRES_QUERY_DEBUG"
+	PostgresMigrationLockKey        = "MENDRY_POSTGRES_MIGRATION_LOCK_TIMEOUT"
+	RedisURLKey                     = "MENDRY_REDIS_URL"
+	RedisDialTimeoutKey             = "MENDRY_REDIS_DIAL_TIMEOUT"
+	RedisReadTimeoutKey             = "MENDRY_REDIS_READ_TIMEOUT"
+	RedisWriteTimeoutKey            = "MENDRY_REDIS_WRITE_TIMEOUT"
+	RedisPoolTimeoutKey             = "MENDRY_REDIS_POOL_TIMEOUT"
+	RedisHealthTimeoutKey           = "MENDRY_REDIS_HEALTH_TIMEOUT"
+	RedisPoolSizeKey                = "MENDRY_REDIS_POOL_SIZE"
+	RedisMinIdleConnsKey            = "MENDRY_REDIS_MIN_IDLE_CONNS"
+	RedisMaxRetriesKey              = "MENDRY_REDIS_MAX_RETRIES"
+	RedisMinRetryBackoffKey         = "MENDRY_REDIS_MIN_RETRY_BACKOFF"
+	RedisMaxRetryBackoffKey         = "MENDRY_REDIS_MAX_RETRY_BACKOFF"
+	RedisMaxIdleTimeKey             = "MENDRY_REDIS_MAX_CONN_IDLE_TIME"
+	RedisMaxLifetimeKey             = "MENDRY_REDIS_MAX_CONN_LIFETIME"
+	RedisDatabaseKey                = "MENDRY_REDIS_DB"
+	RedisSlowCommandKey             = "MENDRY_REDIS_SLOW_COMMAND_THRESHOLD"
 )
 
 // Lookup 抽象环境变量读取，使配置测试无需修改进程级 environment。
@@ -129,7 +139,16 @@ type WebhookAI struct {
 
 // Remediation 包含自动修复模型调用的部署级资源边界。
 type Remediation struct {
-	ModelTurnTimeout time.Duration
+	RecoveryInterval  time.Duration
+	Concurrency       int
+	ModelTurnTimeout  time.Duration
+	ArtifactRoot      string
+	WorkspaceRoot     string
+	DockerCommand     string
+	GitCommand        string
+	SSHKnownHostsFile string
+	GoBuilderImage    string
+	NodeBuilderImage  string
 }
 
 // Auth 包含 API 服务端 Session 的绝对生命周期。
@@ -235,6 +254,10 @@ func LoadAPI(lookup Lookup) (API, error) {
 	if err != nil {
 		return API{}, err
 	}
+	remediationStorage, err := loadRemediationStorage(lookup, remediationModelTimeout)
+	if err != nil {
+		return API{}, err
+	}
 
 	encryptionKey, err := encryptionKeyValue(lookup)
 	if err != nil {
@@ -248,10 +271,116 @@ func LoadAPI(lookup Lookup) (API, error) {
 	return API{
 		Common: common, HTTP: httpConfig, Auth: Auth{SessionTTL: sessionTTL},
 		WebhookAI:   WebhookAI{NormalizationTimeout: webhookAITimeout},
-		Remediation: Remediation{ModelTurnTimeout: remediationModelTimeout},
+		Remediation: remediationStorage,
 		Encryption:  Encryption{Key: encryptionKey}, PublicURL: publicURL,
 		PostgreSQL: postgresConfig, Redis: redisConfig,
 	}, nil
+}
+
+func loadRemediationStorage(lookup Lookup, modelTimeout time.Duration) (Remediation, error) {
+	recoveryInterval, err := durationValue(lookup, RemediationRecoveryIntervalKey, 15*time.Second, time.Second, 5*time.Minute)
+	if err != nil {
+		return Remediation{}, err
+	}
+	concurrency, err := integerValue(lookup, RemediationConcurrencyKey, 4, 1, 32)
+	if err != nil {
+		return Remediation{}, err
+	}
+	artifactRoot := stringValue(lookup, RemediationArtifactRootKey, "")
+	workspaceRoot := stringValue(lookup, RemediationWorkspaceRootKey, "")
+	if artifactRoot == "" && workspaceRoot == "" {
+		artifactRoot, err = filepath.Abs(filepath.Join(".var", "remediation", "artifacts"))
+		if err != nil {
+			return Remediation{}, fieldError(RemediationArtifactRootKey, "cannot resolve default remediation storage path")
+		}
+		workspaceRoot, err = filepath.Abs(filepath.Join(".var", "remediation", "workspaces"))
+		if err != nil {
+			return Remediation{}, fieldError(RemediationWorkspaceRootKey, "cannot resolve default remediation storage path")
+		}
+	}
+	for key, value := range map[string]string{
+		RemediationArtifactRootKey: artifactRoot, RemediationWorkspaceRootKey: workspaceRoot,
+	} {
+		if strings.ContainsAny(value, "\x00\r\n") {
+			return Remediation{}, fieldError(key, "must be a valid absolute path")
+		}
+	}
+	if (artifactRoot == "") != (workspaceRoot == "") {
+		if artifactRoot == "" {
+			return Remediation{}, fieldError(RemediationArtifactRootKey, "must be configured together with the workspace root")
+		}
+		return Remediation{}, fieldError(RemediationWorkspaceRootKey, "must be configured together with the artifact root")
+	}
+	if artifactRoot != "" {
+		if !filepath.IsAbs(artifactRoot) || !filepath.IsAbs(workspaceRoot) {
+			return Remediation{}, fieldError(RemediationArtifactRootKey, "artifact and workspace roots must be absolute paths")
+		}
+		artifactRoot = filepath.Clean(artifactRoot)
+		workspaceRoot = filepath.Clean(workspaceRoot)
+		if pathsOverlap(artifactRoot, workspaceRoot) {
+			return Remediation{}, fieldError(RemediationWorkspaceRootKey, "must be separate from the artifact root")
+		}
+	}
+	dockerCommand := stringValue(lookup, RemediationDockerCommandKey, "docker")
+	gitCommand := stringValue(lookup, RemediationGitCommandKey, "git")
+	knownHosts := stringValue(lookup, RemediationSSHKnownHostsFileKey, "")
+	goBuilderImage := stringValue(lookup, RemediationGoBuilderImageKey, "")
+	nodeBuilderImage := stringValue(lookup, RemediationNodeBuilderImageKey, "")
+	for key, value := range map[string]string{
+		RemediationDockerCommandKey: dockerCommand, RemediationGitCommandKey: gitCommand,
+	} {
+		if value == "" || strings.ContainsAny(value, "\x00\r\n") {
+			return Remediation{}, fieldError(key, "must be a valid command")
+		}
+	}
+	if strings.ContainsAny(knownHosts, "\x00\r\n") {
+		return Remediation{}, fieldError(RemediationSSHKnownHostsFileKey, "must be a valid absolute path")
+	}
+	if knownHosts != "" && !filepath.IsAbs(knownHosts) {
+		return Remediation{}, fieldError(RemediationSSHKnownHostsFileKey, "must be an absolute path")
+	}
+	for key, image := range map[string]string{
+		RemediationGoBuilderImageKey: goBuilderImage, RemediationNodeBuilderImageKey: nodeBuilderImage,
+	} {
+		if image != "" && !immutableContainerImage(image) {
+			return Remediation{}, fieldError(key, "must be an immutable sha256 image reference")
+		}
+	}
+	return Remediation{
+		RecoveryInterval: recoveryInterval, Concurrency: int(concurrency),
+		ModelTurnTimeout: modelTimeout, ArtifactRoot: artifactRoot, WorkspaceRoot: workspaceRoot,
+		DockerCommand: dockerCommand, GitCommand: gitCommand,
+		SSHKnownHostsFile: knownHosts, GoBuilderImage: goBuilderImage, NodeBuilderImage: nodeBuilderImage,
+	}, nil
+}
+
+func immutableContainerImage(value string) bool {
+	if strings.HasPrefix(value, "sha256:") {
+		return len(value) == 71 && allLowerHex(value[len("sha256:"):])
+	}
+	separator := strings.LastIndex(value, "@sha256:")
+	return separator > 0 && !strings.ContainsAny(value[:separator], " \t\r\n@") &&
+		len(value[separator+1:]) == 71 && allLowerHex(value[separator+len("@sha256:"):])
+}
+
+func allLowerHex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func pathsOverlap(left, right string) bool {
+	leftRelative, leftErr := filepath.Rel(left, right)
+	rightRelative, rightErr := filepath.Rel(right, left)
+	return leftErr != nil || rightErr != nil || leftRelative == "." || rightRelative == "." ||
+		(leftRelative != ".." && !strings.HasPrefix(leftRelative, ".."+string(filepath.Separator))) ||
+		(rightRelative != ".." && !strings.HasPrefix(rightRelative, ".."+string(filepath.Separator)))
 }
 
 func publicURLValue(lookup Lookup) (string, error) {

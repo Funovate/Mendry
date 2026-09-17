@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -56,6 +57,8 @@ func (g *LifecycleToolGateway) Execute(
 	phase domain.RunState,
 	workspace domain.WorkspaceIdentity,
 	commandVersions map[string]int64,
+	profile domain.ExecutionProfileSnapshot,
+	changePolicy domain.ChangePolicySnapshot,
 	idempotencyKey string,
 	tool string,
 	params map[string]interface{},
@@ -82,7 +85,12 @@ func (g *LifecycleToolGateway) Execute(
 		if err := status.Identity.Validate(); err != nil {
 			return ToolResult{}, lifecycleRuntimeError("workspace_invalid_response", false, err)
 		}
-		return ToolResult{Tool: tool, Summary: fmt.Sprintf("workspace status clean=%t files=%d", status.Clean, len(status.ChangedFiles)), BytesRetrieved: status.Bytes, Payload: status}, nil
+		// status.Bytes is workspace disk usage, not content retrieved by this call.
+		payload, err := json.Marshal(status)
+		if err != nil {
+			return ToolResult{}, lifecycleRuntimeError("workspace_invalid_response", false, err)
+		}
+		return ToolResult{Tool: tool, Summary: fmt.Sprintf("workspace status clean=%t files=%d", status.Clean, len(status.ChangedFiles)), BytesRetrieved: int64(len(payload)), Payload: status}, nil
 
 	case ToolWorkspaceReadFile:
 		if g.workspace == nil {
@@ -108,7 +116,8 @@ func (g *LifecycleToolGateway) Execute(
 		}
 		patch, _ := params["patch"].(string)
 		request := domain.PatchRequest{
-			WorkspaceID: workspace.WorkspaceID, Patch: patch, ExpectedTreeHash: workspace.CurrentTreeHash, IdempotencyKey: idempotencyKey,
+			WorkspaceID: workspace.WorkspaceID, Patch: patch, ExpectedTreeHash: workspace.CurrentTreeHash,
+			IdempotencyKey: idempotencyKey, ChangePolicy: changePolicy,
 		}
 		if err := request.Validate(); err != nil {
 			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
@@ -131,9 +140,22 @@ func (g *LifecycleToolGateway) Execute(
 		if !ok || version < 1 {
 			return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "validation command is not approved for this run"}
 		}
+		if profile.ImageDigest != "" {
+			found := false
+			for _, command := range profile.RequiredCommands {
+				if command.ID == commandID && command.Version == version {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ToolResult{}, &ToolRejection{Code: RejectUnavailable, Tool: tool, Message: "validation command does not match the immutable profile"}
+			}
+		}
 		request := domain.ValidationRequest{
 			RunID: workspace.RunID, WorkspaceID: workspace.WorkspaceID, CommandID: commandID,
 			CommandVersion: version, ExpectedTreeHash: workspace.CurrentTreeHash, IdempotencyKey: idempotencyKey,
+			Profile: profile,
 		}
 		if err := request.Validate(); err != nil {
 			return ToolResult{}, &ToolRejection{Code: RejectArguments, Tool: tool, Message: err.Error()}
@@ -144,6 +166,9 @@ func (g *LifecycleToolGateway) Execute(
 		}
 		if err := result.Validate(); err != nil {
 			return ToolResult{}, lifecycleRuntimeError("validation_invalid_response", false, err)
+		}
+		if result.TreeHash != request.ExpectedTreeHash {
+			return ToolResult{}, lifecycleRuntimeError("validation_tree_mismatch", false, nil)
 		}
 		return ToolResult{Tool: tool, Summary: result.Summary, BytesRetrieved: result.BytesRetrieved, Payload: result}, nil
 	default:

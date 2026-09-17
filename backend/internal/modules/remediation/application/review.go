@@ -107,6 +107,24 @@ type ReviewCheckpoint struct {
 	Reason             string
 	ObservedRunVersion int64
 	UpdatedAt          time.Time
+	Validations        []ReviewValidation
+	Publication        *ReviewPublication
+}
+
+type ReviewValidation struct {
+	CommandID      string
+	CommandVersion int64
+	TreeHash       string
+	Passed         bool
+}
+
+type ReviewPublication struct {
+	BranchRef      string
+	TargetBranch   string
+	CommitHash     string
+	ChangeRef      string
+	CompareURL     string
+	TargetDiverged bool
 }
 
 // ReviewRecovery 是活动 recovery 的安全摘要（D8/R23）：只含 kind、reason
@@ -294,8 +312,38 @@ func attachReviewCheckpoint(review *Review, snapshot domain.CheckpointSnapshot) 
 		Reason:             sanitizeCheckpointReason(snapshot.Checkpoint.Reason),
 		ObservedRunVersion: max(snapshot.ObservedRunVersion, 0),
 		UpdatedAt:          snapshot.UpdatedAt,
+		Validations:        []ReviewValidation{},
+	}
+	if validation := snapshot.Checkpoint.Validation; validation != nil {
+		for _, result := range validation.Results {
+			checkpoint.Validations = append(checkpoint.Validations, ReviewValidation{
+				CommandID: sanitizeReviewText(result.CommandID), CommandVersion: max(result.CommandVersion, 0),
+				TreeHash: sanitizeReviewText(result.TreeHash), Passed: result.Passed,
+			})
+		}
+		if len(checkpoint.Validations) == 0 && validation.CommandID != "" {
+			checkpoint.Validations = append(checkpoint.Validations, ReviewValidation{
+				CommandID: sanitizeReviewText(validation.CommandID), CommandVersion: max(validation.CommandVersion, 0),
+				TreeHash: sanitizeReviewText(validation.TreeHash), Passed: validation.Passed,
+			})
+		}
+	}
+	if publication := snapshot.Checkpoint.Publication; publication != nil {
+		checkpoint.Publication = &ReviewPublication{
+			BranchRef: sanitizeReviewText(publication.BranchRef), TargetBranch: sanitizeReviewText(publication.TargetBranch),
+			CommitHash: sanitizeReviewText(publication.CommitHash), ChangeRef: sanitizeReviewText(publication.DraftChangeRef),
+			CompareURL: sanitizeReviewText(publication.CompareURL), TargetDiverged: publication.TargetDiverged,
+		}
 	}
 	review.Checkpoint = checkpoint
+	if review.Status == domain.RunStateBlockedManualReview {
+		switch review.TerminalReason {
+		case "patch_plan_precondition_mismatch", "patch_protocol_no_progress", "validation_protocol_no_progress", "lifecycle_model_no_progress", "agent_stop_no_progress":
+			if action := firstCheckpointNextAction(snapshot.Checkpoint.NextActions); action != "" {
+				review.ManualSuggestion = action
+			}
+		}
+	}
 	if !isActiveRunState(review.Status) {
 		// R24：只有活动 run 才可能处于 recovery；终态只走手动修复/人工评审面板。
 		return

@@ -186,7 +186,7 @@ func validateExhaustionRefs(label string, refs []string) error {
 // isKnownFixability 报告 fixability 是否属于诊断允许值。
 func isKnownFixability(value FixabilityClass) bool {
 	switch value {
-	case FixabilityCodeFixable, FixabilityExternalDependency, FixabilityConfiguration,
+	case FixabilityCodeFixable, FixabilityNoChangeNeeded, FixabilityExternalDependency, FixabilityConfiguration,
 		FixabilityData, FixabilityInfrastructure, FixabilityInsufficientEvidence,
 		FixabilityUnsafeToAutomate:
 		return true

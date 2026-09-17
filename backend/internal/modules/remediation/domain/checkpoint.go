@@ -138,10 +138,22 @@ type CheckpointArtifact struct {
 	SizeBytes   int64  `json:"sizeBytes"`
 }
 
-// CheckpointValidation 是最近一次 approved command 验证的状态投影。
+// CheckpointValidation is the aggregate result for every required command on one tree.
 type CheckpointValidation struct {
+	CommandID      string                       `json:"commandId,omitempty"`
+	CommandVersion int64                        `json:"commandVersion,omitempty"`
+	Passed         bool                         `json:"passed"`
+	OutputArtifact string                       `json:"outputArtifact,omitempty"`
+	OutputHash     string                       `json:"outputHash,omitempty"`
+	TreeHash       string                       `json:"treeHash,omitempty"`
+	Results        []CheckpointValidationResult `json:"results,omitempty"`
+}
+
+type CheckpointValidationResult struct {
 	CommandID      string `json:"commandId"`
 	CommandVersion int64  `json:"commandVersion"`
+	TreeHash       string `json:"treeHash"`
+	ImageDigest    string `json:"imageDigest,omitempty"`
 	Passed         bool   `json:"passed"`
 	OutputArtifact string `json:"outputArtifact,omitempty"`
 	OutputHash     string `json:"outputHash,omitempty"`
@@ -161,6 +173,7 @@ type CheckpointPublication struct {
 	DraftChangeRef  string `json:"draftChangeRef,omitempty"`
 	CompareURL      string `json:"compareUrl,omitempty"`
 	HumanReviewOnly bool   `json:"humanReviewOnly"`
+	TargetDiverged  bool   `json:"targetDiverged,omitempty"`
 }
 
 // CheckpointObjective 是当前目标与完成标准。
@@ -462,6 +475,28 @@ func validateCheckpointLifecycle(c WorkingMemoryCheckpointV1) error {
 		if c.Validation.OutputHash != "" {
 			if err := validateContentHash("validation output hash", c.Validation.OutputHash); err != nil {
 				return err
+			}
+		}
+		if c.Validation.TreeHash != "" {
+			if err := boundedText("validation tree hash", c.Validation.TreeHash, 128); err != nil {
+				return err
+			}
+		}
+		if len(c.Validation.Results) > 32 {
+			return fmt.Errorf("validation results exceed bounds")
+		}
+		for _, result := range c.Validation.Results {
+			if err := boundedText("validation result command id", result.CommandID, 128); err != nil {
+				return err
+			}
+			if result.CommandVersion < 1 {
+				return fmt.Errorf("validation result command version must be positive")
+			}
+			if err := boundedText("validation result tree hash", result.TreeHash, 128); err != nil {
+				return err
+			}
+			if result.TreeHash != c.Validation.TreeHash {
+				return fmt.Errorf("validation results must bind one tree")
 			}
 		}
 	}

@@ -19,7 +19,7 @@ import (
 )
 
 type service interface {
-	List(context.Context, authdomain.User, string, int32) (application.ListResult, error)
+	List(context.Context, authdomain.User, string, int32, int32) (application.ListResult, error)
 	Create(context.Context, authdomain.User, string, application.CreateInput) (domain.Observation, error)
 }
 
@@ -72,7 +72,7 @@ type response struct {
 }
 
 func (h *Handler) list(writer nethttp.ResponseWriter, request *nethttp.Request) {
-	limit, err := listLimit(request)
+	limit, offset, err := listPagination(request)
 	if err != nil {
 		writeError(writer, request, err)
 		return
@@ -82,7 +82,7 @@ func (h *Handler) list(writer nethttp.ResponseWriter, request *nethttp.Request) 
 		writeError(writer, request, projectapplication.ErrForbidden)
 		return
 	}
-	items, err := h.service.List(request.Context(), principal, request.PathValue("projectKey"), limit)
+	items, err := h.service.List(request.Context(), principal, request.PathValue("projectKey"), limit, offset)
 	if err != nil {
 		writeError(writer, request, err)
 		return
@@ -122,25 +122,31 @@ func mapObservation(item domain.Observation) response {
 		Fingerprint: item.Fingerprint, Attributes: item.Attributes, IngestedAt: item.IngestedAt}
 }
 
-func listLimit(request *nethttp.Request) (int32, error) {
+func listPagination(request *nethttp.Request) (int32, int32, error) {
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
-		return 0, application.ErrInvalidInput
+		return 0, 0, application.ErrInvalidInput
 	}
 	for key, values := range query {
-		if key != "limit" || len(values) != 1 {
-			return 0, application.ErrInvalidInput
+		if (key != "limit" && key != "offset") || len(values) != 1 {
+			return 0, 0, application.ErrInvalidInput
 		}
 	}
-	values, exists := query["limit"]
-	if !exists {
-		return application.DefaultListLimit, nil
+	limit := int64(application.DefaultListLimit)
+	if values, exists := query["limit"]; exists {
+		limit, err = strconv.ParseInt(values[0], 10, 32)
+		if err != nil || limit < 1 || limit > int64(application.MaximumListLimit) {
+			return 0, 0, application.ErrInvalidInput
+		}
 	}
-	limit, err := strconv.ParseInt(values[0], 10, 32)
-	if err != nil || limit < 1 || limit > int64(application.MaximumListLimit) {
-		return 0, application.ErrInvalidInput
+	offset := int64(0)
+	if values, exists := query["offset"]; exists {
+		offset, err = strconv.ParseInt(values[0], 10, 32)
+		if err != nil || offset < 0 {
+			return 0, 0, application.ErrInvalidInput
+		}
 	}
-	return int32(limit), nil
+	return int32(limit), int32(offset), nil
 }
 
 func writeError(writer nethttp.ResponseWriter, request *nethttp.Request, err error) {

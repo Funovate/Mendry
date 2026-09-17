@@ -27,6 +27,8 @@ type mockService struct {
 	err             error
 	continueRun     domain.Run
 	continueErr     error
+	repairRun       domain.Run
+	repairErr       error
 	projectKey      string
 	identifier      string
 	generation      int64
@@ -43,6 +45,12 @@ func (m *mockService) ContinueRemediation(_ context.Context, _ authdomain.User, 
 	m.projectKey, m.identifier, m.generation = projectKey, identifier, generation
 	m.expectedRunID, m.expectedVersion = expectedRunID, expectedVersion
 	return m.continueRun, m.continueErr
+}
+
+func (m *mockService) RepairWithCurrentPolicy(_ context.Context, _ authdomain.User, projectKey, identifier string, generation int64, expectedRunID string, expectedVersion int64) (domain.Run, error) {
+	m.projectKey, m.identifier, m.generation = projectKey, identifier, generation
+	m.expectedRunID, m.expectedVersion = expectedRunID, expectedVersion
+	return m.repairRun, m.repairErr
 }
 
 func (m *mockService) GetRemediation(_ context.Context, _ authdomain.User, projectKey, identifier string) (application.Review, error) {
@@ -250,6 +258,57 @@ func jsonRequest(method, target, body string) *nethttp.Request {
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	return request
+}
+
+func TestRepairRemediationUsesCurrentPolicyRoute(t *testing.T) {
+	service := &mockService{repairRun: domain.Run{
+		RunID: "run-2", SeriesID: "series-1", State: domain.RunStateQueued,
+		LifecycleGeneration: 2, AttemptNumber: 2, Version: 1,
+	}}
+	authService := &fakeAuthService{user: authdomain.User{Enabled: true}}
+	handler := newHandler(t, service, authService)
+	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/repair", `{"generation":2,"expectedRunId":"run-1","expectedVersion":4}`)
+	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || service.projectKey != "payments" || service.identifier != "INC-2049" ||
+		service.expectedRunID != "run-1" || service.expectedVersion != 4 {
+		t.Fatalf("response = %d %q service=%#v", response.Code, response.Body.String(), service)
+	}
+	if !strings.Contains(response.Body.String(), `"runId":"run-2"`) {
+		t.Fatalf("body = %s", response.Body.String())
+	}
+}
+
+func TestRepairRemediationRejectsContinuationFieldsAndClientPolicy(t *testing.T) {
+	service := &mockService{}
+	authService := &fakeAuthService{user: authdomain.User{Enabled: true}}
+	handler := newHandler(t, service, authService)
+	for _, body := range []string{
+		`{"generation":2,"runId":"run-1","version":4}`,
+		`{"generation":2,"expectedRunId":"run-1","expectedVersion":4,"executionMode":"auto_hotfix"}`,
+	} {
+		request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/repair", body)
+		request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != nethttp.StatusBadRequest || service.expectedRunID != "" {
+			t.Fatalf("body %s response = %d %q service=%#v", body, response.Code, response.Body.String(), service)
+		}
+	}
+}
+
+func TestRepairRemediationMapsUnavailablePolicy(t *testing.T) {
+	service := &mockService{repairErr: application.ErrReconfigurationUnavailable}
+	authService := &fakeAuthService{user: authdomain.User{Enabled: true}}
+	handler := newHandler(t, service, authService)
+	request := jsonRequest(nethttp.MethodPost, "/api/v1/projects/payments/incidents/INC-2049/remediation/repair", `{"generation":2,"expectedRunId":"run-1","expectedVersion":4}`)
+	request.AddCookie(&nethttp.Cookie{Name: authhttp.SessionCookieName, Value: "valid"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusConflict || !strings.Contains(response.Body.String(), `"code":"remediation_policy_unavailable"`) {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
 }
 
 func TestGetRemediationRequiresAuthenticationAndReturnsSecretFreeEnvelope(t *testing.T) {

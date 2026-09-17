@@ -33,7 +33,9 @@ type fakeRunStore struct {
 	latestDecisionErr error
 	// mode 是 CreateSeriesAndRun 返回 run 时快照的 agent loop 模式；空值保持
 	// legacy，供 resilient_v1 测试注入。
-	mode domain.AgentLoopMode
+	mode          domain.AgentLoopMode
+	executionMode domain.ExecutionMode
+	projectID     string
 }
 
 type stateEdge struct {
@@ -57,6 +59,7 @@ func (f *fakeRunStore) CreateSeriesAndRun(_ context.Context, in domain.NewRun) (
 	run := domain.Run{
 		RunID:               "run-1",
 		SeriesID:            "series-1",
+		ProjectID:           f.projectID,
 		IncidentID:          in.IncidentID,
 		LifecycleGeneration: in.LifecycleGeneration,
 		DeployedCommit:      in.DeployedCommit,
@@ -67,7 +70,28 @@ func (f *fakeRunStore) CreateSeriesAndRun(_ context.Context, in domain.NewRun) (
 		ContextVersion:      in.ContextVersion,
 		Version:             1,
 		AgentLoopMode:       f.mode,
+		ExecutionMode:       f.executionMode,
 		AnalysisOnly:        in.AnalysisOnly,
+	}
+	if f.executionMode == domain.ExecutionModeAutoHotfix {
+		profile := domain.ExecutionProfileSnapshot{
+			ImageDigest:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			WorkingDirectory: ".", RequiredCommands: []domain.ValidationCommandSnapshot{{
+				ID: "unit", Version: 1, Argv: []string{"go", "test", "./..."}, TimeoutSeconds: 600,
+			}}, CPULimit: 2, MemoryLimitMiB: 4096, WorkspaceLimitMiB: 10240,
+		}
+		run.ValidationCommands = map[string]int64{"unit": 1}
+		run.ValidationImageDigest = profile.ImageDigest
+		run.ExecutionProfile = profile
+		run.PublicationTargetBranch = "main"
+		run.PublicationBranchPrefix = "hotfix/remediation"
+		run.PublicationSnapshot = domain.PublicationSnapshot{
+			RemoteURL: "https://git.example.test/team/app.git", SCMProvider: "generic", Transport: "https",
+			ProductionBranch: "main", GitCredentialSecretID: "git-secret", GitCredentialVersion: 1,
+		}
+		run.ChangePolicySnapshot = domain.ChangePolicySnapshot{
+			AllowedPaths: []string{"**"}, DeniedPaths: []string{}, MaxChangedFiles: 10, MaxChangedLines: 400,
+		}
 	}
 	f.created = &run
 	return run, nil
@@ -159,10 +183,20 @@ func (f *fakeRunStore) Get(_ context.Context, runID string) (domain.RunAggregate
 		run.AttemptNumber = f.created.AttemptNumber
 		run.Origin = f.created.Origin
 		run.TriggerReason = f.created.TriggerReason
+		run.ContinuationOfRunID = f.created.ContinuationOfRunID
+		run.ContinuationReason = f.created.ContinuationReason
 		run.ContextVersion = f.created.ContextVersion
 		run.Version = f.created.Version
 		run.AgentLoopMode = f.created.AgentLoopMode
 		run.AgentLoopPolicyVersion = f.created.AgentLoopPolicyVersion
+		run.ExecutionMode = f.created.ExecutionMode
+		run.ValidationCommands = f.created.ValidationCommands
+		run.ValidationImageDigest = f.created.ValidationImageDigest
+		run.ExecutionProfile = f.created.ExecutionProfile
+		run.PublicationSnapshot = f.created.PublicationSnapshot
+		run.ChangePolicySnapshot = f.created.ChangePolicySnapshot
+		run.PublicationTargetBranch = f.created.PublicationTargetBranch
+		run.PublicationBranchPrefix = f.created.PublicationBranchPrefix
 		run.AnalysisOnly = f.created.AnalysisOnly
 	}
 	return domain.RunAggregate{

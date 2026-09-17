@@ -367,10 +367,10 @@ func toolParameterSchema(tool string) map[string]interface{} {
 }
 
 var toolDescriptions = map[string]string{
-	ToolRepoListTree:       "List repository entries at the current production branch tip.",
-	ToolRepoReadFile:       "Read a bounded file at the current production branch tip.",
-	ToolRepoSearch:         "Search repository content at the current production branch tip.",
-	ToolRepoHistory:        "Read bounded commit history from the current production branch for a path.",
+	ToolRepoListTree:       "List repository entries at the pinned deployed commit.",
+	ToolRepoReadFile:       "Read a bounded file at the pinned deployed commit.",
+	ToolRepoSearch:         "Search repository content at the pinned deployed commit.",
+	ToolRepoHistory:        "Read bounded commit history from the pinned deployed commit and its ancestors for a path.",
 	ToolEvidenceSearch:     "Search bounded, redacted evidence/log windows.",
 	ToolEvidenceContext:    "Read bounded context around an evidence anchor.",
 	ToolEvidenceRead:       "Re-read a bounded page of persisted trusted evidence by evidence ID within this remediation series. Use the returned opaque cursor to page remaining content.",

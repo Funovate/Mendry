@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -34,8 +35,7 @@ const (
 )
 
 // RepositoryConfig 是适配器读取项目仓库所需的无凭据配置。ProductionBranch
-// 是每次读取前 fetch 后使用的当前生产分支；deployed commit 只保留在
-// remediation run 的历史身份中，不作为本适配器的读取 ref。
+// 是项目配置元数据；remediation 读取始终固定到 RepoRef.Commit。
 type RepositoryConfig struct {
 	RemoteURL          string
 	Transport          string
@@ -64,7 +64,7 @@ type Options struct {
 	Logger         *slog.Logger
 }
 
-// Reader 在每次 fetch 后读取配置的 production branch 最新代码，不向调用方暴露凭据或裸 git 客户端。
+// Reader 在每次 fetch 后读取 RepoRef.Commit 指定的部署快照，不向调用方暴露凭据或裸 git 客户端。
 type Reader struct {
 	configs  ConfigLoader
 	secrets  SecretLoader
@@ -115,7 +115,7 @@ func (r *Reader) CredentialFreeRemoteURL(ctx context.Context, projectID string) 
 	return sanitizeRemoteURL(cfg.RemoteURL)
 }
 
-// ListTree 列出配置的 production branch 最新代码下的有界树条目。
+// ListTree 列出部署 commit 下的有界树条目。
 func (r *Reader) ListTree(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.TreeOptions) (domain.TreeListing, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.TreeListing{}, err
@@ -169,7 +169,7 @@ func (r *Reader) ListTree(ctx context.Context, ref domain.RepoRef, repoPath stri
 	return domain.TreeListing{Entries: entries, Truncated: truncated}, nil
 }
 
-// ReadFile 读取配置的 production branch 最新代码；二进制拒绝，超限截断。
+// ReadFile 读取部署 commit；二进制拒绝，超限截断。
 func (r *Reader) ReadFile(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.ReadOptions) (domain.FileContent, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.FileContent{}, err
@@ -212,7 +212,7 @@ func (r *Reader) ReadFile(ctx context.Context, ref domain.RepoRef, repoPath stri
 	return domain.FileContent{Path: repoPath, Content: content}, nil
 }
 
-// Search 在配置的 production branch 最新代码上做有界文本搜索。
+// Search 在部署 commit 上做有界文本搜索。
 func (r *Reader) Search(ctx context.Context, ref domain.RepoRef, query domain.SearchQuery) (domain.SearchResult, error) {
 	if strings.TrimSpace(query.Pattern) == "" {
 		return domain.SearchResult{}, fmt.Errorf("search pattern is required")
@@ -254,7 +254,7 @@ func (r *Reader) Search(ctx context.Context, ref domain.RepoRef, query domain.Se
 	return domain.SearchResult{Matches: matches, Truncated: truncated}, nil
 }
 
-// History 读取配置的 production branch 当前 tip 之前的有界提交历史。
+// History 读取部署 commit 及其祖先的有界提交历史。
 func (r *Reader) History(ctx context.Context, ref domain.RepoRef, repoPath string, opts domain.HistoryOptions) (domain.History, error) {
 	if err := validateRepoPath(repoPath); err != nil {
 		return domain.History{}, err
@@ -296,19 +296,22 @@ func (r *Reader) History(ctx context.Context, ref domain.RepoRef, repoPath strin
 type gitSession struct {
 	reader  *Reader
 	repoDir string
-	// commit 保存配置分支的 fully-qualified ref，沿用字段名以保持 Git 命令调用集中。
+	// commit 保存已验证的完整 commit object ID。
 	commit  string
 	env     []string
 	cleanup func()
 }
 
 func (r *Reader) open(ctx context.Context, ref domain.RepoRef) (*gitSession, error) {
+	commit, err := fullCommitSHA(ref.Commit)
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := r.loadConfig(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	branchRef, err := productionBranchRef(cfg.ProductionBranch)
-	if err != nil {
+	if _, err := productionBranchRef(cfg.ProductionBranch); err != nil {
 		return nil, err
 	}
 	env := append([]string{}, os.Environ()...)
@@ -345,7 +348,35 @@ func (r *Reader) open(ctx context.Context, ref domain.RepoRef) (*gitSession, err
 		sessionCleanup()
 		return nil, err
 	}
-	return &gitSession{reader: r, repoDir: repoDir, commit: branchRef, env: env, cleanup: sessionCleanup}, nil
+	session := &gitSession{reader: r, repoDir: repoDir, commit: commit, env: env, cleanup: sessionCleanup}
+	objectType, typeErr := session.run(ctx, "cat-file", "-t", commit)
+	if typeErr != nil {
+		if err := r.fetchCommit(ctx, repoDir, cfg, target, env, commit); err != nil {
+			session.close()
+			return nil, fmt.Errorf("fetch deployed commit: %w", err)
+		}
+		objectType, typeErr = session.run(ctx, "cat-file", "-t", commit)
+	}
+	if typeErr != nil {
+		session.close()
+		return nil, fmt.Errorf("deployed commit is unavailable: %w", typeErr)
+	}
+	if strings.TrimSpace(objectType) != "commit" {
+		session.close()
+		return nil, fmt.Errorf("deployed commit does not identify a commit object")
+	}
+	return session, nil
+}
+
+func fullCommitSHA(value string) (string, error) {
+	commit := strings.TrimSpace(value)
+	if len(commit) != 40 {
+		return "", fmt.Errorf("deployed commit must be a full 40-character SHA-1")
+	}
+	if _, err := hex.DecodeString(commit); err != nil {
+		return "", fmt.Errorf("deployed commit must be a full 40-character SHA-1")
+	}
+	return strings.ToLower(commit), nil
 }
 
 func (s *gitSession) close() {
@@ -540,6 +571,23 @@ func (r *Reader) fetch(ctx context.Context, dir string, cfg RepositoryConfig, au
 		return gitCommandFailure(err, stderr.Bytes(), authenticatedURL)
 	}
 	r.logNetworkOperation(ctx, "fetch", cfg, started, nil)
+	return nil
+}
+
+func (r *Reader) fetchCommit(ctx context.Context, dir string, cfg RepositoryConfig, authenticatedURL string, env []string, commit string) error {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	started := time.Now()
+	command := exec.CommandContext(ctx, r.command, "fetch", "--no-tags", "--depth=1", authenticatedURL, commit)
+	command.Dir = dir
+	command.Env = env
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		r.logNetworkOperation(ctx, "fetch_commit", cfg, started, err)
+		return gitCommandFailure(err, stderr.Bytes(), authenticatedURL)
+	}
+	r.logNetworkOperation(ctx, "fetch_commit", cfg, started, nil)
 	return nil
 }
 

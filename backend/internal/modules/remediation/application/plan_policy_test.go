@@ -60,6 +60,31 @@ func TestStaticPlanPolicyProvidesRecoverableFeedbackForRejectedRecommendation(t 
 	}
 }
 
+func TestStaticPlanPolicyEnforcesProjectPathAndFileLimits(t *testing.T) {
+	policy := application.NewDefaultPlanPolicy()
+	input := policyInput("internal/service/handler.go")
+	input.ChangePolicy = domain.ChangePolicySnapshot{
+		AllowedPaths: []string{"**/*.go"}, DeniedPaths: []string{"internal/generated/**"},
+		MaxChangedFiles: 2, MaxChangedLines: 120,
+	}
+	decision, err := policy.EvaluatePlan(context.Background(), input)
+	if err != nil || !decision.Accepted {
+		t.Fatalf("allowed project path decision = %#v, err=%v", decision, err)
+	}
+
+	input.Candidates[0].AffectedFiles = []string{"internal/service/handler.go", "internal/service/handler_test.go", "internal/service/types.go"}
+	decision, err = policy.EvaluatePlan(context.Background(), input)
+	if err != nil || decision.Accepted || decision.ReasonCode != "high_risk_policy_requires_opt_in" {
+		t.Fatalf("file limit decision = %#v, err=%v", decision, err)
+	}
+
+	input.Candidates[0].AffectedFiles = []string{"internal/generated/client.go"}
+	decision, err = policy.EvaluatePlan(context.Background(), input)
+	if err != nil || decision.Accepted || decision.Severity != domain.RecoverySeverityPolicyBlocked {
+		t.Fatalf("denied project path decision = %#v, err=%v", decision, err)
+	}
+}
+
 func TestStaticPlanPolicyRequiresSpecializedValidationForOptedInHighRisk(t *testing.T) {
 	policy := application.StaticPlanPolicy{AllowHighRisk: true}
 	decision, err := policy.EvaluatePlan(context.Background(), policyInput("migrations/000018_lifecycle.sql"))

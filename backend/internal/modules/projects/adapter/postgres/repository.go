@@ -305,8 +305,11 @@ func (r *Repository) getRemediationPolicy(ctx context.Context, projectID pgtype.
 	if err != nil {
 		return domain.RemediationPolicy{}, newRepositoryError("query project remediation policy", err)
 	}
-	policy := domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(row.AgentLoopMode), Version: row.AgentLoopPolicyVersion}
-	if err := domain.ValidateRemediationPolicy(policy); err != nil {
+	policy, err := remediationPolicyFromJSON(
+		row.AgentLoopMode, row.RemediationExecutionMode, row.RemediationValidationProfile,
+		row.RemediationPublication, row.RemediationChangePolicy, row.AgentLoopPolicyVersion,
+	)
+	if err != nil {
 		return domain.RemediationPolicy{}, fmt.Errorf("validate project remediation policy row: %w", err)
 	}
 	return policy, nil
@@ -317,13 +320,57 @@ func (r *Repository) UpsertRemediationPolicy(ctx context.Context, projectID stri
 	if err != nil {
 		return domain.RemediationPolicy{}, err
 	}
+	policy = domain.NormalizeRemediationPolicy(policy)
+	validation, publication, changePolicy, err := remediationPolicyJSON(policy)
+	if err != nil {
+		return domain.RemediationPolicy{}, err
+	}
 	row, err := r.queries.UpsertProjectRemediationPolicy(platformpostgres.WithOperation(ctx, "project.configuration.remediation_policy.upsert"), projectdb.UpsertProjectRemediationPolicyParams{
 		ProjectID: params.projectID, AgentLoopMode: string(policy.AgentLoopMode),
+		RemediationExecutionMode: string(policy.ExecutionMode), RemediationValidationProfile: validation,
+		RemediationPublication: publication, RemediationChangePolicy: changePolicy,
 	})
 	if err != nil {
 		return domain.RemediationPolicy{}, newRepositoryError("upsert project remediation policy", err)
 	}
-	return domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(row.AgentLoopMode), Version: row.AgentLoopPolicyVersion}, nil
+	return remediationPolicyFromJSON(
+		row.AgentLoopMode, row.RemediationExecutionMode, row.RemediationValidationProfile,
+		row.RemediationPublication, row.RemediationChangePolicy, row.AgentLoopPolicyVersion,
+	)
+}
+
+func remediationPolicyJSON(policy domain.RemediationPolicy) ([]byte, []byte, []byte, error) {
+	validation, err := json.Marshal(policy.ValidationProfile)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal remediation validation profile: %w", err)
+	}
+	publication, err := json.Marshal(policy.Publication)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal remediation publication policy: %w", err)
+	}
+	changePolicy, err := json.Marshal(policy.ChangePolicy)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal remediation change policy: %w", err)
+	}
+	return validation, publication, changePolicy, nil
+}
+
+func remediationPolicyFromJSON(loopMode, executionMode string, validationJSON, publicationJSON, changePolicyJSON []byte, version int64) (domain.RemediationPolicy, error) {
+	policy := domain.RemediationPolicy{AgentLoopMode: domain.AgentLoopMode(loopMode), ExecutionMode: domain.RemediationExecutionMode(executionMode), Version: version}
+	if err := json.Unmarshal(validationJSON, &policy.ValidationProfile); err != nil {
+		return domain.RemediationPolicy{}, fmt.Errorf("decode remediation validation profile: %w", err)
+	}
+	if err := json.Unmarshal(publicationJSON, &policy.Publication); err != nil {
+		return domain.RemediationPolicy{}, fmt.Errorf("decode remediation publication policy: %w", err)
+	}
+	if err := json.Unmarshal(changePolicyJSON, &policy.ChangePolicy); err != nil {
+		return domain.RemediationPolicy{}, fmt.Errorf("decode remediation change policy: %w", err)
+	}
+	policy = domain.NormalizeRemediationPolicy(policy)
+	if err := domain.ValidateRemediationPolicy(policy); err != nil {
+		return domain.RemediationPolicy{}, err
+	}
+	return policy, nil
 }
 
 func (r *Repository) UpsertEnvironment(ctx context.Context, projectID string, environment domain.Environment) (domain.Environment, error) {

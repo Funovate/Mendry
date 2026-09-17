@@ -11,11 +11,11 @@ import (
 
 const (
 	defaultMaxElapsed               = 20 * time.Minute
-	defaultMaxModelCalls      int64 = 16
+	defaultMaxModelCalls      int64 = 50
 	defaultMaxModelCostCents  int64 = 500
 	defaultMaxToolCalls       int64 = 64
 	defaultMaxEvidenceBytes   int64 = 4 << 20
-	defaultMaxRepositoryBytes int64 = 16 << 20
+	defaultMaxRepositoryBytes int64 = 256 << 20
 )
 
 var errRunWorkDeadline = errors.New("remediation run work deadline exceeded")

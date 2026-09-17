@@ -101,8 +101,8 @@ func TestEvidenceGateApplyPreservesConclusionOnClassificationMismatch(t *testing
 }
 
 // TestEvidenceGateApplyPreservesHardGateCaps 证明 genuinely hard gate 原因
-// （缺直接证据 / 未决时间相关性 / 真矛盾）仍保持既有 cap 与不可 planning 语义，
-// 且没有 mismatch 时不会产生 challenge。
+// （缺直接证据 / 服务解析出的 material contradiction）仍保持既有 cap 与不可
+// planning 语义，且没有 mismatch 时不会产生 challenge。
 func TestEvidenceGateApplyPreservesHardGateCaps(t *testing.T) {
 	// 缺少持久化直接证据：cap 0.39、不可 planning，结论保留。
 	noDirect := &DiagnosisOutput{
@@ -206,6 +206,33 @@ func TestEvidenceGatePreservesDiagnosisTimeWhenResolverHasNoPersistedAssessment(
 	}
 	if decision.EffectiveConfidence != 0.9 {
 		t.Fatalf("decision=%#v, want preserved high-confidence time assessment", decision)
+	}
+}
+
+func TestEvidenceGateKeepsNonMaterialTimeContradictionAuditOnly(t *testing.T) {
+	diagnosis := &DiagnosisOutput{
+		Fixability:        domain.FixabilityCodeFixable,
+		Confidence:        0.9,
+		CausalReasoning:   "persisted direct evidence and source explain the fault",
+		EvidenceCitations: []domain.EvidenceCitation{{EvidenceID: "ev-fault", Classification: domain.EvidenceDirectFault}},
+		TimeAssessment: &domain.TimeAssessment{
+			OriginalValues: []string{"2026-08-24T07:16:29Z", "2026-08-24T07:17:05Z"},
+			Basis:          "paired_epoch",
+			Certainty:      "high",
+			Contradictory:  true,
+		},
+		CausalClosure: &domain.CausalClosure{ExplainsOriginalSymptom: true},
+	}
+
+	gated, decision, _, err := NewEvidenceGate(evidenceResolverWithoutTime{}).Apply(context.Background(), "run-1", diagnosis)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if !decision.PlanningEligible || decision.ConfidenceCap != 1 || len(decision.Contradictions) != 0 {
+		t.Fatalf("decision=%#v, want non-material time mismatch to remain audit-only", decision)
+	}
+	if gated.TimeAssessment == nil || !gated.TimeAssessment.Contradictory {
+		t.Fatalf("gated=%#v, want original time assessment preserved for audit", gated)
 	}
 }
 

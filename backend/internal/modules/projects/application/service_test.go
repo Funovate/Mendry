@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	authdomain "mendry/backend/internal/modules/auth/domain"
@@ -93,6 +94,8 @@ func (f *fakeRepository) GetConfigurationDraft(context.Context, string) (domain.
 		provider := *f.configuration.LLM
 		draft.LLM = &provider
 	}
+	remediation := f.configuration.Remediation
+	draft.Remediation = &remediation
 	return draft, f.error
 }
 
@@ -154,6 +157,18 @@ func (f *fakeRepository) UpdateWebhookToken(_ context.Context, projectID string,
 	f.configuration.Trigger.IngressTokenCiphertext = append([]byte(nil), ciphertext...)
 	f.configuration.Trigger.IngressTokenNonce = append([]byte(nil), nonce...)
 	return f.error
+}
+
+type recordingRepositoryObserver struct {
+	calls             int
+	projectID         string
+	previous, current domain.Repository
+	policy            domain.RemediationPolicy
+}
+
+func (o *recordingRepositoryObserver) RepositoryUpdated(_ context.Context, projectID string, previous, current domain.Repository, policy domain.RemediationPolicy) {
+	o.calls++
+	o.projectID, o.previous, o.current, o.policy = projectID, previous, current, policy
 }
 
 type fakeCipher struct {
@@ -292,6 +307,27 @@ func TestConfigurationWriteAssignsOwnedIDs(t *testing.T) {
 	}
 }
 
+func TestPutConfigurationRepositorySchedulesEnabledHotfixRefresh(t *testing.T) {
+	configuration := validConfiguration()
+	configuration.Repository.ID = "019ff544-405c-7d25-9f10-cb3fc579605c"
+	configuration.Remediation.ExecutionMode = domain.RemediationExecutionAutoHotfix
+	configuration.Remediation.ValidationProfile.WorkingDirectory = "services/api"
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments"}, configuration: configuration}
+	service := newService(t, repository, &fakeCipher{})
+	observer := &recordingRepositoryObserver{}
+	service.SetRepositoryChangeObserver(observer)
+
+	updated := configuration.Repository
+	updated.DeployedCommit = strings.Repeat("d", 40)
+	saved, err := service.PutConfigurationRepository(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observer.calls != 1 || observer.projectID != projectID || observer.previous.DeployedCommit == saved.DeployedCommit || observer.current.DeployedCommit != saved.DeployedCommit {
+		t.Fatalf("repository refresh observation = %+v", observer)
+	}
+}
+
 func TestPutConfigurationRemediationPolicy(t *testing.T) {
 	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments"}}
 	service := newService(t, repository, &fakeCipher{})
@@ -301,6 +337,56 @@ func TestPutConfigurationRemediationPolicy(t *testing.T) {
 	}
 	if saved.AgentLoopMode != domain.AgentLoopModeResilientV1 || saved.Version != 1 || repository.projectID != projectID {
 		t.Fatalf("saved policy = %+v project=%q", saved, repository.projectID)
+	}
+}
+
+func TestPutConfigurationRemediationPolicyAllowsAutoHotfixDisabledValidationWithCustomLimits(t *testing.T) {
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments"}}
+	service := newService(t, repository, &fakeCipher{})
+	disabled := false
+	policy := domain.RemediationPolicy{
+		AgentLoopMode: domain.AgentLoopModeResilientV1,
+		ExecutionMode: domain.RemediationExecutionAutoHotfix,
+		ValidationProfile: domain.ValidationProfile{
+			Enabled:          &disabled,
+			ImageDigest:      "",
+			WorkingDirectory: ".",
+		},
+		Publication: domain.RemediationPublication{
+			BranchPrefix:          "hotfix/remediation",
+			GitCredentialSecretID: "credential-id",
+			APIBaseURL:            "https://git.example.com/api/v4",
+		},
+		ChangePolicy: domain.RemediationChangePolicy{
+			AllowedPaths:    []string{"**"},
+			DeniedPaths:     []string{},
+			MaxChangedFiles: 20,
+			MaxChangedLines: 4000,
+		},
+	}
+	saved, err := service.PutConfigurationRemediationPolicy(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", policy)
+	if err != nil {
+		t.Fatalf("PutConfigurationRemediationPolicy() error = %v", err)
+	}
+	if saved.ChangePolicy.MaxChangedFiles != 20 || saved.ChangePolicy.MaxChangedLines != 4000 {
+		t.Fatalf("saved policy unexpected limits = %+v", saved)
+	}
+}
+
+func TestPutConfigurationRemediationPolicyRejectsClientOwnedAutoHotfixProfile(t *testing.T) {
+	repository := &fakeRepository{project: domain.Project{ID: projectID, Key: "payments"}}
+	service := newService(t, repository, &fakeCipher{})
+	policy := domain.DefaultRemediationPolicy()
+	policy.AgentLoopMode = domain.AgentLoopModeResilientV1
+	policy.ExecutionMode = domain.RemediationExecutionAutoHotfix
+	enhanced := true
+	policy.ValidationProfile.Enabled = &enhanced
+	policy.ValidationProfile.ImageDigest = "sha256:" + strings.Repeat("a", 64)
+	policy.ValidationProfile.WorkingDirectory = "."
+	policy.ValidationProfile.RequiredCommands = []domain.ValidationCommand{{ID: "test", Version: 1, Argv: []string{"npm", "test"}, TimeoutSeconds: 600}}
+	policy.Publication.GitCredentialSecretID = "credential-id"
+	if _, err := service.PutConfigurationRemediationPolicy(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments", policy); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("client auto-hotfix policy error = %v", err)
 	}
 }
 

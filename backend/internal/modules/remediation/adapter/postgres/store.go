@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
 	"mendry/backend/internal/modules/remediation/application"
 	"mendry/backend/internal/modules/remediation/domain"
@@ -44,17 +45,18 @@ const (
 
 // Compile-time assertion that the adapter satisfies the frozen port and review companions.
 var (
-	_ domain.RunStore                = (*RunStore)(nil)
-	_ domain.AttemptStore            = (*RunStore)(nil)
-	_ domain.PlanningCheckpointStore = (*RunStore)(nil)
-	_ domain.EvidencePersistencePort = (*RunStore)(nil)
-	_ domain.BootstrapEvidenceLoader = (*RunStore)(nil)
-	_ domain.CallbackEvidenceLoader  = (*RunStore)(nil)
-	_ domain.ToolPolicyResolver      = (*RunStore)(nil)
-	_ domain.LifecycleStore          = (*RunStore)(nil)
-	_ application.ReviewRecorder     = (*RunStore)(nil)
-	_ application.ReviewQuery        = (*RunStore)(nil)
-	_ application.NotificationSink   = (*RunStore)(nil)
+	_ domain.RunStore                 = (*RunStore)(nil)
+	_ domain.AttemptStore             = (*RunStore)(nil)
+	_ domain.ReconfiguredAttemptStore = (*RunStore)(nil)
+	_ domain.PlanningCheckpointStore  = (*RunStore)(nil)
+	_ domain.EvidencePersistencePort  = (*RunStore)(nil)
+	_ domain.BootstrapEvidenceLoader  = (*RunStore)(nil)
+	_ domain.CallbackEvidenceLoader   = (*RunStore)(nil)
+	_ domain.ToolPolicyResolver       = (*RunStore)(nil)
+	_ domain.LifecycleStore           = (*RunStore)(nil)
+	_ application.ReviewRecorder      = (*RunStore)(nil)
+	_ application.ReviewQuery         = (*RunStore)(nil)
+	_ application.NotificationSink    = (*RunStore)(nil)
 )
 
 // NewRunStore 用进程 PostgreSQL 连接构造 RunStore。
@@ -62,7 +64,7 @@ func NewRunStore(database transactor) (*RunStore, error) {
 	if database == nil {
 		return nil, fmt.Errorf("remediation database is required")
 	}
-	return &RunStore{db: database}, nil
+	return &RunStore{db: wrapExecutionAwareDatabase(database)}, nil
 }
 
 // ResolveToolPolicy loads the immutable read allowlist for one project/source
@@ -267,6 +269,190 @@ func (s *RunStore) CreateNextAttempt(ctx context.Context, in domain.NextAttempt)
 	return run, nil
 }
 
+// CreateReconfiguredAttempt creates a queued linked attempt from the current
+// project policy. Ordinary continuation intentionally does not call this method.
+func (s *RunStore) CreateReconfiguredAttempt(ctx context.Context, in domain.NextAttempt) (domain.Run, error) {
+	if err := in.Validate(); err != nil {
+		return domain.Run{}, fmt.Errorf("%w: %v", domain.ErrInvalidNextAttempt, err)
+	}
+	if in.TriggerReason != domain.TriggerOriginManualReconfigure && in.Origin != domain.TriggerOriginManualReconfigure {
+		return domain.Run{}, domain.ErrUnsupportedState
+	}
+	predecessorID, err := parseRunID(in.ContinuationOfRunID)
+	if err != nil {
+		return domain.Run{}, err
+	}
+	seriesID, err := parseScopedUUID(in.SeriesID, "series")
+	if err != nil {
+		return domain.Run{}, err
+	}
+	incidentID, err := parseScopedUUID(in.IncidentID, "incident")
+	if err != nil {
+		return domain.Run{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("begin reconfigured attempt transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	q := remediationdb.New(tx)
+	currentContextVersion, err := q.LockRemediationIncidentContextVersion(ctx, incidentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("lock reconfigured incident context version: %w", err)
+	}
+	if currentContextVersion != in.ContextVersion {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	status, err := q.GetRemediationIncidentStatus(ctx, incidentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("get reconfigured incident status: %w", err)
+	}
+	if status != "Open" {
+		return domain.Run{}, domain.ErrUnsupportedState
+	}
+	if err := validateCurrentReconfigurationPolicy(ctx, tx, incidentID); err != nil {
+		return domain.Run{}, err
+	}
+
+	series, err := q.LockRemediationSeriesForRun(ctx, predecessorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("lock reconfigured remediation series: %w", err)
+	}
+	if !series.ID.Valid || !series.IncidentID.Valid || !sameUUID(series.ID, seriesID) ||
+		!sameUUID(series.IncidentID, incidentID) || series.LifecycleGeneration != in.LifecycleGeneration ||
+		series.DeployedCommit != in.DeployedCommit {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	predecessor, err := q.GetRemediationRun(ctx, predecessorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("get reconfigured predecessor: %w", err)
+	}
+	if !predecessor.ID.Valid || !sameUUID(predecessor.ID, predecessorID) || !sameUUID(predecessor.SeriesID, series.ID) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	runs, err := q.GetRemediationRunsBySeriesID(ctx, series.ID)
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("list reconfigured remediation attempts: %w", err)
+	}
+	if len(runs) == 0 {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	latest := runs[len(runs)-1]
+	if !sameUUID(latest.ID, predecessorID) || latest.Version != in.ExpectedPreviousVersion {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	for _, candidate := range runs {
+		if isActiveAttemptState(domain.RunState(candidate.State)) {
+			return domain.Run{}, domain.ErrActiveAttempt
+		}
+	}
+	switch domain.RunState(latest.State) {
+	case domain.RunStateDiagnosisReadyForReview, domain.RunStateFailed,
+		domain.RunStateBudgetExhausted, domain.RunStateBlockedManualReview:
+	default:
+		return domain.Run{}, domain.ErrUnsupportedState
+	}
+	child, err := q.CreateRemediationReconfiguredRun(ctx, remediationdb.CreateRemediationReconfiguredRunParams{
+		SeriesID: series.ID, AttemptNumber: latest.AttemptNumber + 1,
+		ContinuationOfRunID: predecessorID, ContinuationReason: strings.TrimSpace(in.ContinuationReason),
+		ContextVersion: in.ContextVersion,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Run{}, domain.ErrReconfigurationUnavailable
+	}
+	if uniqueViolation(err) {
+		return domain.Run{}, domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return domain.Run{}, fmt.Errorf("create reconfigured remediation attempt: %w", err)
+	}
+	run := mapRunRowToDomainRun(child)
+	run.IncidentID = uuidString(series.IncidentID)
+	run.LifecycleGeneration = series.LifecycleGeneration
+	run.DeployedCommit = series.DeployedCommit
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Run{}, fmt.Errorf("commit reconfigured remediation attempt: %w", err)
+	}
+	return run, nil
+}
+
+func validateCurrentReconfigurationPolicy(ctx context.Context, tx pgx.Tx, incidentID pgtype.UUID) error {
+	var (
+		agentLoopMode, executionMode string
+		policyVersion                int64
+		validationJSON               []byte
+		publicationJSON              []byte
+		changePolicyJSON             []byte
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT project.agent_loop_mode,
+		       project.agent_loop_policy_version,
+		       project.remediation_execution_mode,
+		       project.remediation_validation_profile,
+		       project.remediation_publication,
+		       project.remediation_change_policy
+		FROM incidents AS incident
+		JOIN projects AS project ON project.id = incident.project_id
+		JOIN project_repositories AS repository ON repository.project_id = project.id
+		WHERE incident.id = $1
+		FOR UPDATE OF project, repository`, incidentID).Scan(
+		&agentLoopMode, &policyVersion, &executionMode, &validationJSON, &publicationJSON, &changePolicyJSON,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrStalePredecessor
+	}
+	if err != nil {
+		return fmt.Errorf("load current remediation policy: %w", err)
+	}
+	var validationProfile projectdomain.ValidationProfile
+	var publication projectdomain.RemediationPublication
+	var changePolicy projectdomain.RemediationChangePolicy
+	if err := json.Unmarshal(validationJSON, &validationProfile); err != nil {
+		return domain.ErrReconfigurationUnavailable
+	}
+	if err := json.Unmarshal(publicationJSON, &publication); err != nil {
+		return domain.ErrReconfigurationUnavailable
+	}
+	if err := json.Unmarshal(changePolicyJSON, &changePolicy); err != nil {
+		return domain.ErrReconfigurationUnavailable
+	}
+	policy := projectdomain.RemediationPolicy{
+		AgentLoopMode:     projectdomain.AgentLoopMode(agentLoopMode),
+		ExecutionMode:     projectdomain.RemediationExecutionMode(executionMode),
+		ValidationProfile: validationProfile,
+		Publication:       publication,
+		ChangePolicy:      changePolicy,
+		Version:           policyVersion,
+	}
+	if err := projectdomain.ValidateRemediationPolicy(policy); err != nil ||
+		policy.AgentLoopMode != projectdomain.AgentLoopModeResilientV1 ||
+		policy.ExecutionMode != projectdomain.RemediationExecutionAutoHotfix {
+		return domain.ErrReconfigurationUnavailable
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(policy.Publication.GitCredentialSecretID)); err != nil {
+		return domain.ErrReconfigurationUnavailable
+	}
+	if apiID := strings.TrimSpace(policy.Publication.APICredentialSecretID); apiID != "" {
+		if _, err := uuid.Parse(apiID); err != nil {
+			return domain.ErrReconfigurationUnavailable
+		}
+	}
+	return nil
+}
+
 // GetLatestPlanningCheckpoint 返回同一 series/context 中、截至 expected predecessor
 // attempt 最近一次以 code_fixable durable decision 通过 evidence gate 的 aggregate。
 func (s *RunStore) GetLatestPlanningCheckpoint(
@@ -358,27 +544,58 @@ func createSeriesAndRun(ctx context.Context, q *remediationdb.Queries, in domain
 func mapCreatedRun(run remediationdb.RemediationRun, series remediationdb.RemediationSeries, incidentID string) domain.Run {
 	triggerReason := safeTriggerReason(run.TriggerReason)
 	return domain.Run{
-		RunID:                  uuidString(run.ID),
-		SeriesID:               uuidString(series.ID),
-		IncidentID:             incidentID,
-		LifecycleGeneration:    series.LifecycleGeneration,
-		DeployedCommit:         series.DeployedCommit,
-		AttemptNumber:          run.AttemptNumber,
-		State:                  domain.RunState(run.State),
-		Origin:                 triggerReason,
-		TriggerReason:          triggerReason,
-		ContinuationOfRunID:    optionalUUIDString(run.ContinuationOfRunID),
-		ContinuationReason:     run.ContinuationReason,
-		ContextVersion:         run.ContextVersion,
-		TerminalReason:         run.TerminalReason,
-		Retryable:              run.Retryable,
-		AgentLoopMode:          domain.ParseAgentLoopMode(run.AgentLoopMode),
-		AgentLoopPolicyVersion: run.AgentLoopPolicyVersion,
-		AnalysisOnly:           run.AnalysisOnly,
-		Version:                run.Version,
-		CreatedAt:              run.StartedAt.Time,
-		UpdatedAt:              run.StartedAt.Time,
+		RunID:                   uuidString(run.ID),
+		SeriesID:                uuidString(series.ID),
+		IncidentID:              incidentID,
+		LifecycleGeneration:     series.LifecycleGeneration,
+		DeployedCommit:          series.DeployedCommit,
+		AttemptNumber:           run.AttemptNumber,
+		State:                   domain.RunState(run.State),
+		Origin:                  triggerReason,
+		TriggerReason:           triggerReason,
+		ContinuationOfRunID:     optionalUUIDString(run.ContinuationOfRunID),
+		ContinuationReason:      run.ContinuationReason,
+		ContextVersion:          run.ContextVersion,
+		TerminalReason:          run.TerminalReason,
+		Retryable:               run.Retryable,
+		AgentLoopMode:           domain.ParseAgentLoopMode(run.AgentLoopMode),
+		AgentLoopPolicyVersion:  run.AgentLoopPolicyVersion,
+		ExecutionMode:           domain.ParseExecutionMode(run.ExecutionMode),
+		ValidationCommands:      decodeValidationCommands(run.ValidationCommands),
+		ValidationImageDigest:   run.ValidationImageDigest,
+		ExecutionProfile:        decodeRunSnapshot[domain.ExecutionProfileSnapshot](run.ExecutionProfile),
+		PublicationSnapshot:     decodeRunSnapshot[domain.PublicationSnapshot](run.PublicationSnapshot),
+		ChangePolicySnapshot:    decodeRunSnapshot[domain.ChangePolicySnapshot](run.ChangePolicy),
+		PublicationTargetBranch: run.PublicationTargetBranch,
+		PublicationBranchPrefix: run.PublicationBranchPrefix,
+		AnalysisOnly:            run.AnalysisOnly,
+		Version:                 run.Version,
+		CreatedAt:               run.StartedAt.Time,
+		UpdatedAt:               run.StartedAt.Time,
 	}
+}
+
+func decodeRunSnapshot[T any](raw []byte) T {
+	var value T
+	if len(raw) == 0 || string(raw) == "null" {
+		return value
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		var zero T
+		return zero
+	}
+	return value
+}
+
+func decodeValidationCommands(raw []byte) map[string]int64 {
+	commands := map[string]int64{}
+	if len(raw) == 0 {
+		return commands
+	}
+	if err := json.Unmarshal(raw, &commands); err != nil {
+		return map[string]int64{}
+	}
+	return commands
 }
 
 func uniqueViolation(err error) bool {
@@ -1320,20 +1537,28 @@ func mapRunRowToDomainRun(row remediationdb.RemediationRun) domain.Run {
 	}
 	triggerReason := safeTriggerReason(row.TriggerReason)
 	return domain.Run{
-		RunID:                  uuidString(row.ID),
-		SeriesID:               uuidString(row.SeriesID),
-		AttemptNumber:          row.AttemptNumber,
-		State:                  domain.RunState(row.State),
-		Origin:                 triggerReason,
-		TriggerReason:          triggerReason,
-		ContinuationOfRunID:    optionalUUIDString(row.ContinuationOfRunID),
-		ContinuationReason:     row.ContinuationReason,
-		ContextVersion:         row.ContextVersion,
-		TerminalReason:         row.TerminalReason,
-		Retryable:              row.Retryable,
-		AgentLoopMode:          domain.ParseAgentLoopMode(row.AgentLoopMode),
-		AgentLoopPolicyVersion: row.AgentLoopPolicyVersion,
-		AnalysisOnly:           row.AnalysisOnly,
+		RunID:                   uuidString(row.ID),
+		SeriesID:                uuidString(row.SeriesID),
+		AttemptNumber:           row.AttemptNumber,
+		State:                   domain.RunState(row.State),
+		Origin:                  triggerReason,
+		TriggerReason:           triggerReason,
+		ContinuationOfRunID:     optionalUUIDString(row.ContinuationOfRunID),
+		ContinuationReason:      row.ContinuationReason,
+		ContextVersion:          row.ContextVersion,
+		TerminalReason:          row.TerminalReason,
+		Retryable:               row.Retryable,
+		AgentLoopMode:           domain.ParseAgentLoopMode(row.AgentLoopMode),
+		AgentLoopPolicyVersion:  row.AgentLoopPolicyVersion,
+		ExecutionMode:           domain.ParseExecutionMode(row.ExecutionMode),
+		ValidationCommands:      decodeValidationCommands(row.ValidationCommands),
+		ValidationImageDigest:   row.ValidationImageDigest,
+		ExecutionProfile:        decodeRunSnapshot[domain.ExecutionProfileSnapshot](row.ExecutionProfile),
+		PublicationSnapshot:     decodeRunSnapshot[domain.PublicationSnapshot](row.PublicationSnapshot),
+		ChangePolicySnapshot:    decodeRunSnapshot[domain.ChangePolicySnapshot](row.ChangePolicy),
+		PublicationTargetBranch: row.PublicationTargetBranch,
+		PublicationBranchPrefix: row.PublicationBranchPrefix,
+		AnalysisOnly:            row.AnalysisOnly,
 		Budget: domain.BudgetCounters{
 			ElapsedSeconds:  elapsedSeconds,
 			ModelCalls:      int64(row.ModelCalls),

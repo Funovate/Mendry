@@ -39,6 +39,31 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 	// 测试开发库，fixture 自包含，不依赖 seed 数据）。
 	connStr := os.Getenv("MENDRY_POSTGRES_URL")
 	if connStr == "" {
+		connStr = os.Getenv("FIXTHE_POSTGRES_URL")
+	}
+	if connStr == "" {
+		for _, envPath := range []string{".env", "../../../../../.env", "../../../../.env", "../../.env"} {
+			if data, err := os.ReadFile(envPath); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "FIXTHE_POSTGRES_URL=") {
+						connStr = strings.TrimPrefix(line, "FIXTHE_POSTGRES_URL=")
+						connStr = strings.Trim(connStr, "\"'")
+						break
+					}
+					if strings.HasPrefix(line, "MENDRY_POSTGRES_URL=") {
+						connStr = strings.TrimPrefix(line, "MENDRY_POSTGRES_URL=")
+						connStr = strings.Trim(connStr, "\"'")
+						break
+					}
+				}
+				if connStr != "" {
+					break
+				}
+			}
+		}
+	}
+	if connStr == "" {
 		connStr = "postgres://mendry:mendry@localhost:5432/mendry_test?sslmode=disable"
 	}
 
@@ -233,6 +258,15 @@ func nextAttemptInput(run domain.Run, origin string, contextVersion int64) domai
 	}
 }
 
+func mustLoadedRun(t *testing.T, store *postgres.RunStore, runID string) domain.Run {
+	t.Helper()
+	aggregate, err := store.Get(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("load run %s: %v", runID, err)
+	}
+	return aggregate.Run
+}
+
 func TestRunStore_CreateNextAttemptRules(t *testing.T) {
 	pool := setupTestDB(t)
 	t.Cleanup(pool.Close)
@@ -388,6 +422,96 @@ func TestRunStore_CreateNextAttemptRules(t *testing.T) {
 			t.Fatalf("legacy root metadata = %+v", root)
 		}
 	})
+}
+
+func TestRunStore_CreateReconfiguredAttemptUsesCurrentPolicy(t *testing.T) {
+	pool := setupTestDB(t)
+	t.Cleanup(pool.Close)
+	store := mustStore(t, pool)
+	ctx := context.Background()
+	incidentID := mustIncident(t, pool)
+	deployedCommit := "abcdef1"
+	if _, err := pool.Exec(ctx, `UPDATE incidents SET deployed_commit=$2, version=1 WHERE id=$1`, incidentID, deployedCommit); err != nil {
+		t.Fatal(err)
+	}
+	rootInput := newRun(incidentID, 1, deployedCommit)
+	rootInput.ContextVersion = 1
+	root, err := store.CreateSeriesAndRun(ctx, rootInput)
+	if err != nil {
+		t.Fatalf("CreateSeriesAndRun: %v", err)
+	}
+	if err := store.Transition(ctx, root.RunID, domain.RunStateQueued, domain.RunStateFailed, domain.Effect{TerminalReason: "diagnosis_ready_for_review"}); err != nil {
+		t.Fatalf("finish root: %v", err)
+	}
+	root = mustLoadedRun(t, store, root.RunID)
+	var projectID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT project_id FROM incidents WHERE id=$1`, incidentID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	secretID := newV7(t)
+	repoID := newV7(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO project_secrets(id,project_id,name,kind,ciphertext,nonce) VALUES($1,$2,'repair-git','git_credential',$3,$4)`, secretID, projectID, make([]byte, 17), make([]byte, 12)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO project_repositories(id,project_id,remote_url,scm_provider,transport,credential_secret_id,production_branch,deployed_commit) VALUES($1,$2,'https://example.test/repo.git','generic','https',$3,'main',$4)`, repoID, projectID, secretID, deployedCommit); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM project_repositories WHERE id=$1`, repoID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM project_secrets WHERE id=$1`, secretID)
+	})
+	profile := fmt.Sprintf(`{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workingDirectory":".","preparedCommit":%q,"toolchainId":"go-1.23-default","buildPlanVersion":"dependency-image-v2","dependencyHash":"%s","preparation":[],"requiredCommands":[{"id":"test","version":2,"argv":["go","test","./..."],"timeoutSeconds":600}],"cpuLimit":2,"memoryLimitMiB":4096,"workspaceLimitMiB":10240}`, deployedCommit, strings.Repeat("b", 64))
+	publication := fmt.Sprintf(`{"branchPrefix":"hotfix/remediation","gitCredentialSecretId":"%s","apiCredentialSecretId":"","apiBaseUrl":""}`, secretID)
+	if _, err := pool.Exec(ctx, `UPDATE projects SET agent_loop_mode='resilient_v1', remediation_execution_mode='auto_hotfix', remediation_validation_profile=$2::jsonb, remediation_publication=$3::jsonb WHERE id=$1`, projectID, profile, publication); err != nil {
+		t.Fatal(err)
+	}
+	input := nextAttemptInput(root, domain.TriggerOriginManualReconfigure, root.ContextVersion)
+	input.Origin = domain.TriggerOriginManualReconfigure
+	child, err := store.CreateReconfiguredAttempt(ctx, input)
+	if err != nil {
+		t.Fatalf("CreateReconfiguredAttempt: %v", err)
+	}
+	if child.AttemptNumber != 2 || child.ContinuationOfRunID != root.RunID || child.TriggerReason != domain.TriggerOriginManualReconfigure ||
+		child.ExecutionMode != domain.ExecutionModeAutoHotfix || child.AnalysisOnly || child.AgentLoopMode != domain.AgentLoopModeResilientV1 {
+		t.Fatalf("child policy/identity = %+v", child)
+	}
+	if child.ExecutionProfile.ImageDigest == "" || len(child.ExecutionProfile.RequiredCommands) != 1 || child.ExecutionProfile.RequiredCommands[0].Version != 2 {
+		t.Fatalf("child profile = %+v", child.ExecutionProfile)
+	}
+	aggregate, err := store.Get(ctx, root.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggregate.Run.RunID != root.RunID || len(aggregate.AttemptSummaries) != 2 {
+		t.Fatalf("predecessor history changed: %+v", aggregate)
+	}
+}
+
+func TestRunStore_CreateReconfiguredAttemptRejectsClosedIncident(t *testing.T) {
+	pool := setupTestDB(t)
+	t.Cleanup(pool.Close)
+	store := mustStore(t, pool)
+	ctx := context.Background()
+	incidentID := mustIncident(t, pool)
+	deployedCommit := "abcdef2"
+	if _, err := pool.Exec(ctx, `UPDATE incidents SET deployed_commit=$2, status='Closed', version=1 WHERE id=$1`, incidentID, deployedCommit); err != nil {
+		t.Fatal(err)
+	}
+	rootInput := newRun(incidentID, 1, deployedCommit)
+	rootInput.ContextVersion = 1
+	root, err := store.CreateSeriesAndRun(ctx, rootInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition(ctx, root.RunID, domain.RunStateQueued, domain.RunStateDiagnosisReadyForReview, domain.Effect{TerminalReason: "diagnosis_ready_for_review"}); err != nil {
+		t.Fatal(err)
+	}
+	root = mustLoadedRun(t, store, root.RunID)
+	input := nextAttemptInput(root, domain.TriggerOriginManualReconfigure, root.ContextVersion)
+	input.Origin = domain.TriggerOriginManualReconfigure
+	if _, err := store.CreateReconfiguredAttempt(ctx, input); !errors.Is(err, domain.ErrUnsupportedState) {
+		t.Fatalf("closed incident error = %v, want ErrUnsupportedState", err)
+	}
 }
 
 func TestRunStore_GetLatestPlanningCheckpoint(t *testing.T) {
@@ -900,18 +1024,15 @@ func TestRunStore_NotifyWritesAllowlistedAuditMetadata(t *testing.T) {
 			t.Fatalf("unexpected metadata key %q", key)
 		}
 	}
-	// 有 owning incident 时 Notify 成功写入审计。
+	// Single-user Mendry intentionally no-ops Notify.
 	if err := store.Notify(ctx, notification); err != nil {
 		t.Fatalf("notify with owning incident failed: %v", err)
 	}
-	// 无对应 run 时 fail closed，保持安全诊断路径。
 	orphan := application.TerminalNotification{
 		RunID: newV7(t).String(), Kind: application.NotificationDiagnosisReadyForReview,
 		Summary: "orphan", Fixability: domain.FixabilityCodeFixable, State: domain.RunStateDiagnosisReadyForReview,
 	}
-	if err := store.Notify(ctx, orphan); err == nil {
-		t.Fatal("expected notify to fail closed for an unknown run")
-	} else if !strings.Contains(err.Error(), "not found") {
+	if err := store.Notify(ctx, orphan); err != nil {
 		t.Fatalf("notify error = %v", err)
 	}
 }
@@ -1193,7 +1314,7 @@ func TestRunStore_ContinuationEvidenceIndexSameSeries(t *testing.T) {
 
 func TestLifecycleEffectsRoundTripAndSuccessfulProjectionIsImmutable(t *testing.T) {
 	pool := setupTestDB(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	incidentID := mustIncident(t, pool)
 	store := mustStore(t, pool)
 	root, err := store.CreateSeriesAndRun(context.Background(), newRun(incidentID, 1, "abc123"))
