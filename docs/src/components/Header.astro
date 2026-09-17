@@ -1,0 +1,24 @@
+---
+import LanguageSelect from "@astrojs/starlight/components/LanguageSelect.astro";
+import Search from "@astrojs/starlight/components/Search.astro";
+import SocialIcons from "@astrojs/starlight/components/SocialIcons.astro";
+import SiteTitle from "@astrojs/starlight/components/SiteTitle.astro";
+import ThemeSelect from "@astrojs/starlight/components/ThemeSelect.astro";
+import "../styles/header.css";
+import "../styles/docs-header.css";
+import "../styles/page-transitions.css";
+---
+
+<div class="header site-header">
+  <div class="title-wrapper sl-flex">
+    <SiteTitle />
+  </div>
+  <div class="header-tools sl-flex print:hidden">
+    <Search />
+    <SocialIcons />
+    <div class="right-group sl-flex print:hidden">
+      <ThemeSelect />
+      <LanguageSelect />
+    </div>
+  </div>
+</div>

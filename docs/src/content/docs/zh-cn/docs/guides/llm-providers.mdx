@@ -1,0 +1,41 @@
+---
+title: 事故应用 LLM 提供方
+description: 配置可选 OpenAI-compatible 事故分析，同时不扩大模型权限或削弱确定性运行能力。
+availability: preview
+translationKey: llm-providers
+sources:
+  - backend/README.md
+---
+
+**可用性：preview**
+
+## 范围：现有事故应用
+
+本页记录当前事故应用中的 project-scoped provider 行为，不是 Local Harness 源码预览或 planned 通用 Service 的 binding 格式。中立 core 只依赖 `ModelProvider` 与 opaque turn binding；endpoint、model 与 credential 由具体 adapter 和可信 composition 解析。
+
+Mendry 支持项目范围内的 OpenAI-compatible provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
+
+## 配置
+
+1. 创建 `http_bearer` 项目凭据。
+2. 保存 provider `openai`、兼容 HTTPS 的 `baseUrl`、credential ID 与 model ID。
+3. 通过项目 probe 端点列出 model，并选择提供方返回的 ID。
+4. 保存操作配置前运行有界连接 probe。
+
+API key 只写不读。Provider 读取返回配置 metadata，不返回 secret。
+
+## 出站与脱敏
+
+只有已配置的 provider 调用可以离开客户环境。日志记录安全的 host/path、model、status、duration、可用 token usage metadata 与有界清洗诊断，不持久化原始 prompt、原始模型响应、bearer token 或 provider control payload。
+
+## 权限边界
+
+模型输出是不可信的建议数据。服务端策略验证 schema、tool name、project/run scope、budget、evidence citation、stop condition 与 candidate plan。模型不能选择凭据、任意 URL、shell 命令、合并批准、部署批准或恢复状态。
+
+## 安全停用
+
+删除或省略项目 LLM provider 可阻止新的 provider-backed 分析。通过外部运维记录检查进行中的活动；单用户事故应用不提供应用审计事件流，当前源码评估也不包含通用持久 worker queue。
+
+## 核验依据
+
+- `backend/README.md`

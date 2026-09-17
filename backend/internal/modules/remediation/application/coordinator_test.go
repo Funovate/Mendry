@@ -1,0 +1,1578 @@
+package application_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+)
+
+// newCoordinator wires the coordinator against the supplied fakes.
+func newCoordinator(store *fakeRunStore, repo domain.RepositoryReadPort, ev domain.EvidenceLogPort, model domain.LLMProviderPort) *application.RemediationCoordinator {
+	coord := application.NewRemediationCoordinatorWithReview(store, repo, ev, model, nil, store, store)
+	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+	return coord
+}
+
+func newCoordinatorWithBudget(
+	store *fakeRunStore,
+	repo domain.RepositoryReadPort,
+	ev domain.EvidenceLogPort,
+	model domain.LLMProviderPort,
+	limits domain.BudgetLimits,
+) *application.RemediationCoordinator {
+	coord := application.NewRemediationCoordinatorWithBudgetLimits(store, repo, ev, model, limits)
+	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+	return coord
+}
+
+const testIncidentUUID = "019ff544-405c-7d11-9f10-cb3fc579605c"
+
+func runStart(t *testing.T, model *scriptedModel) (*fakeRunStore, domain.Run, error) {
+	t.Helper()
+	store := newFakeRunStore()
+	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	return store, run, err
+}
+
+func runStartWithBudget(t *testing.T, model *scriptedModel, limits domain.BudgetLimits) (*fakeRunStore, domain.Run, error) {
+	t.Helper()
+	store := newFakeRunStore()
+	coord := newCoordinatorWithBudget(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, limits)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	return store, run, err
+}
+
+type droppingAnalysisOnlyStore struct {
+	*fakeRunStore
+}
+
+func (s *droppingAnalysisOnlyStore) CreateSeriesAndRun(ctx context.Context, in domain.NewRun) (domain.Run, error) {
+	run, err := s.fakeRunStore.CreateSeriesAndRun(ctx, in)
+	if err == nil {
+		run.AnalysisOnly = false
+		s.created.AnalysisOnly = false
+	}
+	return run, err
+}
+
+func TestCoordinatorStartFailsClosedWhenStoreDropsAnalysisOnly(t *testing.T) {
+	base := newFakeRunStore()
+	store := &droppingAnalysisOnlyStore{fakeRunStore: base}
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("code_fixable")}}
+	coord := application.NewRemediationCoordinatorWithReview(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, nil, base, base)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123", AnalysisOnly: true,
+	})
+	if !errors.Is(err, application.ErrLifecycleUnavailable) || run.RunID == "" || model.calls != 0 || len(base.transitions) != 0 {
+		t.Fatalf("Start() run=%#v error=%v model_calls=%d transitions=%#v", run, err, model.calls, base.transitions)
+	}
+}
+
+// TestCoordinator_RoutesFixabilityToTerminalState verifies each fixability
+// class routes to the correct terminal state.
+func TestCoordinator_RoutesFixabilityToTerminalState(t *testing.T) {
+	cases := []struct {
+		fixability string
+		want       domain.RunState
+	}{
+		{"no_change_needed", domain.RunStateCompletedNonCode},
+		{"external_dependency", domain.RunStateCompletedNonCode},
+		{"configuration", domain.RunStateCompletedNonCode},
+		{"data", domain.RunStateCompletedNonCode},
+		{"infrastructure", domain.RunStateCompletedNonCode},
+		{"unsafe_to_automate", domain.RunStateBlockedManualReview},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.fixability, func(t *testing.T) {
+			model := &scriptedModel{responses: []string{diagnosisEnvelope(tc.fixability)}}
+			store, run, err := runStart(t, model)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if run.IncidentID != testIncidentUUID {
+				t.Errorf("IncidentID = %q, want UUID", run.IncidentID)
+			}
+			if store.state != tc.want {
+				t.Errorf("final state = %s, want %s", store.state, tc.want)
+			}
+			if len(store.decisions) != 1 {
+				t.Errorf("decisions recorded = %d, want 1", len(store.decisions))
+			}
+		})
+	}
+}
+
+// TestCoordinator_CodeFixableReachesDiagnosisReady verifies the code-fixable
+// path drives diagnosing → planning → diagnosis_ready_for_review.
+func TestCoordinator_CodeFixableReachesDiagnosisReady(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
+	}
+	if store.countTransitionsTo(domain.RunStatePlanning) != 1 {
+		t.Errorf("expected one transition into planning")
+	}
+	if store.countTransitionsTo(domain.RunStateDiagnosisReadyForReview) != 1 {
+		t.Errorf("expected one transition into diagnosis_ready_for_review")
+	}
+}
+
+func TestCoordinator_PlanningExecutesMultipleNativeRepositoryTools(t *testing.T) {
+	model := &nativeScriptedModel{results: []domain.ModelResult{
+		{Content: diagnosisEnvelope("code_fixable"), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+		{
+			Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2,
+			ToolCalls: []domain.ToolCall{
+				{ID: "plan-read", Name: application.ToolRepoReadFile, Arguments: map[string]interface{}{"path": "main.go"}},
+				{ID: "plan-search", Name: application.ToolRepoSearch, Arguments: map[string]interface{}{"query": "TriggerNilPointerFault"}},
+			},
+		},
+		{Content: planEnvelope(), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
+	}
+	if repo.calls != 2 || len(store.invocations) != 2 {
+		t.Fatalf("repository calls/invocations = %d/%d, want 2/2", repo.calls, len(store.invocations))
+	}
+	for _, invocation := range store.invocations {
+		if invocation.Phase != domain.RunStatePlanning || invocation.Error != "" {
+			t.Fatalf("planning invocation = %#v", invocation)
+		}
+	}
+	if store.budget.ModelCalls != 3 || store.budget.ToolCalls != 2 {
+		t.Fatalf("model/tool budget = %d/%d, want 3/2", store.budget.ModelCalls, store.budget.ToolCalls)
+	}
+	if len(model.turns) != 3 || len(model.turns[2].Messages) < 4 {
+		t.Fatalf("planning tool history = %#v", model.turns)
+	}
+	messages := model.turns[2].Messages
+	if messages[len(messages)-2].ToolCallID != "plan-read" || messages[len(messages)-1].ToolCallID != "plan-search" {
+		t.Fatalf("planning tool results lost provider call identity: %#v", messages)
+	}
+}
+
+func TestCoordinator_PlanningToolRejectionFeedsNextTurn(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		requestToolEnvelope(application.ToolRepoReadFile, "../secret"),
+		planEnvelope(),
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || repo.calls != 0 {
+		t.Fatalf("state/repository calls = %s/%d", store.state, repo.calls)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Phase != domain.RunStatePlanning || store.invocations[0].Error != "path_out_of_scope" {
+		t.Fatalf("rejected planning invocation = %#v", store.invocations)
+	}
+	if len(model.turns) != 3 || !strings.Contains(model.turns[2].UserMessage, "tool_observation") ||
+		!strings.Contains(model.turns[2].UserMessage, "path_out_of_scope") {
+		t.Fatalf("planning rejection was not fed back safely: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_PlanningToolRequestResetsProtocolFailureCounter(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || model.calls != 7 {
+		t.Fatalf("state/calls = %s/%d, want diagnosis_ready_for_review/7", store.state, model.calls)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Phase != domain.RunStatePlanning {
+		t.Fatalf("planning invocations = %#v", store.invocations)
+	}
+}
+
+// TestCoordinator_InsufficientEvidenceBoundedLoop verifies the collect-more-
+// context loop is bounded and terminates in blocked_manual_review.
+func TestCoordinator_InsufficientEvidenceBoundedLoop(t *testing.T) {
+	// Four insufficient diagnoses: loops 1,2,3 collect; the fourth is over the
+	// bound (maxCollectLoops=3) and terminates.
+	model := &scriptedModel{responses: []string{
+		insufficientWithCollectEnvelope(),
+		insufficientWithCollectEnvelope(),
+		insufficientWithCollectEnvelope(),
+		insufficientWithCollectEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview {
+		t.Fatalf("final state = %s, want blocked_manual_review", store.state)
+	}
+	if got := store.countTransitionsTo(domain.RunStateCollectingMoreContext); got != 3 {
+		t.Errorf("collect loops = %d, want 3", got)
+	}
+	// Each collect iteration ran the model's single read tool.
+	if len(store.invocations) != 3 {
+		t.Errorf("tool invocations = %d, want 3", len(store.invocations))
+	}
+	if len(store.decisions) != 4 {
+		t.Errorf("decisions = %d, want 4", len(store.decisions))
+	}
+}
+
+func TestCoordinator_InsufficientEvidenceWithoutCollectionStopsImmediately(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+		insufficientWithoutCollectionEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 1 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/1", store.state, model.calls)
+	}
+	if store.countTransitionsTo(domain.RunStateCollectingMoreContext) != 0 || len(store.invocations) != 0 || len(store.decisions) != 1 {
+		t.Fatalf("empty collection loop was consumed: transitions=%#v invocations=%#v decisions=%#v", store.transitions, store.invocations, store.decisions)
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+func TestCoordinator_ClosedCausalDiagnosisIsReassessedBeforeBlocking(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithClosedCausalClosureEnvelope(),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || model.calls != 3 {
+		t.Fatalf("state/model calls = %s/%d, want diagnosis_ready_for_review/3", store.state, model.calls)
+	}
+	if store.countTransitionsTo(domain.RunStateCollectingMoreContext) != 0 || len(store.invocations) != 0 {
+		t.Fatalf("reassessment must not fabricate collection: transitions=%#v invocations=%#v", store.transitions, store.invocations)
+	}
+	if len(store.decisions) != 2 {
+		t.Fatalf("decisions = %d, want initial and reassessed diagnoses", len(store.decisions))
+	}
+	if len(model.turns) != 3 ||
+		!strings.Contains(model.turns[1].UserMessage, `"code":"inconsistent_causal_closure"`) ||
+		!strings.Contains(model.turns[1].UserMessage, "test authorization is an audit finding") {
+		t.Fatalf("causal-closure reassessment missing from second turn: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_ClosedCausalDiagnosisReassessmentIsBounded(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithClosedCausalClosureEnvelope(),
+		insufficientWithClosedCausalClosureEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 2 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/2", store.state, model.calls)
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+type sequenceDockerEvidencePort struct {
+	results []domain.DockerLogResult
+	queries []domain.DockerLogQuery
+}
+
+func (p *sequenceDockerEvidencePort) ResolveDockerContainer(context.Context, domain.EvidenceScope) (domain.DockerContainerIdentity, error) {
+	return domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)}, nil
+}
+
+func (p *sequenceDockerEvidencePort) ReadDockerLogs(_ context.Context, _ domain.EvidenceScope, query domain.DockerLogQuery) (domain.DockerLogResult, error) {
+	p.queries = append(p.queries, query)
+	if len(p.results) == 0 {
+		return domain.DockerLogResult{}, fmt.Errorf("unexpected Docker log read")
+	}
+	result := p.results[0]
+	p.results = p.results[1:]
+	result.Query = domain.DockerLogQueryMeta{
+		Since: query.Since, Until: query.Until, Tail: query.Tail, Pattern: query.Pattern,
+	}
+	return result, nil
+}
+
+func TestCoordinator_RequiresNarrowerDockerLogsBeforeDiagnosis(t *testing.T) {
+	start := time.Date(2026, 8, 28, 8, 6, 0, 0, time.UTC)
+	model := &scriptedModel{responses: []string{
+		dockerLogRequestEnvelope(start.Add(-time.Minute), start.Add(time.Minute), 2, ""),
+		diagnosisEnvelope("external_dependency"),
+		dockerLogRequestEnvelope(start, start.Add(time.Second), 20, "TriggerNilPointerFault"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	port := &sequenceDockerEvidencePort{results: []domain.DockerLogResult{
+		{
+			Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+			Stdout:    "tail-only\n", CoverageLimited: true, RefinementRequired: true, CoverageReason: "tail_limit",
+			WindowLines: -1,
+		},
+		{
+			Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+			Stderr:    "panic TriggerNilPointerFault\ngoroutine 42 [running]:\n", WindowLines: -1, FilteredLines: 1,
+		},
+	}}
+	coord := newDockerFlowCoordinator(t, store, model, port, start)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if run.State != domain.RunStateCompletedNonCode || model.calls != 4 || len(port.queries) != 2 {
+		t.Fatalf("state/model/docker = %s/%d/%d", run.State, model.calls, len(port.queries))
+	}
+	if !strings.Contains(model.turns[2].UserMessage, `"code":"docker_log_refinement_required"`) ||
+		!strings.Contains(model.turns[2].UserMessage, `"reason":"tail_limit"`) {
+		t.Fatalf("refinement correction missing from third turn: %#v", model.turns)
+	}
+	if len(store.decisions) != 1 || len(store.invocations) != 2 {
+		t.Fatalf("decisions/invocations = %d/%d", len(store.decisions), len(store.invocations))
+	}
+}
+
+func TestCoordinator_BlocksRepeatedDiagnosisWithPendingDockerRefinement(t *testing.T) {
+	start := time.Date(2026, 8, 28, 8, 6, 0, 0, time.UTC)
+	model := &scriptedModel{responses: []string{
+		dockerLogRequestEnvelope(start.Add(-time.Minute), start.Add(time.Minute), 2, ""),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	port := &sequenceDockerEvidencePort{results: []domain.DockerLogResult{{
+		Container: domain.DockerContainerIdentity{Name: "real-estate-api", ID: strings.Repeat("d", 64)},
+		Stdout:    "tail-only\n", CoverageLimited: true, RefinementRequired: true, CoverageReason: "tail_limit", WindowLines: -1,
+	}}}
+	coord := newDockerFlowCoordinator(t, store, model, port, start)
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if run.State != domain.RunStateBlockedManualReview || model.calls != 3 || len(store.decisions) != 0 {
+		t.Fatalf("state/model/decisions = %s/%d/%d", run.State, model.calls, len(store.decisions))
+	}
+	if len(store.effects) == 0 || store.effects[len(store.effects)-1].TerminalReason != "insufficient_evidence" {
+		t.Fatalf("terminal effect = %#v", store.effects)
+	}
+}
+
+func newDockerFlowCoordinator(
+	t *testing.T,
+	store *fakeRunStore,
+	model *scriptedModel,
+	port domain.DockerEvidencePort,
+	start time.Time,
+) *application.RemediationCoordinator {
+	t.Helper()
+	source := domain.SourceCapabilitySnapshot{
+		ProjectID: testProjectID, SourceID: "source-1", Kind: "ssh", Enabled: true, Supported: true,
+		Declared: []string{"pull_collection"}, Version: 1,
+		SSHDeploymentKind: "docker", SSHContainerName: "real-estate-api",
+	}
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, nil, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: testProjectID, EnvironmentID: "environment-1", SourceID: "source-1",
+			DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}}, nil, store, store, nil, staticSourceCaps{snapshot: source}, nil, nil,
+	)
+	coord.SetBootstrapEvidenceLoader(&bootstrapEvidenceLoader{value: domain.BootstrapEvidence{
+		TimeRange: domain.TimeRange{Start: start.Add(-time.Minute), End: start.Add(time.Minute)},
+		TimeBasis: "explicit_offset", TimeCertainty: "high",
+	}})
+	coord.SetDockerEvidencePort(port)
+	coord.SetRuntimeEvidenceWriter(&fakeRuntimeEvidenceWriter{})
+	return coord
+}
+
+func dockerLogRequestEnvelope(since, until time.Time, tail int, pattern string) string {
+	parameters := fmt.Sprintf(`"since":%q,"until":%q,"tail":%d`, since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano), tail)
+	if pattern != "" {
+		parameters += fmt.Sprintf(`,"pattern":%q,"context_after":2`, pattern)
+	}
+	return fmt.Sprintf(`{"schemaVersion":"v1","kind":"requestTool","requestTool":{"toolName":%q,"parameters":{%s}}}`, application.ToolDockerLogs, parameters)
+}
+
+// TestCoordinator_InsufficientThenCodeFixable verifies the loop can recover:
+// collect once, then a code-fixable diagnosis reaches diagnosis_ready.
+func TestCoordinator_InsufficientThenCodeFixable(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		insufficientWithCollectEnvelope(),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
+	}
+	if got := store.countTransitionsTo(domain.RunStateCollectingMoreContext); got != 1 {
+		t.Errorf("collect loops = %d, want 1", got)
+	}
+	if len(store.invocations) != 1 {
+		t.Errorf("tool invocations = %d, want 1", len(store.invocations))
+	}
+}
+
+// TestCoordinator_RequestToolThenDiagnosis verifies a mid-diagnosis tool
+// request is executed via the gateway and recorded, then diagnosis proceeds.
+func TestCoordinator_RequestToolThenDiagnosis(t *testing.T) {
+	repo := &fakeRepoPort{}
+	store := newFakeRunStore()
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope("repository.read_file", "main.go"),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	_, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s, want diagnosis_ready_for_review", store.state)
+	}
+	if len(store.invocations) != 1 {
+		t.Fatalf("tool invocations = %d, want 1", len(store.invocations))
+	}
+	if inv := store.invocations[0]; inv.Error != "" {
+		t.Errorf("expected successful tool invocation, got error %q", inv.Error)
+	}
+	// The read_file tool must reach the repository adapter. preparing_context
+	// no longer performs an eager ListTree read.
+	if repo.calls != 1 {
+		t.Errorf("repository adapter calls = %d, want 1", repo.calls)
+	}
+	if len(model.turns) != 3 || !strings.Contains(model.turns[2].UserMessage, "tool_observation") {
+		t.Fatalf("planning turn lost diagnosis/tool context: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_ToolObservationFeedsFollowingTurn(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateCompletedNonCode {
+		t.Fatalf("final state = %s, want completed_non_code", store.state)
+	}
+	if len(model.turns) != 2 {
+		t.Fatalf("model turns = %d, want 2", len(model.turns))
+	}
+	second := model.turns[1].UserMessage
+	if !strings.Contains(second, "tool_observation") || !strings.Contains(second, "repository.read_file") ||
+		!strings.Contains(second, `"status":"success"`) {
+		t.Fatalf("second turn lost tool observation: %s", second)
+	}
+	if len(model.turns[1].Messages) == 0 {
+		t.Fatal("second turn did not receive conversation history")
+	}
+	if !strings.Contains(model.turns[1].Continuation, "tool_observation") || strings.Contains(model.turns[1].Continuation, "incident_id") {
+		t.Fatalf("second continuation is not incremental: %q", model.turns[1].Continuation)
+	}
+}
+
+func TestCoordinator_PassesBootstrapTimeRangeToEvidenceTool(t *testing.T) {
+	store := newFakeRunStore()
+	evidence := &fakeEvidencePort{}
+	loader := &bootstrapEvidenceLoader{value: domain.BootstrapEvidence{
+		TimeRange: domain.TimeRange{
+			Start: time.Date(2026, time.August, 24, 7, 28, 30, 0, time.UTC),
+			End:   time.Date(2026, time.August, 24, 7, 43, 30, 0, time.UTC),
+		},
+		TimeBasis: "paired_epoch", TimeCertainty: "high",
+		OriginalTimeValues: []string{"eventEpoch=1787557027956"},
+	}}
+	model := &scriptedModel{responses: []string{
+		requestEvidenceSearchEnvelope(),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	coord := application.NewRemediationCoordinatorWithRuntime(
+		store, &fakeRepoPort{}, evidence, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: "project-1", EnvironmentID: "environment-1", SourceID: "source-1",
+			Priority: "P2", DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}},
+		staticRemote("https://git.example.invalid/app.git"), store, store,
+	)
+	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+	coord.SetBootstrapEvidenceLoader(loader)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if loader.calls != 1 || loader.incidentID != testIncidentUUID {
+		t.Fatalf("bootstrap loader calls = %d incident = %q", loader.calls, loader.incidentID)
+	}
+	want := loader.value.TimeRange
+	if !evidence.lastScope.TimeRange.Start.Equal(want.Start) || !evidence.lastScope.TimeRange.End.Equal(want.End) {
+		t.Fatalf("evidence scope time range = %#v, want %#v", evidence.lastScope.TimeRange, want)
+	}
+}
+
+func TestCoordinator_NormalizesNativeToolCallsThroughGateway(t *testing.T) {
+	model := &nativeScriptedModel{results: []domain.ModelResult{
+		{
+			Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2,
+			ToolCalls: []domain.ToolCall{{ID: "call-1", Name: application.ToolRepoReadFile, Arguments: map[string]interface{}{"path": "main.go"}}},
+		},
+		{Content: diagnosisEnvelope("external_dependency"), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+	}}
+	store := newFakeRunStore()
+	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Error != "" {
+		t.Fatalf("native invocation = %#v", store.invocations)
+	}
+	if len(model.turns) != 2 || len(model.turns[1].Messages) < 3 {
+		t.Fatalf("native tool history = %#v", model.turns)
+	}
+	last := model.turns[1].Messages[len(model.turns[1].Messages)-1]
+	if last.Role != "tool" || last.ToolCallID != "call-1" {
+		t.Fatalf("last native message = %#v", last)
+	}
+	if strings.Contains(model.turns[1].Continuation, "tool_observation") || strings.Contains(model.turns[1].Continuation, "main.go") {
+		t.Fatalf("native result repeated in continuation: %q", model.turns[1].Continuation)
+	}
+}
+
+func TestCoordinator_EvidenceRefAfterNativeToolKeepsAcceptedContext(t *testing.T) {
+	model := &nativeScriptedModel{results: []domain.ModelResult{
+		{
+			Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2,
+			ToolCalls: []domain.ToolCall{{ID: "call-1", Name: application.ToolRepoReadFile, Arguments: map[string]interface{}{"path": "main.go"}}},
+		},
+		{Content: evidenceRefDiagnosisEnvelope(), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+		{Content: diagnosisEnvelope("external_dependency"), Provider: "openai", Model: "gpt-5.6", UsageTokensOut: 2},
+	}}
+	store := newFakeRunStore()
+	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateCompletedNonCode || model.calls != 3 {
+		t.Fatalf("state/calls = %s/%d, want completed_non_code/3", store.state, model.calls)
+	}
+	if len(model.turns) != 3 || len(model.turns[1].Messages) < 3 {
+		t.Fatalf("native context before correction = %#v", model.turns)
+	}
+	acceptedMessages := len(model.turns[1].Messages)
+	third := model.turns[2]
+	if len(third.Messages) != acceptedMessages {
+		t.Fatalf("rejected response grew accepted history: before=%d after=%d", acceptedMessages, len(third.Messages))
+	}
+	last := third.Messages[acceptedMessages-1]
+	if last.Role != "tool" || last.ToolCallID != "call-1" || !strings.Contains(last.Content, "main.go") {
+		t.Fatalf("accepted tool context was lost: %#v", third.Messages)
+	}
+	if !strings.Contains(third.Continuation, "invalid_evidence_citation") || !strings.Contains(third.Continuation, "evidenceId") {
+		t.Fatalf("third turn missing safe correction: %q", third.Continuation)
+	}
+	if strings.Contains(third.Continuation, "ev-1") {
+		t.Fatalf("rejected citation value was replayed: %q", third.Continuation)
+	}
+}
+
+func TestCoordinator_ConnectorFailureIsModelVisibleAndSafe(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	repo := &failingReadRepoPort{err: fmt.Errorf("remote command failed: private-key=do-not-leak")}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(model.turns) != 2 {
+		t.Fatalf("model turns = %d, want 2", len(model.turns))
+	}
+	second := model.turns[1].UserMessage
+	if !strings.Contains(second, "remote_execution") || !strings.Contains(second, `"retryable":true`) {
+		t.Fatalf("second turn missing safe retryable error: %s", second)
+	}
+	if strings.Contains(second, "do-not-leak") || strings.Contains(second, "private-key") {
+		t.Fatalf("second turn leaked raw connector error: %s", second)
+	}
+	if len(store.invocations) != 1 || store.invocations[0].Error != "remote_execution" {
+		t.Fatalf("persisted invocation = %#v", store.invocations)
+	}
+}
+
+func TestCoordinator_ModelCorrectsRejectedToolRequestWithinRetryAllowance(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoReadFile, ""),
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	coord := newCoordinator(store, repo, &fakeEvidencePort{}, model)
+
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if repo.calls != 1 {
+		t.Fatalf("repository calls = %d, want only corrected request to reach adapter", repo.calls)
+	}
+	if len(store.invocations) != 2 || store.budget.ToolCalls != 2 {
+		t.Fatalf("tool accounting = invocations:%d budget:%d, want 2/2", len(store.invocations), store.budget.ToolCalls)
+	}
+	if store.invocations[0].Error != "invalid_arguments" || store.invocations[1].Error != "" {
+		t.Fatalf("tool invocations = %#v", store.invocations)
+	}
+	if len(model.turns) != 3 || !strings.Contains(model.turns[1].UserMessage, `"recoveryAction":"correct_request"`) ||
+		!strings.Contains(model.turns[1].UserMessage, `"retriesRemaining":1`) {
+		t.Fatalf("corrective recovery contract missing from second turn: %#v", model.turns)
+	}
+}
+
+func TestCoordinator_ConnectorUnavailableDoesNotBlockFirstTurn(t *testing.T) {
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("external_dependency")}}
+	store := newFakeRunStore()
+	repo := &failingListRepoPort{err: fmt.Errorf("remote command failed")}
+	evidence := &failingSearchEvidencePort{err: fmt.Errorf("log connector unavailable")}
+	coord := newCoordinator(store, repo, evidence, model)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateCompletedNonCode {
+		t.Fatalf("final state = %s, want completed_non_code", store.state)
+	}
+	if model.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", model.calls)
+	}
+	if repo.calls != 0 || evidence.calls != 0 {
+		t.Fatalf("preparation performed remote reads: repo=%d evidence=%d", repo.calls, evidence.calls)
+	}
+}
+
+// TestCoordinator_StopReachesBlockedManualReview verifies a model stop routes
+// to blocked_manual_review and persists its human handoff suggestion.
+func TestCoordinator_StopReachesBlockedManualReview(t *testing.T) {
+	model := &scriptedModel{responses: []string{stopEnvelope()}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview {
+		t.Fatalf("final state = %s, want blocked_manual_review", store.state)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1", len(store.decisions))
+	}
+	decision := store.decisions[0]
+	if decision.Fixability != domain.FixabilityUnsafeToAutomate ||
+		decision.RecommendedNextAction != "ask an operator to collect the missing runtime evidence" {
+		t.Fatalf("stop decision = %#v", decision)
+	}
+}
+
+func TestCoordinator_StopWithoutRecommendationIsRetried(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		`{"schemaVersion":"v1","kind":"stop","stop":{"reason":"cannot proceed","recommendedNextAction":"   "}}`,
+		stopEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 2 {
+		t.Fatalf("state/model calls = %s/%d, want blocked_manual_review/2", store.state, model.calls)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want one decision from the corrected stop", len(store.decisions))
+	}
+	correction := model.turns[1].UserMessage
+	for _, want := range []string{"required_stop_suggestion", "stop.recommendedNextAction", "non-empty bounded handoff suggestion"} {
+		if !strings.Contains(correction, want) {
+			t.Fatalf("retry correction missing %q: %s", want, correction)
+		}
+	}
+}
+
+func TestCoordinator_InvalidEnvelopeIsRetriedThenDiagnosed(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		`{"schemaVersion":"v1","kind":"diagnosis","diagnosis":"NPE in handler"}`,
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateCompletedNonCode {
+		t.Fatalf("final state = %s, want completed_non_code", store.state)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", model.calls)
+	}
+	second := model.turns[1].UserMessage
+	if !strings.Contains(second, "protocol_observation") || !strings.Contains(second, "invalid_envelope") {
+		t.Fatalf("second turn missing protocol observation: %s", second)
+	}
+	if strings.Contains(second, "DiagnosisOutput") || strings.Contains(second, "cannot unmarshal") {
+		t.Fatalf("second turn leaked decoder internals: %s", second)
+	}
+	if !strings.Contains(model.turns[1].Continuation, "protocol_observation") || strings.Contains(model.turns[1].Continuation, "incident_id") {
+		t.Fatalf("protocol continuation is not incremental: %q", model.turns[1].Continuation)
+	}
+}
+
+func TestCoordinator_EvidenceCitationCorrectionEnablesNextDiagnosis(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		evidenceRefDiagnosisEnvelope(),
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateCompletedNonCode || len(store.decisions) != 1 {
+		t.Fatalf("state/decisions = %s/%d", store.state, len(store.decisions))
+	}
+	if model.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", model.calls)
+	}
+	second := model.turns[1]
+	for _, want := range []string{"invalid_evidence_citation", "diagnosis.evidenceCitations[].evidenceRef", "evidenceId", "expectedField"} {
+		if !strings.Contains(second.UserMessage, want) {
+			t.Fatalf("second turn missing %q: %s", want, second.UserMessage)
+		}
+	}
+	if strings.Contains(second.UserMessage, "ev-1") || len(second.Messages) != 0 {
+		t.Fatalf("rejected response was replayed: %#v", second)
+	}
+}
+
+// TestCoordinator_EvidenceCorrectionChallengeThenPlanning 证明 AC1/AC5：模型
+// 提交带错误 classification 的 code_fixable 时，coordinator 把
+// evidence_correction challenge（含存储权威分类）回喂同一循环并继续，模型
+// 修正后进入 planning；不终态化、不静默改写、不产生 contradiction，且被
+// challenge 的那一轮照常计入模型预算。
+func TestCoordinator_EvidenceCorrectionChallengeThenPlanning(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		mismatchedClassificationEnvelope("code_fixable"),
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, run, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview || store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s/%s, want diagnosis_ready_for_review", run.State, store.state)
+	}
+	if model.calls != 3 || store.budget.ModelCalls != 3 {
+		t.Fatalf("calls/budget = %d/%d, want 3/3", model.calls, store.budget.ModelCalls)
+	}
+	// 只有修正后的 diagnosis 持久化；被 challenge 的提交不进入 review chain。
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want 1", len(store.decisions))
+	}
+	second := model.turns[1].UserMessage
+	for _, want := range []string{
+		`"kind":"evidence_correction"`, `"severity":"recoverable"`,
+		`"reasonCode":"citation_classification_mismatch"`,
+		"ev-1 is stored as direct_fault",
+		"does not by itself change fixability or confidence",
+	} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("second turn missing %q: %s", want, second)
+		}
+	}
+	if store.countTransitionsTo(domain.RunStateBlockedManualReview) != 0 {
+		t.Fatalf("correctable mismatch terminalized the run: %#v", store.transitions)
+	}
+}
+
+func TestCoordinator_ThreeConsecutiveInvalidEnvelopesBlockWithoutDecision(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		evidenceRefDiagnosisEnvelope(),
+		`{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"unknownField":true}}`,
+		`not json`,
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || len(store.decisions) != 0 {
+		t.Fatalf("state/decisions = %s/%d", store.state, len(store.decisions))
+	}
+	if model.calls != 3 || store.budget.ModelCalls != 3 {
+		t.Fatalf("calls/budget = %d/%d, want 3/3", model.calls, store.budget.ModelCalls)
+	}
+	for index, turn := range model.turns {
+		if len(turn.Messages) != 0 {
+			t.Fatalf("turn %d replayed rejected assistant history: %#v", index+1, turn.Messages)
+		}
+	}
+	if got := strings.Count(model.turns[2].Continuation, "protocol_observation"); got != 2 {
+		t.Fatalf("third continuation corrections = %d, want 2: %s", got, model.turns[2].Continuation)
+	}
+}
+
+func TestCoordinator_ValidEnvelopeResetsProtocolFailureCounter(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		`not json`,
+		insufficientWithCollectEnvelope(),
+		`not json`,
+		`{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"unknownField":true}}`,
+		`not json`,
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateBlockedManualReview || model.calls != 5 {
+		t.Fatalf("state/calls = %s/%d, want blocked_manual_review/5", store.state, model.calls)
+	}
+	if len(store.decisions) != 1 {
+		t.Fatalf("decisions = %d, want the valid diagnosis before the reset", len(store.decisions))
+	}
+}
+
+func TestCoordinator_PlanningProtocolCounterStartsFresh(t *testing.T) {
+	model := &scriptedModel{responses: []string{
+		`not json`,
+		`{"schemaVersion":"v1","kind":"diagnosis","diagnosis":{"unknownField":true}}`,
+		diagnosisEnvelope("code_fixable"),
+		diagnosisEnvelope("external_dependency"),
+		diagnosisEnvelope("external_dependency"),
+		planEnvelope(),
+	}}
+	store, _, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.state != domain.RunStateDiagnosisReadyForReview || model.calls != 6 {
+		t.Fatalf("state/calls = %s/%d, want diagnosis_ready_for_review/6", store.state, model.calls)
+	}
+}
+
+func TestCoordinator_InvalidEnvelopeRetryCountsAgainstModelBudget(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxModelCalls = 1
+	model := &scriptedModel{responses: []string{
+		`not json`,
+		diagnosisEnvelope("external_dependency"),
+	}}
+	store, run, err := runStartWithBudget(t, model, limits)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", model.calls)
+	}
+}
+
+func TestCoordinator_ProviderErrorStillFailsRun(t *testing.T) {
+	model := &scriptedModel{responses: []string{}}
+	store, _, err := runStart(t, model)
+	if err == nil {
+		t.Fatal("expected error for provider failure")
+	}
+	if store.state != domain.RunStateFailed {
+		t.Errorf("final state = %s, want failed", store.state)
+	}
+}
+
+// TestCoordinator_ContextByteBudgetExhaustion verifies that metadata-only
+// preparation does not consume repository bytes or block the first model turn.
+func TestCoordinator_ContextByteBudgetExhaustion(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxRepositoryBytes = 1
+	model := &scriptedModel{responses: []string{diagnosisEnvelope("code_fixable"), planEnvelope()}}
+	store, run, err := runStartWithBudget(t, model, limits)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview || store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s/%s, want diagnosis_ready_for_review", run.State, store.state)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", model.calls)
+	}
+	if store.budget.RepositoryBytes != 0 {
+		t.Fatalf("repository bytes = %d, want 0", store.budget.RepositoryBytes)
+	}
+}
+
+// TestCoordinator_ModelCallBudgetExhaustion verifies the plan turn is recorded
+// and terminates as budget_exhausted instead of reaching review.
+func TestCoordinator_ModelCallBudgetExhaustion(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxModelCalls = 1
+	model := &scriptedModel{responses: []string{
+		diagnosisEnvelope("code_fixable"),
+		planEnvelope(),
+	}}
+	store, run, err := runStartWithBudget(t, model, limits)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model calls = %d, want 2", model.calls)
+	}
+	if store.budget.ModelCalls != 2 {
+		t.Fatalf("persisted model calls = %d, want 2", store.budget.ModelCalls)
+	}
+	if store.countTransitionsTo(domain.RunStateDiagnosisReadyForReview) != 0 {
+		t.Fatal("run reached diagnosis_ready_for_review despite model-call exhaustion")
+	}
+}
+
+func TestCoordinator_ModelUsageMetadataIsPersisted(t *testing.T) {
+	model := &scriptedModel{
+		responses:      []string{diagnosisEnvelope("external_dependency")},
+		provider:       "openai",
+		model:          "gpt-5.6",
+		usageTokensIn:  11,
+		usageTokensOut: 17,
+		usageCostCents: 3,
+	}
+	store, run, err := runStart(t, model)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateCompletedNonCode {
+		t.Fatalf("final state = %s, want completed_non_code", run.State)
+	}
+	if store.provider != "openai" || store.modelName != "gpt-5.6" {
+		t.Fatalf("model metadata = %q/%q, want openai/gpt-5.6", store.provider, store.modelName)
+	}
+	if store.budget.ModelTokens != 28 {
+		t.Fatalf("model tokens = %d, want 28", store.budget.ModelTokens)
+	}
+	if store.budget.ModelCostCents != 3 {
+		t.Fatalf("model cost cents = %d, want 3", store.budget.ModelCostCents)
+	}
+}
+
+func TestCoordinator_ModelCostBudgetExhaustion(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxModelCostCents = 1
+	model := &scriptedModel{
+		responses:      []string{diagnosisEnvelope("external_dependency")},
+		usageCostCents: 2,
+	}
+	store, run, err := runStartWithBudget(t, model, limits)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if store.budget.ModelCostCents != 2 {
+		t.Fatalf("persisted model cost cents = %d, want 2", store.budget.ModelCostCents)
+	}
+}
+
+func TestCoordinator_ElapsedBudgetExhaustion(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxElapsed = 50 * time.Millisecond
+	store := newFakeRunStore()
+	model := &delayedModel{delay: 80 * time.Millisecond, responses: []string{diagnosisEnvelope("external_dependency")}}
+	coord := newCoordinatorWithBudget(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, limits)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if model.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", model.calls)
+	}
+	if store.budget.ModelCalls != 1 {
+		t.Fatalf("persisted model calls = %d, want 1", store.budget.ModelCalls)
+	}
+}
+
+func TestCoordinator_ElapsedBudgetBlocksNextToolOperation(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxElapsed = 50 * time.Millisecond
+	store := newFakeRunStore()
+	model := &delayedModel{delay: 80 * time.Millisecond, responses: []string{
+		requestToolEnvelope(application.ToolRepoReadFile, "main.go"),
+	}}
+	coord := newCoordinatorWithBudget(store, &fakeRepoPort{}, &fakeEvidencePort{}, model, limits)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if model.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", model.calls)
+	}
+	if len(store.invocations) != 0 {
+		t.Fatalf("elapsed admission allowed tool invocations: %#v", store.invocations)
+	}
+	if store.budget.ModelCalls != 1 || store.budget.ToolCalls != 0 {
+		t.Fatalf("persisted budget = %#v", store.budget)
+	}
+}
+
+type delayedModel struct {
+	delay     time.Duration
+	responses []string
+	calls     int
+}
+
+func (m *delayedModel) Complete(ctx context.Context, _ domain.ModelTurn) (domain.ModelResult, error) {
+	call := m.calls
+	m.calls++
+	timer := time.NewTimer(m.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return domain.ModelResult{}, ctx.Err()
+	case <-timer.C:
+	}
+	if call >= len(m.responses) {
+		return domain.ModelResult{}, fmt.Errorf("delayed model exhausted after %d calls", call)
+	}
+	content := m.responses[call]
+	return domain.ModelResult{Content: content, Provider: "fake", Model: "slow", UsageTokensOut: 1}, nil
+}
+
+func TestCoordinator_RunDeadlineCancelsInFlightToolAndPersistsTerminalState(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxElapsed = 50 * time.Millisecond
+	store := newFakeRunStore()
+	repo := &delayedRepoPort{delay: 80 * time.Millisecond}
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoListTree, ""),
+	}}
+	coord := newCoordinatorWithBudget(store, repo, &fakeEvidencePort{}, model, limits)
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if len(store.invocations) != 1 || store.budget.ToolCalls != 1 {
+		t.Fatalf("tool accounting = invocations:%d budget:%#v", len(store.invocations), store.budget)
+	}
+}
+
+// TestCoordinator_ToolCallBudgetExhaustion verifies model-requested read tools
+// are counted per run and stop the loop when the hard limit is crossed.
+func TestCoordinator_ToolCallBudgetExhaustion(t *testing.T) {
+	limits := application.DefaultBudgetLimits()
+	limits.MaxToolCalls = 1
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope("repository.read_file", "main.go"),
+		requestToolEnvelope("repository.read_file", "main.go"),
+		diagnosisEnvelope("code_fixable"),
+	}}
+	store, run, err := runStartWithBudget(t, model, limits)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.State != domain.RunStateBudgetExhausted || store.state != domain.RunStateBudgetExhausted {
+		t.Fatalf("final state = %s/%s, want budget_exhausted", run.State, store.state)
+	}
+	if len(store.invocations) != 2 {
+		t.Fatalf("tool invocations = %d, want 2", len(store.invocations))
+	}
+	if store.budget.ToolCalls != 2 {
+		t.Fatalf("persisted tool calls = %d, want 2", store.budget.ToolCalls)
+	}
+	if len(store.decisions) != 0 {
+		t.Fatalf("decisions = %d, want 0 after tool-call exhaustion", len(store.decisions))
+	}
+}
+
+func TestCoordinator_EmitsTerminalNotificationsAndPersistsPlans(t *testing.T) {
+	t.Run("non_code", func(t *testing.T) {
+		store, _, err := runStart(t, &scriptedModel{responses: []string{diagnosisEnvelope("configuration")}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(store.notifications) != 1 || store.notifications[0].Kind != application.NotificationNonCodeDiagnosed {
+			t.Fatalf("notifications = %#v", store.notifications)
+		}
+	})
+	t.Run("unsafe_manual_review", func(t *testing.T) {
+		store, _, err := runStart(t, &scriptedModel{responses: []string{diagnosisEnvelope("unsafe_to_automate")}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(store.notifications) != 1 || store.notifications[0].Kind != application.NotificationManualReviewRequired {
+			t.Fatalf("notifications = %#v", store.notifications)
+		}
+	})
+	t.Run("insufficient_evidence", func(t *testing.T) {
+		store, _, err := runStart(t, &scriptedModel{responses: []string{
+			insufficientWithCollectEnvelope(),
+			insufficientWithCollectEnvelope(),
+			insufficientWithCollectEnvelope(),
+			insufficientWithCollectEnvelope(),
+		}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(store.notifications) != 1 || store.notifications[0].Kind != application.NotificationInsufficientEvidence {
+			t.Fatalf("notifications = %#v", store.notifications)
+		}
+	})
+	t.Run("code_fixable_persists_plan", func(t *testing.T) {
+		store, _, err := runStart(t, &scriptedModel{responses: []string{diagnosisEnvelope("code_fixable"), planEnvelope()}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(store.plans) != 1 || store.recommendedID != "p1" || store.suggestedDiff == "" {
+			t.Fatalf("plans=%#v recommended=%q diff=%q", store.plans, store.recommendedID, store.suggestedDiff)
+		}
+		if len(store.notifications) != 1 || store.notifications[0].Kind != application.NotificationDiagnosisReadyForReview {
+			t.Fatalf("notifications = %#v", store.notifications)
+		}
+	})
+	t.Run("failed_and_budget_do_not_notify", func(t *testing.T) {
+		failedStore, _, err := runStart(t, &scriptedModel{responses: []string{`not json`}})
+		if err == nil {
+			t.Fatal("expected model error")
+		}
+		if len(failedStore.notifications) != 0 {
+			t.Fatalf("failed notifications = %#v", failedStore.notifications)
+		}
+		limits := application.DefaultBudgetLimits()
+		limits.MaxModelCalls = 1
+		budgetStore, _, err := runStartWithBudget(t, &scriptedModel{responses: []string{diagnosisEnvelope("code_fixable"), planEnvelope()}}, limits)
+		if err != nil {
+			t.Fatalf("unexpected budget error: %v", err)
+		}
+		if budgetStore.state != domain.RunStateBudgetExhausted {
+			t.Fatalf("state = %s, want budget_exhausted", budgetStore.state)
+		}
+		if len(budgetStore.notifications) != 0 {
+			t.Fatalf("budget notifications = %#v", budgetStore.notifications)
+		}
+	})
+}
+
+type wiringLookup struct {
+	identity application.IncidentIdentity
+}
+
+func (w wiringLookup) GetByNumber(context.Context, int64) (application.IncidentIdentity, error) {
+	return w.identity, nil
+}
+func (w wiringLookup) GetByProjectNumber(context.Context, string, int64) (application.IncidentIdentity, error) {
+	return w.identity, nil
+}
+func (w wiringLookup) GetByID(context.Context, string) (application.IncidentIdentity, error) {
+	return w.identity, nil
+}
+
+type staticRemote string
+
+func (s staticRemote) CredentialFreeRemoteURL(context.Context, string) (string, error) {
+	return string(s), nil
+}
+
+func TestCoordinator_ResolvesCredentialFreeRefs(t *testing.T) {
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	evidence := &fakeEvidencePort{}
+	model := &scriptedModel{responses: []string{
+		requestToolEnvelope(application.ToolRepoListTree, ""),
+		requestEvidenceSearchEnvelope(),
+		diagnosisEnvelope("configuration"),
+	}}
+	const (
+		projectID     = "019ff544-405c-7d21-9f10-cb3fc579605c"
+		environmentID = "019ff544-405c-7d22-9f10-cb3fc579605c"
+		sourceID      = "019ff544-405c-7d23-9f10-cb3fc579605c"
+		remoteURL     = "https://git.example.internal/app.git"
+	)
+	coord := application.NewRemediationCoordinatorWithRuntime(
+		store, repo, evidence, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: projectID, EnvironmentID: environmentID, SourceID: sourceID,
+			Priority: "P2", DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}},
+		staticRemote(remoteURL),
+		store, store,
+	)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if repo.lastRef.ProjectID != projectID || repo.lastRef.RemoteURL != remoteURL || repo.lastRef.Commit != "abc123" {
+		t.Fatalf("RepoRef = %#v", repo.lastRef)
+	}
+	if evidence.lastScope.ProjectID != projectID || evidence.lastScope.EnvironmentID != environmentID || evidence.lastScope.SourceID != sourceID {
+		t.Fatalf("EvidenceScope = %#v", evidence.lastScope)
+	}
+}
+
+func TestCoordinator_SSHInspectHintsReachFirstTurnWithoutEagerRead(t *testing.T) {
+	store := newFakeRunStore()
+	repo := &fakeRepoPort{}
+	evidence := &fakeEvidencePort{}
+	inspect := &fakeInspectPort{}
+	runtimeWriter := &fakeRuntimeEvidenceWriter{}
+	model := &scriptedModel{responses: []string{
+		requestSSHInspectEnvelope("ls /var/log | grep app"),
+		diagnosisEnvelope("configuration"),
+	}}
+	const (
+		projectID     = "019ff544-405c-7d21-9f10-cb3fc579605c"
+		environmentID = "019ff544-405c-7d22-9f10-cb3fc579605c"
+		sourceID      = "019ff544-405c-7d23-9f10-cb3fc579605c"
+	)
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, repo, evidence, inspect, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: projectID, EnvironmentID: environmentID, SourceID: sourceID,
+			Priority: "P2", DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}},
+		staticRemote("https://git.example.internal/app.git"),
+		store, store, nil,
+		staticSourceCaps{snapshot: domain.SourceCapabilitySnapshot{
+			ProjectID: projectID, SourceID: sourceID, Kind: "ssh", Enabled: true, Supported: true,
+			Declared: []string{"pull_collection"}, Version: 4,
+			SSHHost: "logs.example.invalid", SSHUser: "app", SSHProjectFolder: "/srv/app", SSHLogPath: "/var/log",
+		}},
+		nil, nil,
+	)
+	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+	coord.SetRuntimeEvidenceWriter(runtimeWriter)
+	if _, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if inspect.calls != 1 || evidence.calls != 0 || repo.calls != 0 {
+		t.Fatalf("eager or unexpected reads: inspect=%d evidence=%d repo=%d", inspect.calls, evidence.calls, repo.calls)
+	}
+	if inspect.lastCommand != `'ls' '/var/log' | 'grep' 'app'` {
+		t.Fatalf("inspect command = %q", inspect.lastCommand)
+	}
+	// 成功 inspect 结果先持久化为 run 归属的 canonical evidence，再进入下一轮。
+	if len(runtimeWriter.evidence) != 1 || runtimeWriter.evidence[0].Provider != "ssh" ||
+		runtimeWriter.evidence[0].RunID != "run-1" {
+		t.Fatalf("runtime evidence = %#v", runtimeWriter.evidence)
+	}
+	runtimeEvidenceID := runtimeWriter.evidence[0].EvidenceID
+	if runtimeEvidenceID == "" {
+		t.Fatal("runtime evidence missing id")
+	}
+	// 证据 ID 进入 tool observation（evidenceIds），且诊断轮能引用它。
+	second := model.turns[1].UserMessage
+	if !strings.Contains(second, runtimeEvidenceID) {
+		t.Fatalf("second turn omitted runtime evidence id %s: %s", runtimeEvidenceID, second)
+	}
+	first := model.turns[0].UserMessage
+	for _, want := range []string{"logs.example.invalid", "app", "/srv/app", "/var/log", "ssh.inspect", "never auto-tails"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first turn missing %q: %s", want, first)
+		}
+	}
+	var sawInspect bool
+	for _, tool := range model.turns[0].Tools {
+		switch tool.Name {
+		case application.ToolSSHInspect:
+			sawInspect = true
+		case application.ToolEvidenceSearch, application.ToolEvidenceContext:
+			t.Fatalf("SSH run advertised evidence tool %s", tool.Name)
+		}
+	}
+	if !sawInspect {
+		t.Fatal("first turn did not advertise ssh.inspect")
+	}
+}
+
+type deferredDynamicHarnessModel struct {
+	turns       []domain.ModelTurn
+	dynamicName string
+}
+
+func (m *deferredDynamicHarnessModel) Complete(_ context.Context, req domain.ModelTurn) (domain.ModelResult, error) {
+	turn := req
+	turn.Messages = append([]domain.ModelMessage(nil), req.Messages...)
+	turn.Tools = append([]domain.ToolDefinition(nil), req.Tools...)
+	m.turns = append(m.turns, turn)
+
+	var content string
+	switch len(m.turns) {
+	case 1:
+		content = `{"schemaVersion":"v1","kind":"requestTool","requestTool":{` +
+			`"toolName":"source.search_tools","parameters":{"query":"query errors","limit":1}}}`
+	case 2:
+		for _, tool := range req.Tools {
+			if strings.HasPrefix(tool.Name, "mcp_") && strings.Contains(tool.Name, "query_errors") {
+				m.dynamicName = tool.Name
+				break
+			}
+		}
+		if m.dynamicName == "" {
+			return domain.ModelResult{}, fmt.Errorf("activated dynamic tool is not provider-visible")
+		}
+		content = fmt.Sprintf(`{"schemaVersion":"v1","kind":"requestTool","requestTool":{`+
+			`"toolName":%q,"parameters":{"query":"timeout"}}}`, m.dynamicName)
+	case 3:
+		content = diagnosisEnvelope("code_fixable")
+	case 4:
+		content = planEnvelope()
+	default:
+		return domain.ModelResult{}, fmt.Errorf("unexpected model turn %d", len(m.turns))
+	}
+
+	return domain.ModelResult{
+		Content: content, Provider: "fake", Model: "deferred-dynamic-harness",
+		UsageTokensOut: 42, FinishReason: "stop",
+	}, nil
+}
+
+func TestCoordinator_DeferredDynamicToolCompletesCodeFixableHarness(t *testing.T) {
+	const (
+		projectID     = "project-1"
+		environmentID = "environment-1"
+		sourceID      = "source-1"
+	)
+	store := newFakeRunStore()
+	runtime := &catalogRuntime{
+		discovered: mcpDiscovery("query_errors", "query_deployments"),
+		result: domain.DynamicToolResult{
+			Payload:        map[string]interface{}{"matches": []interface{}{"timeout at handler.go:42"}},
+			BytesRetrieved: 24,
+		},
+	}
+	model := &deferredDynamicHarnessModel{}
+	coord := application.NewRemediationCoordinatorWithDynamicRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, nil, model,
+		wiringLookup{identity: application.IncidentIdentity{
+			ID: testIncidentUUID, ProjectID: projectID, EnvironmentID: environmentID, SourceID: sourceID,
+			Priority: "P2", DeployedCommit: "abc123", LifecycleGeneration: 1,
+		}},
+		staticRemote("https://git.example.internal/app.git"),
+		store, store, nil,
+		staticSourceCaps{snapshot: mcpSource()},
+		runtime, &catalogPolicy{snapshot: mcpPolicy("query_errors", "query_deployments")},
+	)
+	coord.SetEvidenceResolver(fakeEvidenceResolver{})
+
+	run, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if run.State != domain.RunStateDiagnosisReadyForReview || store.state != domain.RunStateDiagnosisReadyForReview {
+		t.Fatalf("final state = %s/%s, want diagnosis_ready_for_review", run.State, store.state)
+	}
+	if len(model.turns) != 4 {
+		t.Fatalf("model turns = %d, want 4", len(model.turns))
+	}
+	if len(runtime.calls) != 1 || runtime.calls[0].Name != "query_errors" || runtime.calls[0].Arguments["query"] != "timeout" {
+		t.Fatalf("dynamic runtime calls = %#v", runtime.calls)
+	}
+	if len(store.invocations) != 2 || store.invocations[0].ToolName != application.ToolSourceSearchTools || store.invocations[1].ToolName != model.dynamicName {
+		t.Fatalf("tool invocation chain = %#v", store.invocations)
+	}
+
+	toolMetrics := func(tools []domain.ToolDefinition) (int, int) {
+		schemaBytes := 0
+		for _, tool := range tools {
+			encoded, marshalErr := json.Marshal(tool.Parameters)
+			if marshalErr != nil {
+				t.Fatalf("marshal tool schema %s: %v", tool.Name, marshalErr)
+			}
+			schemaBytes += len(encoded)
+		}
+		return len(tools), schemaBytes
+	}
+	firstCount, firstSchemaBytes := toolMetrics(model.turns[0].Tools)
+	secondCount, secondSchemaBytes := toolMetrics(model.turns[1].Tools)
+	thirdCount, thirdSchemaBytes := toolMetrics(model.turns[2].Tools)
+	planningCount, planningSchemaBytes := toolMetrics(model.turns[3].Tools)
+	if secondCount != firstCount+1 || secondSchemaBytes <= firstSchemaBytes {
+		t.Fatalf("activation metrics first=(%d,%d) second=(%d,%d)", firstCount, firstSchemaBytes, secondCount, secondSchemaBytes)
+	}
+	if thirdCount != secondCount || thirdSchemaBytes != secondSchemaBytes {
+		t.Fatalf("activated schema changed before diagnosis: second=(%d,%d) third=(%d,%d)", secondCount, secondSchemaBytes, thirdCount, thirdSchemaBytes)
+	}
+	if planningCount != firstCount || planningSchemaBytes != firstSchemaBytes {
+		t.Fatalf("planning did not reapply phase policy: first=(%d,%d) planning=(%d,%d)", firstCount, firstSchemaBytes, planningCount, planningSchemaBytes)
+	}
+	for _, tool := range model.turns[0].Tools {
+		if strings.HasPrefix(tool.Name, "mcp_") {
+			t.Fatalf("first turn eagerly advertised dynamic schema: %#v", tool)
+		}
+	}
+
+	if !strings.Contains(model.turns[0].Continuation, "remediation bootstrap:") {
+		t.Fatalf("first continuation lost bootstrap context: %q", model.turns[0].Continuation)
+	}
+	if !strings.Contains(model.turns[1].Continuation, "tool_observation") || strings.Contains(model.turns[1].Continuation, "remediation bootstrap:") {
+		t.Fatalf("search continuation is not incremental: %q", model.turns[1].Continuation)
+	}
+	if !strings.Contains(model.turns[2].Continuation, "tool_observation") || strings.Contains(model.turns[2].Continuation, "source.search_tools") || strings.Contains(model.turns[2].Continuation, "remediation bootstrap:") {
+		t.Fatalf("dynamic result continuation replayed prior context: %q", model.turns[2].Continuation)
+	}
+	if strings.Contains(model.turns[3].Continuation, "tool_observation") || strings.Contains(model.turns[3].Continuation, "remediation bootstrap:") {
+		t.Fatalf("planning continuation replayed diagnosis context: %q", model.turns[3].Continuation)
+	}
+	if len(model.turns[3].Messages) <= len(model.turns[2].Messages) {
+		t.Fatalf("planning history did not retain diagnosis: diagnosing=%d planning=%d", len(model.turns[2].Messages), len(model.turns[3].Messages))
+	}
+	if len(store.plans) != 1 || store.recommendedID != "p1" || store.suggestedDiff == "" {
+		t.Fatalf("persisted review = plans=%#v recommended=%q diff=%q", store.plans, store.recommendedID, store.suggestedDiff)
+	}
+}
+
+type staticSourceCaps struct {
+	snapshot domain.SourceCapabilitySnapshot
+}
+
+func TestCoordinatorPersistsAggregatedProviderCallUsage(t *testing.T) {
+	store := newFakeRunStore()
+	coord := newCoordinator(store, &fakeRepoPort{}, &fakeEvidencePort{}, retryUsageModel{})
+
+	_, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if store.budget.ModelCalls != 2 || store.budget.ModelTokens != 29 {
+		t.Fatalf("persisted retry budget = %#v", store.budget)
+	}
+}
+
+type retryUsageModel struct{}
+
+func (retryUsageModel) Complete(context.Context, domain.ModelTurn) (domain.ModelResult, error) {
+	return domain.ModelResult{
+		Content: diagnosisEnvelope("external_dependency"), Provider: "openai", Model: "reasoning-model",
+		ModelCalls: 2, UsageTokensIn: 20, UsageTokensOut: 9, UsageTokens: 29, FinishReason: "stop",
+	}, nil
+}
+
+func (s staticSourceCaps) ResolveSourceCapability(context.Context, string, string) (domain.SourceCapabilitySnapshot, error) {
+	return s.snapshot, nil
+}
+
+func TestCoordinator_FailsWhenRemoteCannotBeResolved(t *testing.T) {
+	store := newFakeRunStore()
+	coord := application.NewRemediationCoordinatorWithRuntime(
+		store, &fakeRepoPort{}, &fakeEvidencePort{}, &scriptedModel{responses: []string{diagnosisEnvelope("configuration")}},
+		wiringLookup{identity: application.IncidentIdentity{ID: testIncidentUUID, ProjectID: testProjectID, LifecycleGeneration: 1}},
+		staticRemote(""),
+		store, store,
+	)
+	_, err := coord.Start(context.Background(), domain.NewRun{
+		IncidentID: testIncidentUUID, LifecycleGeneration: 1, DeployedCommit: "abc123",
+	})
+	if err == nil {
+		t.Fatal("expected empty remote URL to fail the run")
+	}
+	if store.state != domain.RunStateFailed {
+		t.Fatalf("state = %s, want failed", store.state)
+	}
+}

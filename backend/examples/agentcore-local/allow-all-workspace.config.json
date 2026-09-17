@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "profile": {
+    "name": "workspace",
+    "version": "v1",
+    "systemPrompt": "Use the configured workspace tools and verify the write.",
+    "completion": {
+      "mode": "action_with_verification",
+      "version": "v1",
+      "parameters": {
+        "actionType": "workspace.action",
+        "verificationType": "workspace.verification"
+      }
+    },
+    "summaryArtifactType": "report.summary",
+    "maxTokens": 256
+  },
+  "provider": {
+    "mode": "fixture",
+    "binding": "fixture"
+  },
+  "policy": {
+    "mode": "allow-all",
+    "allowedEffects": ["read", "write"]
+  },
+  "budgets": {
+    "maxElapsed": 60000000000,
+    "maxModelCalls": 8,
+    "maxToolCalls": 8,
+    "maxOutputBytes": 1048576,
+    "maxSteps": 16
+  },
+  "mcp": [
+    {
+      "binding": "workspace",
+      "version": 1,
+      "serverId": "mendry-mcp-workspace",
+      "transport": "stdio",
+      "command": "./bin/mcp-workspace",
+      "args": ["--root", ".agentcore/examples/workspace"],
+      "tools": [
+        {
+          "name": "workspace.read",
+          "remoteName": "read_file",
+          "version": "v1",
+          "effect": "read"
+        },
+        {
+          "name": "workspace.write",
+          "remoteName": "write_file",
+          "version": "v1",
+          "effect": "write",
+          "artifactType": "workspace.action",
+          "artifactSchemaVersion": "v1",
+          "artifactProvenance": "observed",
+          "externalIdField": "actionId"
+        },
+        {
+          "name": "workspace.verify",
+          "remoteName": "verify_file",
+          "version": "v1",
+          "effect": "read",
+          "artifactType": "workspace.verification",
+          "artifactSchemaVersion": "v1",
+          "artifactProvenance": "verified",
+          "externalIdField": "actionId",
+          "subjectExternalIdField": "actionId",
+          "verificationStatusField": "status"
+        }
+      ]
+    }
+  ]
+}

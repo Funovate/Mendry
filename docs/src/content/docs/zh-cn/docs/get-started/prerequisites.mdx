@@ -1,0 +1,47 @@
+---
+title: 前提条件
+description: 为当前 Mendry 前端和后端包准备基于源码的评估环境。
+availability: preview
+translationKey: prerequisites
+journeyOrder: 2
+sources:
+  - backend/go.mod
+  - backend/.env.example
+  - frontend/package.json
+  - backend/README.md
+---
+
+**可用性：preview**
+
+请使用隔离的私有评估环境。仓库目前尚未提供受支持的生产部署包。
+
+本页适用于现有事故 Web 应用。PostgreSQL、Redis、唯一登录账号和加密密钥是该应用的要求，不是 Harness 核心的依赖。独立本地路径请参阅[本地 Agent Harness](/zh-cn/docs/get-started/local-harness/)。
+
+## 必需运行时
+
+- 后端使用 Go 1.25。
+- 前端与文档工具链使用 Node.js 22.12 或更高版本以及 npm。
+- PostgreSQL 保存业务数据和加密后的凭据记录。
+- Redis 仅保存可撤销的登录 Session。
+- 使用 OpenSSL 或其他安全工具生成 32 字节加密密钥。
+
+## 网络与 TLS
+
+API 默认监听 `127.0.0.1:8080`。staging 和 production 环境中的 Session Cookie 带有 `Secure`，因此非开发部署必须通过 HTTPS 提供控制台和 API。评估时若控制台与 API 不同源，只配置一个精确的 `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`。
+
+## 必需密钥
+
+准备专用 PostgreSQL 数据库、Redis 端点和稳定的 `MENDRY_ENCRYPTION_KEY`。密钥必须是恰好 32 个随机字节的标准 base64 编码。丢失或更换密钥会使已存连接器凭据无法使用。
+
+不要提交 `.env`、密码、token 或加密密钥。
+
+## 下一步
+
+阅读[安装状态](/zh-cn/docs/get-started/install/)，然后仅为源码评估继续[初始化登录账号](/zh-cn/docs/get-started/bootstrap/)。
+
+## 核验依据
+
+- `backend/go.mod`
+- `backend/.env.example`
+- `frontend/package.json`
+- `backend/README.md`

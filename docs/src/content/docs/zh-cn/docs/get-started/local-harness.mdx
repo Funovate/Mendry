@@ -1,0 +1,80 @@
+---
+title: 运行本地 Agent Harness
+description: 从源码运行、检查、继续和恢复不依赖账号的 Agent Harness。
+availability: preview
+translationKey: local-harness
+sources:
+  - backend/cmd/agentcore-local/main.go
+  - backend/internal/modules/agentcore/command/local.go
+  - backend/internal/modules/agentcore/adapter/file/store.go
+---
+
+**可用性：preview — 可从源码运行，尚无受支持的发布包**
+
+Local composition 让一个有界 JSON event 通过共享 Harness 执行，并在可检查的 run 目录中保留调用、产物、预算、状态和完成原因。该路径不要求 PostgreSQL、Redis、事故应用登录账号或项目配置。
+
+CLI 和示例属于源码评估接口，已有聚焦测试、race 测试和离线 fixture smoke 路径。Mendry 尚未发布受支持的 Local binary、安装器或兼容性保证。
+
+## 构建与运行
+
+在 `backend/` 中构建本地 runner 与示例 MCP workspace server：
+
+```bash
+make build-agentcore-local build-mcp-workspace
+```
+
+运行不需要 provider 凭据和网络访问的确定性 report fixture：
+
+```bash
+./bin/agentcore-local run \
+  --config examples/agentcore-local/fixture-report.config.json \
+  --event examples/agentcore-local/report.event.json \
+  --state-dir .agentcore/runs
+```
+
+输出中包含 32 字符 run ID。使用该 ID 读取经过校验的持久 snapshot：
+
+```bash
+./bin/agentcore-local inspect \
+  --state-dir .agentcore/runs \
+  --run-id RUN_ID
+```
+
+使用相同的有效配置和 event，并增加 `--resume`，可要求并继续已有 run：
+
+```bash
+./bin/agentcore-local run --resume \
+  --config examples/agentcore-local/fixture-report.config.json \
+  --event examples/agentcore-local/report.event.json \
+  --state-dir .agentcore/runs
+```
+
+## 配置边界
+
+可信配置选择版本化 Profile 与完成契约、provider 模式、policy、有限预算和 MCP binding。Event 只包含有界的 goal、payload 与 context。在 JSON 中，`maxElapsed` 是以纳秒编码的 Go duration。等价配置与 event 会在计算 identity hash 前归一化。
+
+## 信任边界
+
+- 可信启动配置选择 Profile、完成契约、有限预算、策略、provider binding 与 MCP binding。
+- Event 数据只提供 goal 与 context，不选择命令、endpoint、凭据、effect 或 policy。
+- 凭据在 composition 阶段通过显式命名的环境变量解析。
+- Stdio MCP 只接收已配置环境项，不继承完整父进程环境。
+- Effectful 调用在 timeout、断连或结果未知后不会自动重试。
+
+## Policy 与恢复示例
+
+`restrictive-refusal.config.json` 会记录被拒绝的写入，但不会 dispatch。`allow-all-workspace.config.json` 使用真实的示例文件系统边界；allow-all 仍保留可信注册、intent 持久化和预算。Workspace server 的配置 root 负责 traversal、symlink、大小与原子写检查。这些限制属于示例工具，不代表所有 Harness 工具。
+
+如果 effectful invocation 的结果无法持久确认，run 会进入 `waiting` / `unknown_write_outcome`，且不会自动重放。确认外部结果后，只能记录 `succeeded` 或 `failed`，然后继续 run：
+
+```bash
+./bin/agentcore-local resolve \
+  --state-dir .agentcore/runs \
+  --run-id RUN_ID \
+  --invocation-id INVOCATION_ID \
+  --state succeeded \
+  --code operator_confirmed \
+  --output-json '{"status":"confirmed"}'
+```
+
+内部 Go 扩展契约见[扩展 Agent Harness](/zh-cn/docs/guides/extending-harness/)。需要数据库支持的 Web 应用流程见[事故应用入门](/zh-cn/docs/get-started/)。

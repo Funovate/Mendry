@@ -1,0 +1,34 @@
+---
+title: 腾讯云 CLS 告警
+description: 配置腾讯云 CLS 告警回调，并了解确定性分组与可信详情证据。
+availability: preview
+translationKey: tencent-cls
+sources:
+  - backend/internal/modules/hooks/adapter/tencentcls/client.go
+---
+
+**可用性：preview**
+
+腾讯云 CLS 与通用告警使用同一个公开 Webhook 端点，同时增加提供方特定的验证和证据处理。本指南只覆盖已实现的 callback 路径，不代表通用 CLS 轮询连接器已经可用。
+
+## 配置 trigger
+
+登录后保存 `signed_webhook` trigger，并在版本化 trigger 配置中选择 provider `tencent_cls`。配置 `MENDRY_PUBLIC_URL` 后，将生成的入站 URL 填入 CLS 告警 callback 地址。请始终保护 URL token。
+
+Callback 必须使用受支持的 media type 和有效腾讯回调结构。未知、禁用、不完整或格式错误的 token 配置都返回相同的 not-found 边界。
+
+## 摄取与分组
+
+Mendry 在返回 `202` 前验证 callback envelope。腾讯告警使用经过验证的 provider fields 生成确定性 fingerprint；模型输出、账号 metadata、topic ID 和 callback URL 都不会成为分组权威。保存的 Observation 保留已接受正文，归一化告警证据只保存有界 projection 与 provenance。
+
+## 可信详情证据
+
+Remediation run 只能通过可信 adapter 访问获批的腾讯详情 URL。Adapter 验证 regional host 与响应，移除 callback/secret 字段，并持久化有界证据。腾讯来源的 run 在强制 direct provider detail 可用且被引用前，不能声称诊断成功。
+
+## 失败处理
+
+检查安全的 `webhook.ingest.failed` 与腾讯请求/详情诊断。日志会省略入站 token、callback URL、H5 shield 字段、secret ID、secret text 和包含控制内容的异常响应。
+
+## 核验依据
+
+- `backend/internal/modules/hooks/adapter/tencentcls/client.go`

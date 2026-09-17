@@ -1,0 +1,103 @@
+---
+title: 配置参考
+description: 查阅现有事故应用配置，并将其与 Agent Harness composition 区分开。
+availability: available
+translationKey: configuration
+sources:
+  - backend/.env.example
+  - backend/README.md
+  - backend/docs/automatic-hotfix.md
+  - backend/docs/remediation-recovery.md
+  - backend/internal/modules/auth/adapter/http/handler.go
+  - backend/internal/platform/observability/telemetry.go
+  - frontend/src/features/configuration/configuration.ts
+---
+
+**可用性：available**
+
+## 范围：现有事故应用
+
+本页记录当前 API 与项目配置，用于事故 Web 应用。其中 PostgreSQL、Redis、唯一账号、项目凭据与 `MENDRY_*` 设置都不是中立 Agent Harness core 的前提。Local 与 Service Harness composition 会在对应阶段交付后提供独立的已验证配置契约。
+
+事故应用配置分为进程环境与项目运行配置两个 scope。不要随意在两者之间移动 secret。
+
+## 进程环境
+
+| 范围        | Key 示例                                                                                                                             | 说明                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Runtime     | `MENDRY_ENVIRONMENT`、`MENDRY_HTTP_ADDR`、`MENDRY_PUBLIC_URL`                                                                        | Public URL 用于生成 Webhook URL；只使用一个绝对 origin     |
+| Data        | `MENDRY_POSTGRES_URL`、`MENDRY_REDIS_URL`                                                                                            | PostgreSQL 持久保存；Redis 只保存 Session                  |
+| Encryption  | `MENDRY_ENCRYPTION_KEY`                                                                                                              | 32 字节的 base64；每个数据库保持稳定                       |
+| Auth        | `MENDRY_AUTH_SESSION_TTL`                                                                                                            | 默认 24 小时                                               |
+| HTTP        | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit                                                                                   | CORS 只接受一个精确 console origin                         |
+| Logging     | `MENDRY_LOG_FORMAT`、`MENDRY_LOG_LEVEL`、`MENDRY_LOG_FILE`                                                                           | production 默认 JSON；本地文件需由外部轮换                 |
+| Remediation | `MENDRY_REMEDIATION_CONCURRENCY`、`MENDRY_REMEDIATION_RECOVERY_INTERVAL`、`MENDRY_REMEDIATION_MODEL_TIMEOUT`、存储目录、构建镜像摘要 | 控制修复任务并发上限、崩溃自动恢复、超时时限与隔离构建镜像 |
+
+`backend/.env.example` 是当前完整 key/default 参考。`MENDRY_*` 是首选命名；迁移期间每个运行时 key 都接受对应的 `FIXTHE_*` 旧名，二者同时存在时优先使用 `MENDRY_*`，即使其值显式为空。Shell 中已导出的任一命名空间环境变量优先于 `.env`。
+
+## 项目配置
+
+每个项目最多保存一组当前 environment、repository、source、trigger、可选 LLM provider 与 remediation 修复策略。Draft 端点返回不完整状态，组件 PUT 只更新一个组件，不替换其 sibling。
+
+Source kind 为 `ssh`、`cloud` 或 `mcp`；trigger kind 为 `signed_webhook` 或 `custom_rule`。保存某种配置并不等于其 runtime connector 已可用，请查看[产品状态](/zh-cn/docs/project/status/)。
+
+### 修复策略配置
+
+项目修复策略（`/configuration/remediation`）定义了自动化修复的执行边界、预验证容器与代码交付方式：
+
+- `executionMode`：`analysis_only`（默认仅分析）或 `auto_hotfix`（Draft PR 模式）。
+- `changePolicy`：受限变更边界，包括 `allowedPaths`（1–64 个路径白名单）、`deniedPaths`（禁止修改清单与锁文件）、`maxChangedFiles`（1–30）与 `maxChangedLines`（1–5,000）。
+- `publication`：目标分支、Git 写凭据（`gitCredentialSecretId`）与仓库平台 API 令牌（`scmTokenSecretId`）。
+- `validationProfile`：可选的本地预验证沙箱（`enabled`、`imageDigest`、`workingDirectory`、`requiredCommands`）。
+
+增强模式支持一键自动检测：
+
+- `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` 发起仓库检测。
+- `GET /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` 轮询就绪状态。
+- `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable` 提交生成的验证配置。
+
+详细机制与沙箱说明见[自动修复与本地预验证](/zh-cn/docs/guides/automatic-hotfix/)。
+
+### 签名 Webhook Provider
+
+配置界面提供 **Trigger type**、**Webhook provider** 和只读的 **Inbound webhook URL**。必须先保存 signed webhook，才能生成或轮换 URL。支持的 provider 值为 `generic`、`tencent_cls` 和 `aws_cloudwatch`。
+
+Generic 与腾讯 Trigger 使用 schema version 2，并提供有界 event type 和去重 key：
+
+```json
+{
+  "schemaVersion": 2,
+  "provider": "generic",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "title"
+}
+```
+
+AWS CloudWatch 会额外显示 **SNS Topic ARN** 字段。界面通过校验后才允许保存，并写入固定的 `alarm_arn` 去重契约：
+
+```json
+{
+  "schemaVersion": 3,
+  "provider": "aws_cloudwatch",
+  "eventTypes": ["alarm"],
+  "deduplicationKey": "alarm_arn",
+  "awsCloudWatch": {
+    "topicArn": "arn:aws:sns:us-east-1:123456789012:mendry-alarms"
+  }
+}
+```
+
+Provider 限制、发送端设置、轮换与投递行为见[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)。
+
+### 兼容性与 Telemetry
+
+新 Session 使用 `mendry_session` Cookie。命名迁移期间，API 仍接受旧的 `fixthe_session`，并在登录或退出设置当前 Cookie 时清除旧 Cookie。OpenTelemetry instrumentation 与数据库连接池指标使用 `mendry` namespace，包括 `mendry/backend`、`mendry.postgres.*` 和 `mendry.redis.*`。
+
+Credential 是独立项目记录，通过 ID 引用。读取响应从不返回明文 value。
+
+## 核验依据
+
+- `backend/.env.example`
+- `backend/README.md`
+- `backend/docs/automatic-hotfix.md`
+- `backend/docs/remediation-recovery.md`

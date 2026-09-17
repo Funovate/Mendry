@@ -1,0 +1,50 @@
+---
+title: 审阅首个事故
+description: 发送评估 Webhook，确认异步摄取，并检查事故和修复证据。
+availability: preview
+translationKey: first-incident
+journeyOrder: 6
+sources:
+  - backend/README.md
+---
+
+**可用性：preview**
+
+使用已保存签名 Webhook 返回的入站 URL，并将 URL 中的 token 视为凭据。
+
+## 1. 发送信号
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"checkout error rate increased","service":"checkout-api","severity":"P2"}' \
+  'http://127.0.0.1:8080/hooks/REPLACE_WITH_INBOUND_TOKEN'
+```
+
+有效请求返回 `202 {"accepted":true}`，它只确认同步接收。归一化、Observation 持久化、事故摄取以及符合条件的修复启动会在 API 进程后台继续。模型调用失败时会退回确定性分组，不会丢弃有效 Webhook。
+
+## 2. 查找事故
+
+```bash
+curl -b /tmp/mendry-cookie.txt \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents
+```
+
+相同 fingerprint 的重复信号会更新当前 Open 事故的 occurrence。Webhook 摄取不会重新打开 Closed 或 Recovered 事故。
+
+## 3. 审阅证据与修复
+
+在控制台打开事故，或使用列表返回的公开事故标识读取 remediation review：
+
+```bash
+curl -b /tmp/mendry-cookie.txt \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents/INC-REPLACE/remediation
+```
+
+确认事实引用已存证据、不可用来源被明确显示，并且候选变更与人工合并、部署严格分离。如果未配置 repository 或 source capability，review 可能报告证据不足；这是有效的有界结果，不是绕过门禁的许可。
+
+如果请求已接收但没有出现事故，请查看[故障排查](/zh-cn/docs/guides/troubleshooting/)。
+
+## 核验依据
+
+- `backend/README.md`

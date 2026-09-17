@@ -1,0 +1,65 @@
+---
+title: AI incident response security boundaries
+description: Review trusted composition, model and tool authority, artifact truth, credential handling, and incident-application security compatibility.
+availability: available
+translationKey: security
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/README.md
+---
+
+**Availability: available**
+
+The Harness separates untrusted task/model data from trusted operator
+composition. Extensibility does not let an event or model expand its own
+authority.
+
+## Harness trust boundaries
+
+- Composition selects the Profile, exact versions, completion evaluator, policy, model binding, tool definitions, executor bindings, and credential sources.
+- Event payload and context provide task input. They cannot install code, replace policy, select arbitrary credentials/endpoints, or change a trusted tool effect.
+- Model output is proposal data. Tool names, versions, and arguments must match the trusted registry and closed schema.
+- Policy runs for advertisement and again for dispatch. A capability disappearing or becoming denied before dispatch does not execute.
+- Invocation intent persists before an external effect. Raw arguments are represented by a digest in invocation audit.
+- Budgets, cancellation, persistence, and artifact provenance remain active even under explicit `AllowAllPolicy`.
+
+`AllowAllPolicy` means all trusted registered capabilities are eligible. It is not
+an authentication bypass and does not create tools that were not composed.
+`RestrictionPolicy` is a provided implementation; operators can supply another
+`Policy` without changing Runner sequencing.
+
+## Artifact and completion authority
+
+Profiles can create only model-authored artifacts. Trusted executors create
+observed or verified artifacts. Verification must identify its subject and report
+an explicit status. This prevents a generated summary from claiming that a
+branch, pipeline, deployment, or other external effect was observed and verified.
+
+Unknown write outcomes stop in `waiting` and are not automatically retried.
+Exactly-once execution is not implied by an idempotency key or by the core
+interface.
+
+## Credentials and adapters
+
+Core contracts carry opaque model binding identities and tool definitions, not
+secret loaders. Concrete adapters and composition resolve credentials, validate
+transports, bound I/O, and redact diagnostics. The Local source preview supplies
+credentials through explicitly named environment variables and isolates stdio
+MCP environment. These boundaries are validated for source evaluation, not a
+supported release package.
+
+## Incident application compatibility
+
+The existing incident service has additional application security controls:
+PostgreSQL business records, Redis login sessions, bcrypt passwords, encrypted
+project credentials, signed webhook tokens, bounded evidence
+adapters, and human review. Those controls are scoped to the incident application;
+application login is not a core Harness requirement.
+
+Optional OpenAI-compatible incident analysis uses project configuration and
+bounded adapters. Provider content cannot become credential, URL, shell, evidence,
+merge, deployment, or recovery authority. The current incident workflow keeps
+merge, deployment, rollback, and production recovery decisions with people.

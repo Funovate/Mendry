@@ -1,0 +1,165 @@
+---
+const route = Astro.locals.starlightRoute;
+const { entry, head, lang, lastUpdated } = route;
+const site = Astro.site;
+const publicRelease = site !== undefined;
+const indexable = entry.data.availability !== "planned";
+const robots = publicRelease
+  ? indexable
+    ? "index, follow"
+    : "noindex, follow"
+  : "noindex, nofollow";
+
+const entries = head.filter(
+  ({ tag, attrs }) =>
+    !(tag === "meta" && attrs?.name === "robots") &&
+    !(tag === "meta" && attrs?.property === "og:type"),
+);
+
+const canonicalValue = entries.find(
+  ({ tag, attrs }) => tag === "link" && attrs?.rel === "canonical",
+)?.attrs?.href;
+const canonical =
+  typeof canonicalValue === "string" ? canonicalValue : undefined;
+const existingImageValue = entries.find(
+  ({ tag, attrs }) => tag === "meta" && attrs?.property === "og:image",
+)?.attrs?.content;
+const existingImage =
+  typeof existingImageValue === "string" ? existingImageValue : undefined;
+const socialImage = site
+  ? existingImage || new URL("/media/execution-model.png", site).href
+  : undefined;
+const title = entry.data.title;
+const description = entry.data.description;
+const isHomepage =
+  Astro.url.pathname === "/" || Astro.url.pathname === "/zh-cn/";
+
+function breadcrumbItems(publicSite: URL) {
+  const localePrefix = Astro.url.pathname.startsWith("/zh-cn/") ? "/zh-cn" : "";
+  const segments = Astro.url.pathname
+    .replace(/^\/zh-cn\//, "/")
+    .split("/")
+    .filter(Boolean);
+  const items = [
+    {
+      "@type": "ListItem",
+      position: 1,
+      name: lang === "zh-CN" ? "首页" : "Home",
+      item: new URL(`${localePrefix}/`, publicSite).href,
+    },
+  ];
+
+  segments.forEach((segment, index) => {
+    const isCurrent = index === segments.length - 1;
+    const pathname = `${localePrefix}/${segments.slice(0, index + 1).join("/")}/`;
+    items.push({
+      "@type": "ListItem",
+      position: index + 2,
+      name: isCurrent
+        ? title
+        : segment
+            .split("-")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" "),
+      item: new URL(pathname, publicSite).href,
+    });
+  });
+
+  return items;
+}
+
+function buildStructuredData() {
+  if (!site || !indexable || !canonical) return undefined;
+
+  const organizationId = `${site.href}#organization`;
+  const websiteId = `${site.href}#website`;
+  const commonEntities = [
+    {
+      "@type": "Organization",
+      "@id": organizationId,
+      name: "Mendry",
+      url: site.href,
+      sameAs: ["https://github.com/Funovate/Mendry"],
+    },
+    {
+      "@type": "WebSite",
+      "@id": websiteId,
+      name: "Mendry",
+      url: site.href,
+      inLanguage: ["en", "zh-CN"],
+      publisher: { "@id": organizationId },
+    },
+  ];
+  const graph = isHomepage
+    ? [
+        ...commonEntities,
+        {
+          "@type": "WebPage",
+          "@id": `${canonical}#webpage`,
+          name: title,
+          description,
+          url: canonical,
+          inLanguage: lang,
+          isPartOf: { "@id": websiteId },
+        },
+      ]
+    : [
+        ...commonEntities,
+        {
+          "@type": "TechArticle",
+          "@id": `${canonical}#article`,
+          headline: title,
+          description,
+          url: canonical,
+          inLanguage: lang,
+          ...(lastUpdated ? { dateModified: lastUpdated.toISOString() } : {}),
+          author: { "@id": organizationId },
+          publisher: { "@id": organizationId },
+          isPartOf: { "@id": websiteId },
+        },
+        {
+          "@type": "BreadcrumbList",
+          "@id": `${canonical}#breadcrumb`,
+          itemListElement: breadcrumbItems(site),
+        },
+      ];
+
+  return JSON.stringify({
+    "@context": "https://schema.org",
+    "@graph": graph,
+  }).replaceAll("<", "\\u003c");
+}
+
+const structuredData = buildStructuredData();
+---
+
+{
+  entries.map(({ tag: Tag, attrs, content }) => (
+    <Tag {...attrs} set:html={content} />
+  ))
+}
+<meta name="robots" content={robots} />
+<meta property="og:type" content={isHomepage ? "website" : "article"} />
+{
+  socialImage && (
+    <>
+      {!existingImage && <meta property="og:image" content={socialImage} />}
+      <meta
+        property="og:image:alt"
+        content={
+          lang === "zh-CN"
+            ? "Mendry AI 生产问题调查执行模型"
+            : "Mendry AI incident investigation execution model"
+        }
+      />
+      <meta name="twitter:title" content={title} />
+      {description && <meta name="twitter:description" content={description} />}
+      <meta name="twitter:image" content={socialImage} />
+    </>
+  )
+}
+{
+  structuredData && (
+    <script type="application/ld+json" set:html={structuredData} is:inline />
+  )
+}

@@ -1,0 +1,51 @@
+---
+title: Tencent Cloud CLS incident alerts
+description: Configure Tencent CLS alert callbacks and understand deterministic grouping and trusted detail evidence.
+availability: preview
+translationKey: tencent-cls
+sources:
+  - backend/internal/modules/hooks/adapter/tencentcls/client.go
+---
+
+**Availability: preview**
+
+Tencent Cloud CLS uses the same public webhook endpoint as generic alerts, with
+provider-specific validation and evidence handling. This guide covers the
+implemented callback path; it does not claim a general CLS polling connector.
+
+## Configure the trigger
+
+After signing in, save a `signed_webhook` trigger and choose provider
+`tencent_cls` in the versioned trigger configuration. Configure
+`MENDRY_PUBLIC_URL`, then copy the generated inbound URL into the CLS alarm
+callback destination. Keep the URL token private.
+
+The callback must use a supported media type and valid Tencent callback shape.
+Unknown, disabled, incomplete, or malformed token configurations return the
+same not-found boundary.
+
+## Ingestion and grouping
+
+Mendry validates the callback envelope before returning `202`. Tencent grouping
+uses a deterministic fingerprint from validated provider fields; model output,
+account metadata, topic IDs, and callback URLs do not become grouping authority.
+The stored Observation retains the accepted body, while normalized alert
+evidence stores a bounded projection and provenance.
+
+## Trusted detail evidence
+
+A remediation run can follow an approved Tencent detail URL only through the
+trusted adapter. The adapter validates the regional host and response, strips
+callback/secret-bearing fields, and persists bounded evidence. A Tencent-backed
+run cannot claim successful diagnosis until required direct provider detail is
+available and cited.
+
+## Failure handling
+
+Inspect safe `webhook.ingest.failed` and Tencent request/detail diagnostics.
+Logs omit inbound tokens, callback URLs, H5 shield fields, secret IDs, secret
+text, and malformed control content.
+
+## Verified against
+
+- `backend/internal/modules/hooks/adapter/tencentcls/client.go`

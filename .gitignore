@@ -1,0 +1,34 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and generated output
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/screenshots/
+frontend/*.tsbuildinfo
+
+# Backend build and test output
+backend/bin/
+backend/coverage/
+backend/logs/
+backend/*.out
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local runtime data
+.var/
+
+# Local agent tooling and root-level test output
+.pi/
+test-results/
+.claude/settings.local.json
+
+backend/api

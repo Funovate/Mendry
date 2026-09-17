@@ -1,0 +1,43 @@
+---
+title: 安全与权限边界
+description: 审阅可信 composition、模型与工具权限、artifact 真实性、凭据处理与事故应用安全兼容行为。
+availability: available
+translationKey: security
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/internal/modules/agentcore/application/policy.go
+  - backend/README.md
+---
+
+**可用性：available**
+
+Harness 把不可信任务/模型数据与可信操作员 composition 分开。可扩展性不允许 event 或模型扩大自身权限。
+
+## Harness 信任边界
+
+- Composition 选择 Profile、精确版本、completion evaluator、policy、model binding、tool definition、executor binding 与 credential source。
+- Event payload/context 提供任务输入，不能安装代码、替换 policy、选择任意凭据/endpoint 或更改可信 tool effect。
+- 模型输出是建议数据；tool name、version 与 argument 必须匹配可信 registry 和闭合 schema。
+- Policy 在展示时执行一次，在 dispatch 前再次执行；dispatch 前消失或被拒绝的能力不会运行。
+- Invocation intent 在外部 effect 前持久化；invocation audit 通过 digest 表示原始 argument。
+- 即使显式使用 `AllowAllPolicy`，预算、取消、持久化与 artifact provenance 仍然生效。
+
+`AllowAllPolicy` 表示全部可信注册能力都可参与，不是 authentication bypass，也不会创建未组装的工具。`RestrictionPolicy` 是内置实现；操作员可提供其他 `Policy`，无需改变 Runner 顺序。
+
+## Artifact 与完成权限
+
+Profile 只能创建 model-authored artifact；可信 executor 创建 observed 或 verified artifact。Verification 必须标识 subject 并报告明确状态，避免生成摘要伪装成已观察并验证的 branch、pipeline、deployment 或其他外部 effect。
+
+Unknown write outcome 会停在 `waiting`，且不会自动 retry。Idempotency key 或 core interface 都不意味着 exactly-once execution。
+
+## 凭据与 adapter
+
+Core 契约携带 opaque model binding identity 与 tool definition，不携带 secret loader。具体 adapter 与 composition 解析凭据、校验 transport、限制 I/O 并清洗诊断。Local 源码预览通过显式命名环境变量提供凭据，并隔离 stdio MCP environment。这些边界已用于源码评估验证，但不代表受支持的发布包。
+
+## 事故应用兼容
+
+现有事故 Service 还有应用层安全控制：PostgreSQL 业务记录、Redis 登录 Session、bcrypt password、加密项目凭据、签名 Webhook token、有界 evidence adapter 与人工审阅。这些控制仅属于事故应用；登录账号不是 Harness core 要求。
+
+可选 OpenAI-compatible 事故分析使用项目配置与有界 adapter。Provider 内容不能成为 credential、URL、shell、evidence、merge、deployment 或 recovery authority。当前事故 workflow 继续由人控制 merge、deployment、rollback 与生产 recovery 决策。

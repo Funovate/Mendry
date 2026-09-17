@@ -1,0 +1,460 @@
+// Package http 实现 remediation 的 HTTP adapter。
+package http
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	nethttp "net/http"
+	"time"
+
+	authhttp "mendry/backend/internal/modules/auth/adapter/http"
+	authdomain "mendry/backend/internal/modules/auth/domain"
+	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	projectapplication "mendry/backend/internal/modules/projects/application"
+	"mendry/backend/internal/modules/remediation/application"
+	"mendry/backend/internal/modules/remediation/domain"
+	"mendry/backend/internal/platform/httpserver"
+)
+
+type service interface {
+	StartRemediation(context.Context, authdomain.User, string, string, int64) (domain.Run, error)
+	GetRemediation(context.Context, authdomain.User, string, string) (application.Review, error)
+}
+
+type continuationService interface {
+	ContinueRemediation(context.Context, authdomain.User, string, string, int64, string, int64) (domain.Run, error)
+}
+
+type reconfigurationService interface {
+	RepairWithCurrentPolicy(context.Context, authdomain.User, string, string, int64, string, int64) (domain.Run, error)
+}
+
+type authentication interface {
+	RequireAuthentication(nethttp.Handler) nethttp.Handler
+}
+
+// HandlerOptions 声明 remediation HTTP adapter 的用例和认证 middleware 依赖。
+type HandlerOptions struct {
+	Service        service
+	Authentication authentication
+}
+
+// Handler 负责 remediation HTTP DTO、认证边界和安全错误映射。
+type Handler struct {
+	service        service
+	authentication authentication
+}
+
+// NewHandler 在注册 route 前验证 remediation HTTP 依赖。
+func NewHandler(options HandlerOptions) (*Handler, error) {
+	if options.Service == nil || options.Authentication == nil {
+		return nil, fmt.Errorf("remediation HTTP dependencies are required")
+	}
+	return &Handler{service: options.Service, authentication: options.Authentication}, nil
+}
+
+// Register 注册受 Session 保护的 remediation endpoint。
+func (h *Handler) Register(mux *nethttp.ServeMux) {
+	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/start", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.startRemediation)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/retry", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.retryRemediation)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/incidents/{id}/remediation/repair", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.repairRemediation)))
+	mux.Handle("GET /api/v1/projects/{projectKey}/incidents/{id}/remediation", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getRemediation)))
+}
+
+type startRemediationRequest struct {
+	Generation int64 `json:"generation"`
+}
+
+type retryRemediationRequest struct {
+	Generation int64  `json:"generation"`
+	RunID      string `json:"runId"`
+	Version    int64  `json:"version"`
+}
+
+type repairRemediationRequest struct {
+	Generation      int64  `json:"generation"`
+	ExpectedRunID   string `json:"expectedRunId"`
+	ExpectedVersion int64  `json:"expectedVersion"`
+}
+
+type startRemediationResponse struct {
+	RunID         string          `json:"runId"`
+	SeriesID      string          `json:"seriesId"`
+	Status        domain.RunState `json:"status"`
+	Generation    int64           `json:"generation"`
+	AttemptNumber int32           `json:"attemptNumber"`
+	Version       int64           `json:"version"`
+}
+
+type reviewDiagnosisResponse struct {
+	Fixability            domain.FixabilityClass      `json:"fixability"`
+	Confidence            float64                     `json:"confidence"`
+	CausalReasoning       string                      `json:"causalReasoning"`
+	EvidenceRefs          []string                    `json:"evidenceRefs"`
+	Contradictions        []string                    `json:"contradictions"`
+	MissingEvidence       []string                    `json:"missingEvidence"`
+	RecommendedNextAction string                      `json:"recommendedNextAction"`
+	EvidenceAssessment    *evidenceAssessmentResponse `json:"evidenceAssessment,omitempty"`
+}
+
+type evidenceAssessmentResponse struct {
+	ConfidenceCap       float64                `json:"confidenceCap"`
+	EffectiveConfidence float64                `json:"effectiveConfidence"`
+	PlanningEligible    bool                   `json:"planningEligible"`
+	Outcome             domain.FixabilityClass `json:"outcome"`
+	Reasons             []string               `json:"reasons"`
+	MissingEvidence     []string               `json:"missingEvidence"`
+	Contradictions      []string               `json:"contradictions"`
+	DirectEvidenceIDs   []string               `json:"directEvidenceIds"`
+}
+
+type reviewPlanResponse struct {
+	PlanID           string                    `json:"planId"`
+	IntendedBehavior string                    `json:"intendedBehavior"`
+	Risk             domain.RiskClassification `json:"risk"`
+	Rationale        string                    `json:"rationale"`
+	EvidenceRefs     []string                  `json:"evidenceRefs"`
+	AffectedFiles    []string                  `json:"affectedFiles"`
+	RollbackStrategy string                    `json:"rollbackStrategy,omitempty"`
+	Recommended      bool                      `json:"recommended"`
+}
+
+type reviewResponse struct {
+	RunID                  string                    `json:"runId"`
+	SeriesID               string                    `json:"seriesId"`
+	Status                 domain.RunState           `json:"status"`
+	Generation             int64                     `json:"generation"`
+	DeployedCommit         string                    `json:"deployedCommit"`
+	AttemptNumber          int32                     `json:"attemptNumber"`
+	Version                int64                     `json:"version"`
+	Origin                 string                    `json:"origin"`
+	TerminalReason         string                    `json:"terminalReason"`
+	ManualSuggestion       string                    `json:"manualSuggestion"`
+	Retryable              bool                      `json:"retryable"`
+	ContinuationAvailable  bool                      `json:"continuationAvailable"`
+	Attempts               []reviewAttemptResponse   `json:"attempts"`
+	Diagnosis              *reviewDiagnosisResponse  `json:"diagnosis"`
+	Plans                  []reviewPlanResponse      `json:"plans"`
+	SuggestedDiff          string                    `json:"suggestedDiff"`
+	Risk                   domain.RiskClassification `json:"risk"`
+	AgentLoopMode          string                    `json:"agentLoopMode"`
+	AgentLoopPolicyVersion int64                     `json:"agentLoopPolicyVersion"`
+	// Checkpoint 是可选的最新 durable checkpoint 摘要（D8），仅 resilient_v1
+	// run 且有 checkpoint 时出现；永不包含原始 checkpoint 内容。
+	Checkpoint *reviewCheckpointResponse `json:"checkpoint,omitempty"`
+	// Recovery 是可选的活动 recovery projection（R23/R24），仅活动 run 在恢复
+	// 中时出现；与 blocked_manual_review 的人工修复面板语义互斥。
+	Recovery *reviewRecoveryResponse `json:"recovery,omitempty"`
+}
+
+// reviewCheckpointResponse 是最新 durable checkpoint 的安全摘要。
+type reviewCheckpointResponse struct {
+	Sequence           int64                      `json:"sequence"`
+	Phase              string                     `json:"phase"`
+	Reason             string                     `json:"reason"`
+	ObservedRunVersion int64                      `json:"observedRunVersion"`
+	UpdatedAt          time.Time                  `json:"updatedAt"`
+	Validations        []reviewValidationResponse `json:"validations"`
+	Publication        *reviewPublicationResponse `json:"publication,omitempty"`
+}
+
+type reviewValidationResponse struct {
+	CommandID      string `json:"commandId"`
+	CommandVersion int64  `json:"commandVersion"`
+	TreeHash       string `json:"treeHash"`
+	Passed         bool   `json:"passed"`
+}
+
+type reviewPublicationResponse struct {
+	BranchRef      string `json:"branchRef"`
+	TargetBranch   string `json:"targetBranch"`
+	CommitHash     string `json:"commitHash"`
+	ChangeRef      string `json:"changeRef,omitempty"`
+	CompareURL     string `json:"compareUrl,omitempty"`
+	TargetDiverged bool   `json:"targetDiverged"`
+}
+
+// reviewRecoveryResponse 是活动 recovery 的安全摘要；attemptedPathClasses 永远
+// 序列化为数组（空数组也返回），remainingBudget 只含纯数值投影。
+type reviewRecoveryResponse struct {
+	Active               bool                         `json:"active"`
+	Kind                 string                       `json:"kind,omitempty"`
+	Reason               string                       `json:"reason,omitempty"`
+	Attempt              int                          `json:"attempt,omitempty"`
+	AttemptedPathClasses []string                     `json:"attemptedPathClasses"`
+	NextAction           string                       `json:"nextAction,omitempty"`
+	RemainingBudget      *domain.BudgetPlanProjection `json:"remainingBudget,omitempty"`
+}
+
+type reviewAttemptResponse struct {
+	ID             string          `json:"id"`
+	AttemptNumber  int32           `json:"attemptNumber"`
+	Status         domain.RunState `json:"status"`
+	Origin         string          `json:"origin"`
+	ContextVersion int64           `json:"contextVersion"`
+	TerminalReason string          `json:"terminalReason"`
+	Retryable      bool            `json:"retryable"`
+	Version        int64           `json:"version"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+}
+
+func (h *Handler) startRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload startRemediationRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	principal, ok := authhttp.CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, projectapplication.ErrForbidden)
+		return
+	}
+	run, err := h.service.StartRemediation(
+		request.Context(), principal, request.PathValue("projectKey"), request.PathValue("id"), payload.Generation,
+	)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, nethttp.StatusOK, startRemediationResponse{
+		RunID: run.RunID, SeriesID: run.SeriesID, Status: run.State, Generation: run.LifecycleGeneration,
+		AttemptNumber: run.AttemptNumber, Version: run.Version,
+	}); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func (h *Handler) retryRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload retryRemediationRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	principal, ok := authhttp.CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, projectapplication.ErrForbidden)
+		return
+	}
+	continuer, ok := h.service.(continuationService)
+	if !ok {
+		httpserver.WriteInternalError(writer, request, fmt.Errorf("remediation continuation service is unavailable"))
+		return
+	}
+	run, err := continuer.ContinueRemediation(
+		request.Context(), principal, request.PathValue("projectKey"), request.PathValue("id"),
+		payload.Generation, payload.RunID, payload.Version,
+	)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, nethttp.StatusOK, startRemediationResponse{
+		RunID: run.RunID, SeriesID: run.SeriesID, Status: run.State,
+		Generation: run.LifecycleGeneration, AttemptNumber: run.AttemptNumber, Version: run.Version,
+	}); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func (h *Handler) repairRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	var payload repairRemediationRequest
+	if decodeError := httpserver.DecodeJSON(request, &payload); decodeError != nil {
+		httpserver.WriteError(writer, request, *decodeError)
+		return
+	}
+	principal, ok := authhttp.CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, projectapplication.ErrForbidden)
+		return
+	}
+	repairer, ok := h.service.(reconfigurationService)
+	if !ok {
+		httpserver.WriteInternalError(writer, request, fmt.Errorf("current-policy remediation service is unavailable"))
+		return
+	}
+	run, err := repairer.RepairWithCurrentPolicy(
+		request.Context(), principal, request.PathValue("projectKey"), request.PathValue("id"),
+		payload.Generation, payload.ExpectedRunID, payload.ExpectedVersion,
+	)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, nethttp.StatusOK, startRemediationResponse{
+		RunID: run.RunID, SeriesID: run.SeriesID, Status: run.State,
+		Generation: run.LifecycleGeneration, AttemptNumber: run.AttemptNumber, Version: run.Version,
+	}); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func (h *Handler) getRemediation(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	principal, ok := authhttp.CurrentUser(request.Context())
+	if !ok {
+		writeApplicationError(writer, request, projectapplication.ErrForbidden)
+		return
+	}
+	review, err := h.service.GetRemediation(request.Context(), principal, request.PathValue("projectKey"), request.PathValue("id"))
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	if err := httpserver.WriteJSON(writer, nethttp.StatusOK, mapReview(review)); err != nil {
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}
+
+func mapReview(review application.Review) reviewResponse {
+	response := reviewResponse{
+		RunID:                 review.RunID,
+		SeriesID:              review.SeriesID,
+		Status:                review.Status,
+		Generation:            review.Generation,
+		DeployedCommit:        review.DeployedCommit,
+		AttemptNumber:         review.AttemptNumber,
+		Version:               review.Version,
+		Origin:                review.Origin,
+		TerminalReason:        review.TerminalReason,
+		ManualSuggestion:      review.ManualSuggestion,
+		Retryable:             review.Retryable,
+		ContinuationAvailable: review.ContinuationAvailable,
+		Attempts:              make([]reviewAttemptResponse, 0, len(review.Attempts)),
+		Plans:                 make([]reviewPlanResponse, 0, len(review.Plans)),
+		SuggestedDiff:         review.SuggestedDiff,
+		Risk:                  review.Risk,
+	}
+	if review.Diagnosis != nil {
+		response.Diagnosis = &reviewDiagnosisResponse{
+			Fixability:            review.Diagnosis.Fixability,
+			Confidence:            review.Diagnosis.Confidence,
+			CausalReasoning:       review.Diagnosis.CausalReasoning,
+			EvidenceRefs:          review.Diagnosis.EvidenceRefs,
+			Contradictions:        review.Diagnosis.Contradictions,
+			MissingEvidence:       review.Diagnosis.MissingEvidence,
+			RecommendedNextAction: review.Diagnosis.RecommendedNextAction,
+			EvidenceAssessment:    mapEvidenceAssessment(review.Diagnosis.EvidenceAssessment),
+		}
+	}
+	for _, plan := range review.Plans {
+		response.Plans = append(response.Plans, reviewPlanResponse{
+			PlanID:           plan.PlanID,
+			IntendedBehavior: plan.IntendedBehavior,
+			Risk:             plan.Risk,
+			Rationale:        plan.Rationale,
+			EvidenceRefs:     plan.EvidenceRefs,
+			AffectedFiles:    plan.AffectedFiles,
+			RollbackStrategy: plan.RollbackStrategy,
+			Recommended:      plan.Recommended,
+		})
+	}
+	for _, attempt := range review.Attempts {
+		response.Attempts = append(response.Attempts, mapReviewAttempt(attempt))
+	}
+	response.AgentLoopMode = string(domain.ParseAgentLoopMode(string(review.AgentLoopMode)))
+	response.AgentLoopPolicyVersion = max(review.AgentLoopPolicyVersion, 0)
+	if review.Checkpoint != nil {
+		response.Checkpoint = &reviewCheckpointResponse{
+			Sequence:           max(review.Checkpoint.Sequence, 0),
+			Phase:              review.Checkpoint.Phase,
+			Reason:             review.Checkpoint.Reason,
+			ObservedRunVersion: max(review.Checkpoint.ObservedRunVersion, 0),
+			UpdatedAt:          review.Checkpoint.UpdatedAt,
+			Validations:        []reviewValidationResponse{},
+		}
+		for _, validation := range review.Checkpoint.Validations {
+			response.Checkpoint.Validations = append(response.Checkpoint.Validations, reviewValidationResponse{
+				CommandID: validation.CommandID, CommandVersion: validation.CommandVersion,
+				TreeHash: validation.TreeHash, Passed: validation.Passed,
+			})
+		}
+		if publication := review.Checkpoint.Publication; publication != nil {
+			response.Checkpoint.Publication = &reviewPublicationResponse{
+				BranchRef: publication.BranchRef, TargetBranch: publication.TargetBranch,
+				CommitHash: publication.CommitHash, ChangeRef: publication.ChangeRef,
+				CompareURL: publication.CompareURL, TargetDiverged: publication.TargetDiverged,
+			}
+		}
+	}
+	if review.Recovery != nil {
+		classes := review.Recovery.AttemptedPathClasses
+		if classes == nil {
+			classes = []string{}
+		}
+		response.Recovery = &reviewRecoveryResponse{
+			Active:               review.Recovery.Active,
+			Kind:                 review.Recovery.Kind,
+			Reason:               review.Recovery.Reason,
+			Attempt:              max(review.Recovery.Attempt, 0),
+			AttemptedPathClasses: classes,
+			NextAction:           review.Recovery.NextAction,
+			RemainingBudget:      review.Recovery.RemainingBudget,
+		}
+	}
+	return response
+}
+
+func mapReviewAttempt(attempt application.ReviewAttempt) reviewAttemptResponse {
+	return reviewAttemptResponse{
+		ID: attempt.ID, AttemptNumber: attempt.AttemptNumber, Status: attempt.Status,
+		Origin: attempt.Origin, ContextVersion: attempt.ContextVersion,
+		TerminalReason: attempt.TerminalReason, Retryable: attempt.Retryable,
+		Version: attempt.Version, CreatedAt: attempt.CreatedAt, UpdatedAt: attempt.UpdatedAt,
+	}
+}
+
+func mapEvidenceAssessment(value *domain.EvidenceGateDecision) *evidenceAssessmentResponse {
+	if value == nil {
+		return nil
+	}
+	return &evidenceAssessmentResponse{
+		ConfidenceCap: value.ConfidenceCap, EffectiveConfidence: value.EffectiveConfidence,
+		PlanningEligible: value.PlanningEligible, Outcome: value.Outcome,
+		Reasons: value.Reasons, MissingEvidence: value.MissingEvidence,
+		Contradictions: value.Contradictions, DirectEvidenceIDs: value.DirectEvidenceIDs,
+	}
+}
+
+func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Request, err error) {
+	switch {
+	case errors.Is(err, application.ErrInvalidInput), errors.Is(err, domain.ErrInvalidNextAttempt):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Remediation request is invalid.",
+		})
+	case errors.Is(err, application.ErrActiveAttempt), errors.Is(err, domain.ErrActiveAttempt):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusConflict, Code: "remediation_active", Message: "A remediation attempt is already active.",
+		})
+	case errors.Is(err, application.ErrUnsupportedContinuation), errors.Is(err, domain.ErrUnsupportedState):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusConflict, Code: "remediation_unsupported", Message: "The current remediation result cannot be continued.",
+		})
+	case errors.Is(err, application.ErrReconfigurationUnavailable), errors.Is(err, domain.ErrReconfigurationUnavailable):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusConflict, Code: "remediation_policy_unavailable", Message: "Automatic repair is not enabled with a current validation policy for this project.",
+		})
+	case errors.Is(err, application.ErrConflict), errors.Is(err, domain.ErrStalePredecessor):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusConflict, Code: "remediation_conflict", Message: "Remediation request conflicts with the current incident.",
+		})
+	case errors.Is(err, application.ErrNotFound):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusNotFound, Code: "remediation_not_found", Message: "Remediation run was not found.",
+		})
+	case errors.Is(err, incidentapplication.ErrNotFound):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusNotFound, Code: "incident_not_found", Message: "Incident was not found.",
+		})
+	case errors.Is(err, projectapplication.ErrNotFound):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusNotFound, Code: "project_not_found", Message: "Project was not found.",
+		})
+	case errors.Is(err, projectapplication.ErrForbidden):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusForbidden, Code: "forbidden", Message: "You do not have permission to perform this action.",
+		})
+	default:
+		httpserver.WriteInternalError(writer, request, err)
+	}
+}

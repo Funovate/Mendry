@@ -1,0 +1,34 @@
+---
+title: Single-user authentication
+description: The incident application has one login identity with access to every project.
+availability: available
+translationKey: roles
+sources:
+  - backend/internal/modules/auth/application/service.go
+  - backend/internal/commands/migrate/migrations/000020_single_user.up.sql
+  - backend/README.md
+---
+
+**Availability: available**
+
+The incident application is a single-user system. Create its sole login identity
+with `bootstrap-admin`, then sign in with a username and password. Authentication
+uses bcrypt password verification and revocable Redis Sessions.
+
+The logged-in user can create projects, edit configuration and credentials,
+change incident status, and start or continue remediation. Projects keep their
+own configuration and operational data. There are no system roles, project
+roles, memberships, user-creation API, or application audit event feed.
+
+A database unique index permits at most one user, including concurrent bootstrap
+calls. Repeating bootstrap with the existing username preserves its password.
+Bootstrapping a different username cannot create another account.
+
+Migration `000020` removes the membership and audit tables and the user role
+column. It refuses to run when multiple users exist, so the account to retain
+must be selected before upgrading. Existing single-account credentials are
+preserved.
+
+Harness tool execution continues to use trusted tool registration and `Policy`.
+Connector capabilities and tool execution policy describe what a tool can do;
+they are independent of login identity.

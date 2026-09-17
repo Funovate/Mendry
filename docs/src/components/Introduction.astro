@@ -1,0 +1,384 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+import type { IntroContent } from "../content/intro";
+import HomeBrand from "./HomeBrand.astro";
+import "../styles/homepage.css";
+
+interface Props {
+  content: IntroContent;
+}
+
+const { content: c } = Astro.props;
+---
+
+<div class="intro-shell home" id="top">
+  <div class="home-first-screen">
+    <section class="home-hero home-container" aria-labelledby="intro-title">
+      <div class="home-hero-copy">
+        <h1 id="intro-title">
+          <span>{c.heading[0]}</span><span>{c.heading[1]}</span>
+        </h1>
+        <p class="home-summary">{c.summary}</p>
+        <div class="home-actions">
+          <a class="home-button home-button-primary" href={c.primaryHref}>
+            {c.primaryAction}<Icon name="right-arrow" aria-hidden="true" />
+          </a>
+          <a class="home-button home-button-secondary" href={c.secondaryHref}>
+            {c.secondaryAction}<Icon name="down-arrow" aria-hidden="true" />
+          </a>
+        </div>
+        <a class="home-preview-link" href={c.statusHref}>
+          <span class="home-dot" aria-hidden="true"></span>{c.statusLabel}
+        </a>
+      </div>
+      <HomeBrand />
+    </section>
+
+    <section class="home-investigation home-container">
+      <figure
+        class="home-console"
+        data-execution-model
+        aria-describedby="demo-note"
+      >
+        <div class="home-console-bar">
+          <span class="home-console-brand">
+            <img
+              src="/brand/mendry-mark-reversed.svg"
+              width="24"
+              height="24"
+              alt=""
+            />
+            Mendry <span>/ incident</span>
+          </span>
+          <span class="home-example">{c.demo.example}</span>
+        </div>
+        <div class="home-incident-heading">
+          <div>
+            <p class="home-console-meta">{c.demo.source}</p>
+            <h2>{c.demo.incident}</h2>
+          </div>
+          <span class="home-incident-id">INC / 0042</span>
+        </div>
+        <div class="home-evidence-grid">
+          <article class="home-evidence-column">
+            <p class="home-stage-label">{c.demo.stages[0]}</p>
+            <div class="home-signal-visual" aria-hidden="true">
+              <div class="home-chart-label">
+                <span>HTTP 5xx</span><span>↑</span>
+              </div>
+              <svg viewBox="0 0 280 92" fill="none">
+                <path class="home-chart-grid" d="M0 20H280M0 50H280M0 80H280"
+                ></path>
+                <path
+                  class="home-chart-area"
+                  d="M0 77L25 75L50 77L75 73L100 76L125 69L145 73L160 49L173 56L189 25L205 35L220 12L237 21L252 7L280 13V92H0Z"
+                ></path>
+                <path
+                  class="home-chart-line"
+                  d="M0 77L25 75L50 77L75 73L100 76L125 69L145 73L160 49L173 56L189 25L205 35L220 12L237 21L252 7L280 13"
+                ></path>
+              </svg>
+              <div class="home-chart-label">
+                <span>14:20</span><span>14:25</span>
+              </div>
+            </div>
+            <h3>{c.demo.signalTitle}</h3><p>{c.demo.signalText}</p>
+          </article>
+          <article class="home-evidence-column">
+            <p class="home-stage-label">{c.demo.stages[1]}</p>
+            <div class="home-code-visual">
+              <p><span class="home-log-error">ERROR</span> checkout-api</p>
+              <code>TypeError: session is null</code>
+              <span class="home-code-location">checkout.ts:42</span>
+              <code class="home-code-line"><span>42</span> session.user.id</code
+              >
+            </div>
+            <h3>{c.demo.evidenceTitle}</h3><p>{c.demo.evidenceText}</p>
+          </article>
+          <article class="home-evidence-column">
+            <p class="home-stage-label">{c.demo.stages[2]}</p>
+            <div class="home-diff-visual">
+              <p>{c.demo.suggestion}</p>
+              <pre><code><span>{"+ if (!session) {"}</span><span>{"+   return unauthorized();"}</span><span>{"+ }"}</span><span class="home-diff-context">{"  const id = session.user.id;"}</span></code></pre>
+            </div>
+            <h3>{c.demo.proposalTitle}</h3><p>{c.demo.proposalText}</p>
+          </article>
+        </div>
+        <ol class="home-delivery-strip">
+          {
+            c.demo.delivery.map((item, i) => (
+              <li>
+                <span class="home-delivery-number" aria-hidden="true">
+                  0{i + 4}
+                </span>
+                <div>
+                  <>
+                    <strong>{item.title}</strong>
+                    <p>{item.text}</p>
+                  </>
+                </div>
+              </li>
+            ))
+          }
+        </ol>
+        <figcaption id="demo-note">
+          <span aria-hidden="true">ⓘ</span>{c.demo.note}
+        </figcaption>
+      </figure>
+      <ul class="home-proof-strip">
+        {
+          c.demo.traits.map((trait) => (
+            <li>
+              <>
+                <Icon
+                  name="approve-check"
+                  aria-hidden="true"
+                  class="home-proof-mark"
+                />
+                <span>{trait}</span>
+              </>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </div>
+
+  <section
+    class="home-workflow home-container"
+    id="workflow"
+    aria-labelledby="workflow-title"
+  >
+    <div class="home-section-top home-section-top-split">
+      <h2 id="workflow-title">{c.workflow.heading}</h2>
+      <p class="home-section-description">{c.workflow.text}</p>
+    </div>
+    <div class="home-loop">
+      {
+        c.workflow.flows.map((flow, flowIndex) => (
+          <>
+            {flowIndex > 0 && (
+              <div class="home-flow-gate">
+                <div class="home-gate-line" aria-hidden="true" />
+                <p class="home-gate-node">{c.workflow.gateLabel}</p>
+                <div class="home-gate-line" aria-hidden="true" />
+              </div>
+            )}
+            <div class:list={["home-current-flow", `home-${flow.id}-flow`]}>
+              <div class="home-flow-header">
+                <h3 class="home-flow-label">
+                  <span class="home-dot" aria-hidden="true" />
+                  {flow.label}
+                </h3>
+                <span class="home-flow-badge home-flow-badge-current">
+                  {flow.badge}
+                </span>
+              </div>
+              <ol
+                class="incident-sequence home-current-stages"
+                start={flowIndex * 3 + 1}
+              >
+                {flow.stages.map((stage, i) => (
+                  <li class="home-stage-card home-stage-card-current">
+                    <div class="home-stage-card-inner">
+                      <div class="home-stage-top">
+                        <span class="home-flow-number" aria-hidden="true">
+                          0{flowIndex * 3 + i + 1}
+                        </span>
+                        <span class="home-stage-icon" aria-hidden="true">
+                          <Icon
+                            name={flowIndex === 0 ? "magnifier" : "setting"}
+                          />
+                        </span>
+                      </div>
+                      <div class="home-stage-content">
+                        <h4 class="home-stage-title">{stage.title}</h4>
+                        <p class="home-stage-desc">{stage.text}</p>
+                      </div>
+                    </div>
+                    <span class="home-flow-arrow" aria-hidden="true">
+                      <Icon name="right-arrow" class="home-arrow-svg" />
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </>
+        ))
+      }
+      <div class="home-handoff">
+        <h3>{c.workflow.handoff.heading}</h3>
+        <ol>{c.workflow.handoff.stages.map((stage) => <li>{stage}</li>)}</ol>
+        <p>{c.workflow.handoff.text}</p>
+      </div>
+      <div class="home-loop-caption">
+        <p class="home-policy-note">{c.workflow.policy}</p>
+        <a class="home-status-link" href={c.statusHref}
+          >{c.footer.links[2].label}<span aria-hidden="true">↗</span></a
+        >
+      </div>
+    </div>
+  </section>
+
+  <section
+    class="home-workspace home-container"
+    aria-labelledby="workspace-title"
+  >
+    <div class="home-section-top home-section-top-split">
+      <h2 id="workspace-title">{c.workspace.heading}</h2>
+      <p class="home-section-description">{c.workspace.text}</p>
+    </div>
+    <nav class="home-workspace-paths" aria-labelledby="workspace-title">
+      {
+        c.workspace.paths.map((path, i) => (
+          <a href={path.href}>
+            <div class="home-workspace-visual" aria-hidden="true" data-view={i}>
+              {[0, 1, 2].map(() => (
+                <span>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              ))}
+            </div>
+            <h3>
+              {path.title}
+              <Icon name="right-arrow" aria-hidden="true" />
+            </h3>
+            <p>{path.text}</p>
+          </a>
+        ))
+      }
+    </nav>
+  </section>
+
+  <section
+    class="home-integration"
+    id="integrations"
+    aria-labelledby="integration-title"
+  >
+    <div class="home-container">
+      <div class="home-integration-layout">
+        <div class="home-integration-copy">
+          <h2 id="integration-title">{c.integration.heading}</h2>
+          <p class="home-section-description">{c.integration.text}</p>
+          <a class="home-text-link" href={c.integration.href}
+            >{c.integration.action}<Icon
+              name="right-arrow"
+              aria-hidden="true"
+            /></a
+          >
+        </div>
+        <div
+          class="home-stack"
+          role="group"
+          aria-labelledby="integration-title"
+        >
+          <ul class="home-stack-sources">
+            {
+              c.integration.sources.map((source, i) => (
+                <li>
+                  <span aria-hidden="true">{["◉", "≡", "⌘"][i]}</span>
+                  {source}
+                </li>
+              ))
+            }
+          </ul>
+          <div class="home-stack-connectors" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="home-stack-hub">
+            <strong>
+              <svg
+                class="home-hub-mark"
+                viewBox="0 0 100 100"
+                fill="none"
+                aria-hidden="true"
+                ><path
+                  d="M14 86V16l36 40 36-40v70"
+                  stroke="currentColor"
+                  stroke-width="16"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path><circle cx="50" cy="56" r="9"
+                ></circle></svg
+              >
+              Mendry
+            </strong>
+            <span>{c.integration.hub}</span>
+          </div>
+          <div class="home-stack-delivery">
+            <span aria-hidden="true">↓</span><p>
+              {c.integration.deliveryLabel}
+            </p>
+            <ul>{c.integration.targets.map((target) => <li>{target}</li>)}</ul>
+          </div>
+        </div>
+      </div>
+      <ul class="home-traits">
+        {
+          c.integration.traits.map((trait, i) => (
+            <li>
+              <span class="home-trait-symbol" aria-hidden="true">
+                {["⌂", "⊙", "↗"][i]}
+              </span>
+              <>
+                <h3>{trait.title}</h3>
+                <p>{trait.text}</p>
+              </>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section class="home-start home-container" aria-labelledby="start-title">
+    <h2 id="start-title">{c.start.heading}</h2>
+    <nav class="home-paths" aria-labelledby="start-title">
+      {
+        c.start.paths.map((path) => (
+          <a href={path.href}>
+            <h3>
+              {path.title}
+              <Icon name="right-arrow" aria-hidden="true" />
+            </h3>
+            <p>{path.text}</p>
+          </a>
+        ))
+      }
+    </nav>
+  </section>
+
+  <footer class="home-footer home-container">
+    <div class="home-footer-top">
+      <div>
+        <a class="home-wordmark" href="#top" aria-label="Mendry">
+          <img
+            class="dark:sl-hidden"
+            src="/brand/mendry-logo-horizontal.svg"
+            width="520"
+            height="128"
+            alt=""
+            loading="lazy"
+          />
+          <img
+            class="light:sl-hidden"
+            src="/brand/mendry-logo-horizontal-reversed.svg"
+            width="520"
+            height="128"
+            alt=""
+            loading="lazy"
+          />
+        </a><p>{c.footer.tagline}</p>
+      </div>
+      <nav aria-label={c.footer.navigation}>
+        {c.footer.links.map((link) => <a href={link.href}>{link.label}</a>)}
+      </nav>
+    </div>
+    <div class="home-footer-bottom">
+      <span>Mendry / {c.footer.note}</span><a href="#top"
+        >{c.footer.back}<span aria-hidden="true">↑</span></a
+      >
+    </div>
+  </footer>
+</div>

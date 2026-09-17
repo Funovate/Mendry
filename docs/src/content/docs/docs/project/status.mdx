@@ -1,0 +1,64 @@
+---
+title: Mendry incident response product status
+summary: Check which Agent Harness foundation, Local, Service, Product, and incident-application capabilities are evidenced today.
+description: Check which Agent Harness foundation, Local, Service, Product, and incident-application capabilities are evidenced today.
+availability: available
+translationKey: status
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/docs/automatic-hotfix.md
+  - backend/README.md
+---
+
+**Availability: available**
+
+Status labels describe evidence, not ambition.
+
+- `available`: implemented and verified in current code or a tested release.
+- `preview`: implemented behavior or source contracts suitable for continued evaluation, without a supported customer release claim.
+- `planned`: incomplete or release-gated behavior; never an executable step.
+
+## Agent Harness delivery boundaries
+
+| Stage                                               | Status  | Evidence and boundary                                                                                                                                                |
+| --------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foundation shared execution and extension contracts | preview | Implemented and focused-tested: neutral domain ports, Runner, model step, paired history, registries, policy, completion, budgets, recovery, and artifact provenance |
+| Full incident Runner migration                      | planned | Remediation uses shared model/history boundaries, while its coordinator still owns the domain loop, evidence gates, checkpoints, and tool routing                    |
+| Local input, file durability, and examples          | preview | Source CLI supports run, inspect, resume, and operator resolution with durable file snapshots; no supported binary or compatibility guarantee                        |
+| Service generic events and durable runs             | planned | No generic event/run service contract is currently published; the incident webhook is not a generic task endpoint                                                    |
+| Product generic run and artifact views              | planned | Existing incident review screens are not generic run/call/artifact views                                                                                             |
+
+Foundation and Local `preview` are positive implementation statuses with bounded
+claims: focused tests cover the shared contracts, and the account-free Local CLI
+has a documented offline fixture smoke path. They do not promote Service,
+Product, or end-to-end incident migration to available, and they do not claim a
+supported Local release artifact. See [Agent Harness](/docs/concepts/agent-harness/).
+
+## Existing incident application
+
+The following matrix describes the current incident application. Its database,
+session, project, and account dependencies do not apply to the neutral core. Its
+human-review restrictions are compatibility behavior, not a permanent
+prohibition on write-capable Harness extensions.
+
+| Capability                                                | Status    | Boundary                                                                                                |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| Explicit migrations and single-user bootstrap             | available | Source command; supported production package still absent                                               |
+| Single-user login sessions                                | available | Redis sessions and one PostgreSQL login identity; incident app only                                     |
+| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                                                     |
+| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed                                          |
+| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input                                              |
+| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory                                             |
+| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped                                                  |
+| Automatic hotfix draft PR delivery & local pre-validation | preview   | Bounded patch generation, container test verification, and draft PR/MR creation on supported SCMs       |
+| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                                                                    |
+| Automatic merge, deployment, rollback, or recovery        | planned   | Human-controlled action; by design, changes require review and are not automatically merged or deployed |
+| Outbound notifications and general durable worker queue   | planned   | Not part of the current API runtime                                                                     |
+
+## Publication blockers
+
+Public production documentation remains blocked on an authorized brand package,
+custom canonical domain, tested installation artifact, explicit support/security
+statement, and validated rollback path.

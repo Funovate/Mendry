@@ -1,0 +1,63 @@
+---
+title: Feature map
+description: Find implemented console features, their entry points, and current evaluation boundaries.
+availability: preview
+translationKey: features
+sources:
+  - frontend/src/features/configuration/ConfigurationEditorPage.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+  - frontend/src/features/observations/ObservationsPage.tsx
+  - frontend/src/features/board/PipelinePage.tsx
+  - frontend/src/features/incidents/IncidentsPage.tsx
+  - frontend/src/features/incidents/RemediationPanel.tsx
+  - backend/README.md
+---
+
+**Availability: preview**
+
+This map describes the existing incident application, not a supported production
+release or the planned generic Harness UI. Console paths below are relative to
+your own console origin; replace `:key` and `:id` with a project key and incident ID.
+
+## Console features
+
+| Module                        | Entry point                         | Current behavior                                                                                                                                                           |
+| ----------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Projects and configuration    | `/projects/:key/configuration/edit` | Configure Git, Source, Trigger, LLM, Automatic hotfix, and Review. Each configuration step saves independently.                                                            |
+| Event stream                  | `/projects/:key/observations`       | Inspect observations, filter the current page by level or message/service/source, and refresh manually.                                                                    |
+| Pipeline                      | Project navigation: Pipeline        | Inspect up to 100 Open incidents, filter by stage, priority, or actionability, and open an incident. Refreshes every 25 seconds.                                           |
+| Incidents                     | Project navigation: Incidents       | Browse incidents with incremental loading and inspect evidence. Set Open, Recovered, or Closed manually.                                                                   |
+| Investigation and remediation | `/projects/:key/incidents/:id`      | Review diagnosis, citations, plans, suggested diff, attempts, recovery information, and hotfix delivery when present. Available actions depend on server state and policy. |
+| Authentication                | Login and sidebar Sign out          | Use the single configured identity and cookie session. No multi-user role model is available.                                                                              |
+
+Event stream pages contain 25 observations. Search, level filtering, and count
+badges apply only to the loaded page, not the full event history. The incident
+list loads in batches of 25. Neither view should be treated as an exhaustive
+search across all stored signals.
+
+## Configuration and integrations
+
+| Area                        | Configure or inspect                                                                       | Detailed guide                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Git and deployment baseline | Repository credentials and a readable deployment baseline                                  | [Git and baseline](/docs/guides/git-baseline/)                                                 |
+| Runtime evidence            | Project Source settings, including supported Tencent CLS or SSH Docker configuration       | [Tencent CLS](/docs/guides/tencent-cls/) and [first project](/docs/get-started/first-project/) |
+| Incoming signals            | Project Trigger settings and signed webhook credentials                                    | [Signed webhooks](/docs/guides/signed-webhooks/)                                               |
+| Model provider              | Provider credentials, model selection, and chat test                                       | [LLM providers](/docs/guides/llm-providers/)                                                   |
+| Repair policy               | Analysis-only or automatic hotfix policy, write credentials, validation, and change limits | [Automatic hotfix](/docs/guides/automatic-hotfix/)                                             |
+| Server and session          | Environment configuration and bootstrap identity                                           | [Configuration](/docs/reference/configuration/) and [authentication](/docs/reference/roles/)   |
+
+A configured integration does not guarantee that a run obtained useful evidence.
+Inspect the incident's actual evidence and execution outcome before trusting a
+conclusion. Keep credentials in the configuration boundary, not in signal payloads.
+
+## Capability boundaries
+
+- `analysis_only` is the default repair policy. A diagnosis or suggested diff does not mean a write or validation occurred.
+- Automatic hotfix can prepare a branch, run containerized pre-validation tests, and publish a draft pull request under configured policy. It does not automatically merge, deploy, roll back, or confirm recovery.
+- AWS-origin incidents remain analysis-only; enabling project repair policy does not override that source boundary.
+- Generic event/run/call/artifact product surfaces and the production installation bundle remain planned.
+- Local Harness is a separate development composition. Its readiness is not implied by incident-console features.
+
+Use [product status](/docs/project/status/) for the readiness matrix,
+[operator workflow](/docs/guides/operator-workflow/) for routine operation, and
+[troubleshooting](/docs/guides/troubleshooting/) when a configured workflow fails.

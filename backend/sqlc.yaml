@@ -1,0 +1,80 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/commands/migrate/queries.sql"
+    gen:
+      go:
+        package: "migratedb"
+        out: "internal/commands/migrate/migratedb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/modules/auth/adapter/postgres/queries.sql"
+    gen:
+      go:
+        package: "authdb"
+        out: "internal/modules/auth/adapter/postgres/authdb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/modules/incidents/adapter/postgres/queries.sql"
+    gen:
+      go:
+        package: "incidentdb"
+        out: "internal/modules/incidents/adapter/postgres/incidentdb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/modules/projects/adapter/postgres/queries.sql"
+    gen:
+      go:
+        package: "projectdb"
+        out: "internal/modules/projects/adapter/postgres/projectdb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/modules/observations/adapter/postgres/queries.sql"
+    gen:
+      go:
+        package: "observationdb"
+        out: "internal/modules/observations/adapter/postgres/observationdb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+  - engine: "postgresql"
+    schema: "internal/commands/migrate/migrations"
+    queries: "internal/modules/remediation/adapter/postgres/queries/remediation.sql"
+    gen:
+      go:
+        package: "remediationdb"
+        out: "internal/modules/remediation/adapter/postgres/remediationdb"
+        sql_package: "pgx/v5"
+        emit_db_tags: false
+        emit_json_tags: false
+        emit_interface: false
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true

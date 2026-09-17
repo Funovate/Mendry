@@ -1,0 +1,366 @@
+/* Product presentation follows the docs' paper, ink, and restrained accents.
+   Keep this layer after feature CSS so layout and semantic status styles stay local. */
+html {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  color: var(--color-ink);
+  background: var(--color-accent-soft);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.sidebar {
+  padding: 24px 16px 20px;
+  color: var(--color-text);
+  background: var(--color-surface-muted);
+  border-right: 1px solid var(--color-border);
+}
+
+.brand {
+  padding: 8px 8px 30px;
+}
+
+.brand-logo {
+  display: block;
+  width: 130px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.project-switcher-row,
+.project-switcher-edit {
+  min-height: 60px;
+  background: var(--color-canvas);
+  border-color: var(--color-border);
+}
+
+.project-switcher,
+.project-switcher-edit input,
+.user-card strong {
+  color: var(--color-ink);
+}
+
+.project-switcher small,
+.project-switcher-edit small,
+.project-switcher-row .icon-button,
+.project-switcher-edit .icon-button,
+.user-card small,
+.environment {
+  color: var(--color-muted);
+}
+
+.project-switcher-edit:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.project-switcher-row .icon-button:hover,
+.project-switcher-edit .icon-button:hover:not(:disabled) {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-color: var(--color-border);
+}
+
+.sidebar nav {
+  gap: 6px;
+  margin-top: 28px;
+}
+
+.sidebar nav a {
+  min-height: 42px;
+  color: var(--color-text);
+}
+
+.sidebar nav a:hover {
+  color: var(--color-ink);
+  background: var(--color-border-soft);
+}
+
+.sidebar nav a.nav-active {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: inset 3px 0 var(--color-accent);
+  font-weight: 650;
+}
+
+.nav-count {
+  color: var(--color-accent);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+}
+
+.sidebar-foot {
+  padding-top: 20px;
+  border-color: var(--color-border);
+}
+
+.env-dot { background: var(--color-accent); }
+.avatar { color: var(--color-warning); background: var(--color-warning-soft); }
+
+.topbar {
+  padding-inline: 28px;
+  background: var(--color-canvas);
+  border-color: var(--color-border);
+}
+
+.breadcrumbs,
+.role-control { color: var(--color-muted); }
+.breadcrumbs strong { color: var(--color-ink); }
+.role-control { border-color: var(--color-border); }
+
+.primary-button,
+.secondary-button {
+  min-height: 38px;
+  padding-inline: 14px;
+  font-weight: 600;
+}
+
+.icon-button,
+.secondary-button {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.icon-button:hover,
+.secondary-button:hover:not(:disabled) {
+  color: var(--color-accent);
+  background: var(--color-surface-muted);
+  border-color: var(--color-accent);
+}
+
+.eyebrow {
+  color: var(--color-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.view-header {
+  min-height: 84px;
+  align-items: center;
+  padding-block: 28px 20px;
+}
+
+.view-header h1,
+.project-directory h1,
+.setup-header h1,
+.login-panel h1 {
+  color: var(--color-heading);
+  font-size: var(--font-size-2xl, 26px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.view-header p,
+.project-directory p,
+.setup-header p,
+.login-panel p {
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.settings-view { padding-bottom: 32px; }
+.app-state,
+.project-directory,
+.setup-view,
+.login-view { background: var(--color-canvas); }
+
+.table-wrap th {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.table-wrap th,
+.table-wrap td { padding: 16px; border-color: var(--color-border-soft); }
+.table-wrap tbody tr:hover { background: var(--color-canvas); }
+
+.readonly-note,
+.member-form,
+.setup-summary,
+.credential-inline-form,
+.docker-container-picker {
+  color: var(--color-text);
+  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+}
+
+/* Form controls share one readable size; compact project renaming stays local. */
+.login-panel input,
+.create-project-form input,
+.create-project-form textarea,
+.real-config-form input:not([type="checkbox"]),
+.real-config-form select,
+.real-config-form textarea,
+.member-form input,
+.member-form select {
+  min-height: 42px;
+  color: var(--color-ink);
+  border-color: var(--color-border);
+  outline-color: var(--color-accent);
+  font-size: 13px;
+}
+
+.login-panel label,
+.create-project-form label,
+.real-config-form label,
+.member-form label {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.real-config-form input[readonly],
+.git-baseline input[readonly] { background: var(--color-surface-muted); }
+.capability-editor input { accent-color: var(--color-accent); }
+.capability-editor { border-color: var(--color-border); }
+
+.login-panel {
+  width: min(100%, 430px);
+  gap: 30px;
+  padding: 36px;
+  border-color: var(--color-border);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgb(23 40 31 / 5%);
+}
+
+.login-brand { padding-block: 4px 12px; }
+.login-panel h1 { margin-block: 10px; font-size: 34px; }
+.login-panel form { gap: 18px; }
+.login-panel .primary-button { min-height: 44px; margin-top: 4px; }
+
+.project-directory { padding-top: clamp(32px, 6vw, 80px); }
+.project-directory > header { margin-bottom: 32px; }
+.project-list,
+.create-project-form,
+.empty-projects { border-color: var(--color-border); }
+.project-row,
+.create-project-row { padding: 22px; color: var(--color-ink); }
+.project-row strong,
+.create-project-row strong { font-size: 14px; font-weight: 600; }
+.project-row small,
+.create-project-row small { margin-top: 5px; color: var(--color-muted); font-size: 12px; }
+.project-row:hover,
+.create-project-row:hover { background: var(--color-surface-muted); }
+.project-initial { background: var(--color-brand); }
+.create-project-row > span { color: var(--color-accent); background: var(--color-accent-soft); }
+.project-row svg,
+.create-project-row svg,
+.empty-projects > svg { color: var(--color-accent); }
+
+/* Evidence stays dense; headings and selected rows establish the reading order. */
+.incident-list-pane { background: var(--color-canvas); border-color: var(--color-border); }
+.list-header { padding-top: 28px; }
+.list-header h1 { color: var(--color-heading); font-weight: 620; letter-spacing: -0.03em; }
+.filter-row select,
+.filter-chip { color: var(--color-text); border-color: var(--color-border); }
+.incident-row { color: var(--color-ink); border-color: var(--color-border-soft); }
+.incident-row:hover { background: var(--color-surface-muted); }
+.incident-row.selected { box-shadow: inset 3px 0 var(--color-accent); }
+.incident-row > strong { line-height: 1.55; font-weight: 600; }
+.incident-id,
+.time,
+.row-meta,
+.detail-meta { color: var(--color-muted); }
+.detail-heading h1 { color: var(--color-heading); font-weight: 620; letter-spacing: -0.025em; line-height: 1.4; }
+.detail-header,
+.content-section,
+.real-detail-grid > section:first-child { border-color: var(--color-border-soft); }
+.content-section h2,
+.panel-heading h2 { font-weight: 620; }
+.incident-facts { background: var(--color-border-soft); border-color: var(--color-border); }
+.status-pill.open { color: var(--color-accent); background: var(--color-accent-soft); }
+.status-pill.info,
+.muted { color: var(--color-warning); background: var(--color-warning-soft); }
+.status-pill.closed { color: var(--color-muted); background: var(--color-surface-muted); }
+
+.setup-header { max-width: 900px; }
+.real-config-form { gap: 20px; }
+.real-config-form > section { padding: 26px; border-color: var(--color-border); }
+.setup-card-title { border-color: var(--color-border-soft); }
+.setup-card-title h2 { color: var(--color-heading); font-weight: 620; }
+.setup-card-title > svg,
+.back-link,
+.metadata-note svg { color: var(--color-accent); }
+.wizard-steps { margin-bottom: 22px; gap: 8px; }
+.wizard-step-tab { min-height: 38px; color: var(--color-text); border-color: var(--color-border); }
+.wizard-step-tab.active { color: var(--color-accent); background: var(--color-accent-soft); border-color: var(--color-accent); }
+.wizard-step-tab:hover { color: var(--color-accent); border-color: var(--color-accent); }
+.event-list article { padding-block: 17px; }
+.event-list code time,
+.event-list article > span:last-child { color: var(--color-muted); }
+
+/* Review surfaces use the same neutral palette; warning and recovery signals
+   retain their distinct semantic colors. */
+.remediation-overview,
+.remediation-block,
+.remediation-overview-header,
+.remediation-block-heading,
+.remediation-panel-heading { border-color: var(--color-border); }
+.remediation-overview-header,
+.remediation-block-heading { background: var(--color-surface-muted); }
+.remediation-technical-facts > div { background: var(--color-canvas); }
+.remediation-primary-facts,
+.remediation-technical-facts { background: var(--color-border-soft); border-color: var(--color-border-soft); }
+.remediation-primary-facts dd,
+.remediation-technical-facts dd,
+.incident-facts dd,
+.remediation-prose { color: var(--color-text); }
+.remediation-primary-facts dt,
+.remediation-technical-facts dt,
+.incident-facts dt,
+.remediation-overview-header > div:first-child p,
+.remediation-block-heading span,
+.remediation-actions .readonly-note,
+.panel-heading p,
+.attempt-label span,
+.attempt-details,
+.remediation-attempts li time,
+.diagnosis-summary span,
+.remediation-reference,
+.remediation-reference code { color: var(--color-muted); }
+.remediation-reference,
+.remediation-attempts > ol > li { border-color: var(--color-border-soft); }
+.remediation-next-step {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-color: var(--color-border);
+  border-left-color: var(--color-accent);
+}
+.remediation-plans > ol > li.is-recommended {
+  background: var(--color-canvas);
+  box-shadow: inset 3px 0 var(--color-accent);
+}
+
+@media (max-width: 720px) {
+  .sidebar { overflow-y: auto; }
+  .sidebar-foot { padding-top: 20px; }
+  .topbar { padding-inline: 14px; gap: 8px; }
+  .topbar-right { flex-shrink: 0; }
+  .topbar-right > .icon-button { display: inline-grid; }
+  .view-header { min-height: auto; align-items: flex-start; flex-wrap: wrap; padding-block: 22px 18px; }
+  .view-header h1,
+  .project-directory h1,
+  .setup-header h1 { font-size: 25px; }
+  .view-header .primary-button { min-height: 38px; font-size: 12px; }
+  .login-panel { padding: 28px 22px; }
+  .project-row,
+  .create-project-row { padding: 18px 14px; }
+  .real-config-form > section { padding: 20px 16px; }
+  .setup-footer { flex-wrap: wrap; }
+  .review-summary dl { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .review-summary dd { margin-bottom: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+  .spin { animation: none; }
+}

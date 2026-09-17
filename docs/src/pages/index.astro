@@ -1,0 +1,35 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import Introduction from "../components/Introduction.astro";
+import { introContent } from "../content/intro";
+
+const content = introContent.en;
+const publicOrigin =
+  process.env.DOCS_PUBLIC_RELEASE === "true" && process.env.PUBLIC_SITE_ORIGIN;
+---
+
+<StarlightPage
+  frontmatter={{
+    title: content.title,
+    description: content.description,
+    availability: "preview",
+    sources: ["backend/internal/modules/agentcore/application/runner.go"],
+    translationKey: "introduction",
+    template: "splash",
+    pagefind: false,
+    head: publicOrigin
+      ? [
+          {
+            tag: "meta",
+            attrs: {
+              property: "og:image",
+              content: new URL("/media/execution-model.png", publicOrigin).href,
+            },
+          },
+        ]
+      : [],
+  }}
+  hasSidebar={false}
+>
+  <Introduction content={content} />
+</StarlightPage>

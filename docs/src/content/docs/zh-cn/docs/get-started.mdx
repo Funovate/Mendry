@@ -1,0 +1,36 @@
+---
+title: 评估第一个生产问题
+summary: 准备项目、接入受支持的监控信号，并检查首个事故的证据和诊断结果。
+description: 准备项目、接入受支持的监控信号，并检查首个事故的证据和诊断结果。
+availability: preview
+translationKey: get-started
+journeyOrder: 1
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/README.md
+---
+
+**可用性：preview**
+
+从接入一条生产监控信号开始，查看对应事故的证据、诊断结果与建议处理方式。当前流程用于源码评估。
+
+## 准备事故应用
+
+当前源码评估流程从本仓库运行事故 Web 应用。它需要 PostgreSQL 保存业务数据、Redis 保存登录 Session、已初始化的唯一登录账号和项目配置。这些是事故应用前提，不是中立 Harness 契约的依赖。
+
+1. 确认[事故应用前提](/zh-cn/docs/get-started/prerequisites/)。
+2. 选择环境前阅读[安装状态](/zh-cn/docs/get-started/install/)。
+3. 执行迁移并[初始化登录账号](/zh-cn/docs/get-started/bootstrap/)。
+4. 创建并配置[首个项目](/zh-cn/docs/get-started/first-project/)。
+5. 发送受支持的信号并检查[首个事故](/zh-cn/docs/get-started/first-incident/)。
+
+这条路径适合评估和开发验证，不等同于受支持的客户安装方式。
+
+## 面向开发者：本地 Agent Harness
+
+独立的 Local 路径接收 JSON event，通过共享 Harness 执行，并在不依赖 PostgreSQL、Redis 或账号的情况下写出可检查状态。源码预览现已记录构建、运行、检查、继续和操作员恢复命令，请查看[运行本地 Agent Harness](/zh-cn/docs/get-started/local-harness/)。这条开发路径的前提条件和发布保证不同于事故应用。
+
+## 从源码扩展
+
+阅读[扩展 Harness](/zh-cn/docs/guides/extending-harness/)，了解已实现的工具、策略、Profile、evaluator、Artifact 与 `RunStore` 契约。该指南说明源码 API，不表示公开 SDK 或通用 Service UI 已交付。

@@ -1,0 +1,30 @@
+remediation-review:
+  output: public/media/remediation-review.webp
+  source: frontend/tests/application.spec.ts route-mocked production application
+  captured: 2026-09-07
+  dimensions: 800x450
+  data: synthetic incident and project fixtures
+  review:
+    currentProductionComponents: true
+    credentials: none
+    privateEndpoints: none
+    customerOrPersonalData: none
+    obsoletePrototypeBehavior: none
+  availability: current
+
+execution-model:
+  output: public/media/execution-model.png
+  source: docs/src/components/Introduction.astro static incident investigation example
+  captured: 2026-09-10
+  dimensions: 1200x630
+  data: synthetic checkout incident, log evidence, and proposed code change; no production or customer data
+  synthetic: true
+  generated: true
+  review:
+    currentProductionComponents: false
+    credentials: none
+    privateEndpoints: none
+    customerOrPersonalData: none
+    obsoletePrototypeBehavior: none
+    staleness: reviewed against the homepage incident investigation example on 2026-09-10
+  availability: current

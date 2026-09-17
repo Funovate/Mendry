@@ -1,0 +1,78 @@
+---
+title: Configure your first incident response project
+description: Sign in, create a project boundary, and configure the first signed webhook source for evaluation.
+availability: preview
+translationKey: first-project
+journeyOrder: 5
+sources:
+  - backend/README.md
+---
+
+**Availability: preview**
+
+A project owns its configuration, credentials, observations,
+incidents, and remediation records.
+
+## 1. Sign in
+
+```bash
+curl -c /tmp/mendry-cookie.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"replace-with-a-long-random-password"}' \
+  http://127.0.0.1:8080/api/v1/auth/login
+```
+
+## 2. Create the project
+
+```bash
+curl -b /tmp/mendry-cookie.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"checkout-api","name":"Checkout API","description":"Evaluation service"}' \
+  http://127.0.0.1:8080/api/v1/projects
+```
+
+The logged-in user can manage every project.
+
+## 3. Save an environment and enabled source
+
+Webhook lookup requires an enabled source in the trigger's environment. Save a
+minimal evaluation environment and a `push_ingestion` cloud source before the
+trigger:
+
+```bash
+curl -X PUT -b /tmp/mendry-cookie.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"evaluation","name":"Evaluation"}' \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/environment
+
+curl -X PUT -b /tmp/mendry-cookie.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"cloud","credentialSecretId":null,"config":{"schemaVersion":1,"provider":"generic","region":"local","resource":"checkout-api"},"capabilities":["push_ingestion"],"enabled":true}' \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/source
+```
+
+This source establishes webhook ownership. It does not claim that a general
+cloud polling connector is available.
+
+## 4. Save a signed webhook trigger
+
+```bash
+curl -X PUT -b /tmp/mendry-cookie.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"signed_webhook","signingSecretId":null,"config":{"schemaVersion":1,"eventTypes":["alarm"],"deduplicationKey":"title"},"enabled":true}' \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/trigger
+```
+
+The first saved `signed_webhook` receives a random inbound token. The logged-in user can read or rotate the complete inbound URL. Set
+`MENDRY_PUBLIC_URL` so the API can derive that URL.
+
+The full configuration read additionally requires a repository component. The
+webhook path itself uses the saved environment, enabled source, and trigger. See
+the [configuration reference](/docs/reference/configuration/) before enabling
+remediation that needs a Git baseline.
+
+Continue to [the first incident](/docs/get-started/first-incident/).
+
+## Verified against
+
+- `backend/README.md`

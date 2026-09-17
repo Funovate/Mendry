@@ -1,0 +1,50 @@
+---
+title: Run 生命周期与恢复
+description: 了解通用 Run 状态机、有界执行、unknown write 处理与事故 lifecycle 兼容行为。
+availability: available
+translationKey: lifecycle
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/docs/remediation-recovery.md
+---
+
+**可用性：available**
+
+通用 Run 是版本化 Profile 针对冻结 goal、policy reference、configuration identity 与 budget 的一次有界执行。成功表示配置的完成契约已满足，并不统一表示事故已解决或部署已成功。
+
+## 通用 Run 状态
+
+| 状态        | 含义                                                                          |
+| ----------- | ----------------------------------------------------------------------------- |
+| `queued`    | 已接受，但尚未 drive                                                          |
+| `running`   | Runner 可以继续下一次有界模型或工具步骤                                       |
+| `waiting`   | 需要操作员/reconciliation 输入，或缺少完成证据                                |
+| `succeeded` | Profile 的已注册 completion evaluator 接受了 durable artifact                 |
+| `failed`    | 稳定 reason 记录模型、policy、persistence、validation、step 或 budget failure |
+| `cancelled` | 在继续下一步骤前已持久化 context cancellation                                 |
+
+Runner 在继续前恢复 durable call 与 counter，并分别检查 elapsed、model-call、tool-call 与 output budget。Terminal run 不会被重新打开。
+
+## 一次一个步骤
+
+每个循环由 Profile 准备轮次，policy 筛选工具，接受一个模型结果，然后解释 final response 或顺序执行请求的工具。Accepted model usage 先于 accepted history 持久化。Tool intent 先于 adapter 执行持久化。Result 与 artifact 通过一次存储操作写入。
+
+Policy 拒绝会成为有序 tool observation，adapter 不会执行。Cancellation 或 elapsed exhaustion 使用未取消的 persistence context 保存最终状态，避免 durable run 错误地保持 active。
+
+## Interrupted 与 unknown effect
+
+未解决的可信 read 记录为 `interrupted`。未来模型轮次可请求新的 read，它会获得新的 invocation sequence 并再次计入 budget。
+
+未解决 write 不同：即使响应或进程丢失，外部 effect 也可能已经发生。Run 会进入 `waiting`，reason 为 `unknown_write_outcome`；旧 invocation 不会再次 dispatch。必须先由操作员或 connector-specific reconciliation 确认结果，之后才能授权其他动作。
+
+## 完成条件依赖证据
+
+Solution-delivery Profile 可以由模型生成的 solution artifact 完成。Action-with-verification Profile 要求 observed action 和关联该动作的 verified artifact。Pipeline dispatch 不等于 pipeline success，观察到 remote branch 也不等于 deployment verification。
+
+## 事故 lifecycle 兼容
+
+Incident state 仍是独立的应用 lifecycle。新事故从 Open 开始；相同 webhook fingerprint 更新当前 open occurrence；显式重新打开 recovered incident 会创建新 generation。Remediation coordinator 负责自动 eligibility、证据门禁、diagnosis/planning state、checkpoint recovery 与 review projection。
+
+在 `resilient_v1` 执行机制下，每个活跃修复任务持有独占的 PostgreSQL 会话级 Advisory Lock，确保跨 API 实例或重启时由单一进程安全接管。持久化检查点会在发生外部操作前记录工具意图、候选补丁与验证结果，使后台恢复工作线程能在故障重启后从最近断点无缝续推，而无需重新运行。Repair 操作强制校验 generation 与 version 上下文以杜绝冲突。其审阅输出不授予自动 merge、deployment、rollback 或 recovery 权限。

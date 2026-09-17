@@ -1,0 +1,67 @@
+---
+title: Incident investigation troubleshooting
+summary: Diagnose startup, authentication, project configuration, webhook ingestion, and remediation evidence failures safely.
+description: Diagnose startup, authentication, project configuration, webhook ingestion, and remediation evidence failures safely.
+availability: available
+translationKey: troubleshooting
+sources:
+  - backend/README.md
+  - backend/.env.example
+---
+
+**Availability: available**
+
+Start with the narrowest boundary. Do not enable request debug logging or expose
+credentials merely to obtain more detail.
+
+## API is not ready
+
+Check `/livez`, then `/readyz`. API startup requires reachable PostgreSQL and
+Redis plus a valid `MENDRY_ENCRYPTION_KEY`. Apply migrations explicitly before
+starting a binary that needs them. The API never repairs schema history.
+
+## Login fails
+
+Confirm the `bootstrap-admin` command created the login identity in the same
+database. Passwords are 12 to 72 bytes. Redis must be reachable for API sessions,
+although the bootstrap command itself does not use Redis. In staging/production,
+use HTTPS because the session cookie is `Secure`. A second username cannot be
+bootstrapped into the single-user database.
+
+## Configuration remains incomplete
+
+Read `/configuration/draft`. The complete configuration endpoint requires saved
+environment, repository, source, and trigger rows. Each component is saved
+independently. An optional LLM row does not make missing required rows complete.
+
+## Webhook returns not found
+
+Confirm the trigger is saved, enabled, and `signed_webhook`; confirm the sender
+uses the latest token after rotation. Unknown, disabled, incomplete, and rotated
+tokens intentionally return the same `404 webhook_not_found` response.
+
+## Webhook returns 202 but no incident appears
+
+`202` precedes background processing. Search structured logs for
+`webhook.ingest.failed` using project/source scope and request correlation, not
+the raw token. Check provider shape, model connectivity, PostgreSQL writes, and
+incident configuration. Model failures should use deterministic fallback;
+persistence or evidence failures still require operator action.
+
+## Remediation stops or reports insufficient evidence
+
+Treat this as a policy result, not a reason to bypass the gate. Review unavailable
+sources, exact Git baseline, tool budget, persisted evidence provenance, and any
+required Tencent CLS direct detail. Retry only after correcting the missing
+capability or evidence.
+
+## Safe diagnostics
+
+Use JSON logs for complete trace/request IDs. Never paste `.env`, session
+cookies, webhook URLs, credentials, raw prompts, provider callbacks, or raw
+customer evidence into an issue.
+
+## Verified against
+
+- `backend/README.md`
+- `backend/.env.example`

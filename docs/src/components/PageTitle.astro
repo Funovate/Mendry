@@ -1,0 +1,7 @@
+---
+import DefaultPageTitle from "@astrojs/starlight/components/PageTitle.astro";
+
+const introductionRoute = /^\/(?:zh-cn\/?)?$/.test(Astro.url.pathname);
+---
+
+{!introductionRoute && <DefaultPageTitle />}

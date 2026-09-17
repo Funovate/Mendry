@@ -1,0 +1,61 @@
+---
+title: Review your first production incident
+description: Send an evaluation webhook, confirm asynchronous ingestion, and inspect incident and remediation evidence.
+availability: preview
+translationKey: first-incident
+journeyOrder: 6
+sources:
+  - backend/README.md
+---
+
+**Availability: preview**
+
+Use the inbound URL returned for the saved signed webhook. Treat the token in
+that URL as a credential.
+
+## 1. Send a signal
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"checkout error rate increased","service":"checkout-api","severity":"P2"}' \
+  'http://127.0.0.1:8080/hooks/REPLACE_WITH_INBOUND_TOKEN'
+```
+
+A valid request returns `202 {"accepted":true}`. This confirms synchronous
+acceptance only. Normalization, Observation persistence, incident ingestion,
+and any eligible remediation start continue asynchronously in the API process.
+Model failure falls back to deterministic grouping rather than dropping a valid
+webhook.
+
+## 2. Find the incident
+
+```bash
+curl -b /tmp/mendry-cookie.txt \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents
+```
+
+Repeated signals with the same fingerprint update the open incident occurrence.
+Closed or recovered incidents are not reopened by webhook ingestion.
+
+## 3. Review evidence and remediation
+
+Open the incident in the console, or request its remediation review using the
+public incident identifier returned by the list:
+
+```bash
+curl -b /tmp/mendry-cookie.txt \
+  http://127.0.0.1:8080/api/v1/projects/checkout-api/incidents/INC-REPLACE/remediation
+```
+
+Confirm that facts cite stored evidence, unavailable sources remain explicit,
+and candidate changes stay separated from human merge and deployment. A review
+may report insufficient evidence when repository or source capabilities are not
+configured; that is a valid bounded result, not permission to bypass the gate.
+
+Use [troubleshooting](/docs/guides/troubleshooting/) if the request is accepted
+but no incident appears.
+
+## Verified against
+
+- `backend/README.md`

@@ -1,0 +1,58 @@
+---
+title: 初始化登录账号
+description: 迁移源码评估数据库、创建唯一的本地登录账号并验证 API 健康状态。
+availability: preview
+translationKey: bootstrap
+journeyOrder: 4
+sources:
+  - backend/README.md
+  - backend/cmd/bootstrap-admin/main.go
+---
+
+**可用性：preview**
+
+在 `backend/` 下运行以下命令，并连接专用的评估 PostgreSQL 和 Redis 实例。
+
+## 1. 配置进程
+
+```bash
+cp .env.example .env
+export MENDRY_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+在环境变量或私有 `.env` 中设置 `MENDRY_POSTGRES_URL` 与 `MENDRY_REDIS_URL`，并确保此数据库始终使用同一个加密密钥。
+
+## 2. 执行迁移
+
+```bash
+make run-migrate
+```
+
+只有迁移命令会修改 schema，API 不会自动执行迁移。
+
+## 3. 创建登录账号
+
+```bash
+MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
+make bootstrap-admin USERNAME=admin
+```
+
+密码长度必须为 12 到 72 字节。对同一个已启用登录账号重复运行是幂等的，不会替换密码哈希。数据库最多允许一个账号；使用不同用户名无法创建第二个登录身份。
+
+## 4. 启动并验证 API
+
+```bash
+make run-api
+curl http://127.0.0.1:8080/livez
+curl http://127.0.0.1:8080/readyz
+curl http://127.0.0.1:8080/api/v1/system/status
+```
+
+`/livez` 证明进程存活，`/readyz` 同时检查 PostgreSQL 和 Redis readiness。
+
+继续创建[首个项目](/zh-cn/docs/get-started/first-project/)。
+
+## 核验依据
+
+- `backend/README.md`
+- `backend/cmd/bootstrap-admin/main.go`

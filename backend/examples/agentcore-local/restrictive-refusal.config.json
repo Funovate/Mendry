@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "profile": {
+    "name": "workspace",
+    "version": "v1",
+    "systemPrompt": "Use only the configured workspace tools.",
+    "completion": {
+      "mode": "solution_delivered",
+      "version": "v1",
+      "parameters": {
+        "artifactType": "report.summary"
+      }
+    },
+    "summaryArtifactType": "report.summary",
+    "maxTokens": 256
+  },
+  "provider": {
+    "mode": "fixture",
+    "binding": "fixture"
+  },
+  "policy": {
+    "mode": "restrict",
+    "allowedTools": ["workspace.write"],
+    "allowedEffects": ["write"],
+    "allowedRoots": ["allowed"],
+    "pathFields": ["path"]
+  },
+  "budgets": {
+    "maxElapsed": 60000000000,
+    "maxModelCalls": 8,
+    "maxToolCalls": 4,
+    "maxOutputBytes": 1048576,
+    "maxSteps": 8
+  },
+  "mcp": [
+    {
+      "binding": "workspace",
+      "version": 1,
+      "serverId": "mendry-mcp-workspace",
+      "transport": "stdio",
+      "command": "./bin/mcp-workspace",
+      "args": ["--root", ".agentcore/examples/restrictive"],
+      "tools": [
+        {
+          "name": "workspace.write",
+          "remoteName": "write_file",
+          "version": "v1",
+          "effect": "write"
+        }
+      ]
+    }
+  ]
+}

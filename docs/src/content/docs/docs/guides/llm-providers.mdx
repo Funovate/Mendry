@@ -1,0 +1,60 @@
+---
+title: LLM providers for incident investigation
+summary: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
+description: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
+availability: preview
+translationKey: llm-providers
+sources:
+  - backend/README.md
+---
+
+**Availability: preview**
+
+## Scope: existing incident application
+
+This page documents project-scoped provider behavior in the current incident
+application. It is not the binding format for the Local Harness source preview
+or planned generic Service. The neutral core depends only on `ModelProvider` and
+an opaque turn binding; concrete adapters and trusted composition resolve
+endpoint, model, and credentials.
+
+Mendry supports project-scoped OpenAI-compatible provider configuration. The
+provider is optional configuration, and a failed webhook classifier call falls
+back to deterministic normalization. Remediation model turns require valid
+project provider configuration when that mode is used.
+
+## Configure
+
+1. Create an `http_bearer` project credential.
+2. Save provider `openai`, an HTTPS-compatible `baseUrl`, the credential ID, and a model ID.
+3. List models through the project probe endpoint and select an ID returned by the provider.
+4. Run the bounded connectivity probe before saving the operational choice.
+
+The API key is write-only. Provider reads expose configuration metadata, not the
+secret.
+
+## Egress and redaction
+
+Only configured provider calls may leave the customer environment. Logs record
+safe host/path, model, status, duration, token-usage metadata when available,
+and bounded sanitized diagnostics. They do not persist raw prompts, raw model
+responses, bearer tokens, or provider control payloads.
+
+## Authority boundary
+
+Model output is untrusted proposal data. Service-owned policy validates schema,
+tool names, project/run scope, budgets, evidence citations, stop conditions, and
+candidate plans. The model cannot choose credentials, arbitrary URLs, shell
+commands, merge approval, deployment approval, or recovery status.
+
+## Disable safely
+
+Remove or omit the project LLM provider to prevent new provider-backed analysis.
+Review in-flight activity through your external operational records; the
+single-user incident application has no application audit event feed, and the
+current source evaluation does not include a durable general-purpose worker
+queue.
+
+## Verified against
+
+- `backend/README.md`

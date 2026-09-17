@@ -1,0 +1,68 @@
+---
+title: Incident investigation data model
+description: Understand neutral Harness records, durability contracts, artifact provenance, and incident-application compatibility data.
+availability: available
+translationKey: data-model
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/README.md
+---
+
+**Availability: available**
+
+The Harness data model records a task and what actually happened during its
+execution. It does not require a User, Project, Observation, or Incident.
+
+## Neutral Harness records
+
+| Record            | Purpose                                                                                                                                |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Event             | Versioned source input with source-scoped external identity, payload, and context                                                      |
+| Run               | Goal, input/context, Profile and policy snapshots, configuration digest, state, reason, budget, and result                             |
+| Model message     | Provider-neutral accepted history; tool-call/result groups remain complete and ordered                                                 |
+| Invocation        | Durable pre-execution intent with sequence, tool name/version, trusted effect, argument digest, authorization, and state               |
+| Invocation result | Ordered outcome code, bounded output, byte count, and completion time                                                                  |
+| Artifact          | Free-form type and string schema version with bounded data/reference, provenance, external identity, and optional verification subject |
+
+Run states are `queued`, `running`, `waiting`, `succeeded`, `failed`, and
+`cancelled`. Budget limits and counters cover elapsed time, model calls, tool
+calls, and output bytes independently.
+
+## Artifact truth model
+
+`model` records a proposal or interpretation. `observed` records a trusted
+adapter's external observation. `verified` records an explicit passed/failed
+check and must identify its subject by artifact ID or external ID. Model-authored
+content cannot be converted into observed or verified provenance by a Profile.
+
+Custom artifact types do not require a core switch. A future generic renderer can
+fall back to type, schema, safe payload/reference, and provenance. That renderer
+is Product-stage work, not part of the implemented foundation.
+
+## Storage contract
+
+`RunStore` preserves run snapshots, ordered invocations, artifacts, and complete
+message groups. Intent must persist before an external call. Result and the
+artifacts returned with it must persist atomically. Restart reconstruction is
+conservative: unresolved writes remain visible and are not replayed.
+
+This is an implemented port and Runner behavior. It does not establish that the
+Local file adapter or Service PostgreSQL schema has completed integration and
+release validation.
+
+## Incident application compatibility
+
+The existing incident application retains its own records and ownership model:
+
+| Record                               | Purpose                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| Login identity                       | Single login identity with access to every project                                 |
+| Project configuration and credential | Incident connectors, encrypted secrets, repository, trigger, and provider settings |
+| Observation and Incident             | Project-owned event stream and grouped operational condition                       |
+| Remediation run and evidence         | Incident-generation-specific diagnosis, plan, provenance, and review state         |
+
+PostgreSQL remains the source of truth for these application records. Redis holds
+only disposable digest-keyed login sessions. These dependencies describe the
+incident service, not the neutral Harness domain.

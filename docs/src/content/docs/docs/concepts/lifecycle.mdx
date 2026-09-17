@@ -1,0 +1,79 @@
+---
+title: AI agent run lifecycle and recovery
+description: Understand the generic Run state machine, bounded execution, unknown write handling, and incident lifecycle compatibility.
+availability: available
+translationKey: lifecycle
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/docs/remediation-recovery.md
+---
+
+**Availability: available**
+
+A generic Run is one bounded execution of a versioned Profile against a frozen
+goal, policy reference, configuration identity, and budget. Success means the
+configured completion contract was satisfied; it does not universally mean an
+incident was resolved or a deployment succeeded.
+
+## Generic Run states
+
+| State       | Meaning                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `queued`    | Accepted but not yet driven                                                             |
+| `running`   | Runner may perform another bounded model or tool step                                   |
+| `waiting`   | Operator/reconciliation input or missing completion evidence is required                |
+| `succeeded` | The Profile's registered completion evaluator accepted durable artifacts                |
+| `failed`    | A stable reason records model, policy, persistence, validation, step, or budget failure |
+| `cancelled` | Context cancellation was persisted before another step could continue                   |
+
+The Runner restores durable calls and counters before continuing. It checks
+elapsed, model-call, tool-call, and output budgets independently. A terminal run
+is returned without reopening it.
+
+## One step at a time
+
+Each cycle prepares a Profile turn, filters tools through policy, accepts one
+model result, and either interprets a final response or executes requested tools
+sequentially. Accepted model usage is persisted before accepted history. A tool
+intent is persisted before its adapter executes. Result and artifact persistence
+forms one storage operation.
+
+Policy rejection becomes an ordered tool observation without running the adapter.
+Cancellation or elapsed exhaustion uses an uncancelled persistence context for
+the final state so the durable run does not remain falsely active.
+
+## Interrupted and unknown effects
+
+An unresolved trusted read is recorded as `interrupted`. A future model turn may
+request a new read, which receives a new invocation sequence and budget charge.
+
+An unresolved write is different. The external effect may have happened even if
+the response or process was lost. The Run enters `waiting` with
+`unknown_write_outcome`; the old invocation is not dispatched again. An operator
+or connector-specific reconciliation must establish the outcome before a later
+action is authorized.
+
+## Completion is evidence-specific
+
+A solution-delivery Profile may complete from a model-authored solution artifact.
+An action-with-verification Profile requires an observed action plus a verified
+artifact linked to that action. Pipeline dispatch alone is not pipeline success,
+and a remote branch observation alone is not deployment verification.
+
+## Incident lifecycle compatibility
+
+Incident state remains a separate application lifecycle. New incidents start
+Open; matching webhook fingerprints update the current open occurrence; explicitly
+reopening a recovered incident creates a new generation. The remediation
+coordinator owns automatic eligibility, evidence gates, diagnosis/planning states,
+checkpoint recovery, and review projection.
+
+Under `resilient_v1` execution, each active remediation run acquires a PostgreSQL
+session advisory lock to guarantee single-process execution across API replicas and
+restarts. Durable checkpoints preserve intent, candidate patches, and validation results
+so that uncompleted runs can be resumed by the background recovery worker without
+re-running from scratch. Repair actions require generation and version context to reject
+stale requests. Its review outputs do not grant merge, deployment, rollback, or recovery
+authority.

@@ -1,0 +1,355 @@
+:root {
+  --home-paper: #fafbf8;
+  --home-tint: #eff3ed;
+  --home-ink: #182a26;
+  --home-copy: #52625c;
+  --home-line: #d6ded4;
+  --home-accent: #176d52;
+  --home-soft: #e7efe3;
+}
+:root[data-theme="dark"] {
+  --home-paper: #111b19;
+  --home-tint: #17241f;
+  --home-ink: #edf3ea;
+  --home-copy: #adbbb2;
+  --home-line: #35463d;
+  --home-accent: #a3d3a8;
+  --home-soft: #22382b;
+}
+
+header.header .site-title img {
+  width: 8.125rem;
+  height: 2rem;
+  max-width: none;
+  flex-shrink: 0;
+}
+
+header.header a[href="https://github.com/Funovate/Mendry"]
+{
+  color: #24292f;
+}
+html[data-theme="dark"] header.header a[href="https://github.com/Funovate/Mendry"]
+{
+  color: #ffffff;
+}
+
+/* Let desktop search grow with its contents instead of reserving empty space. */
+@media (min-width: 50rem) {
+  site-search dialog {
+    min-height: 0;
+  }
+}
+
+@layer mendry.tokens, mendry.base;
+
+@layer mendry.tokens {
+  :root {
+    --fx-ink: #10252a;
+    --fx-heading: #1d383d;
+    --fx-text: #40575c;
+    --fx-muted: #607378;
+    --fx-canvas: #f3f6f5;
+    --fx-surface: #fcfdfc;
+    --fx-surface-muted: #eaf0ee;
+    --fx-border: #cddbd7;
+    --fx-border-strong: #9fb5b0;
+    --fx-accent: #087f70;
+    --fx-accent-hover: #05665b;
+    --fx-on-accent: #ffffff;
+    --fx-inverse-surface: #10252a;
+    --fx-on-inverse: #f2f7f5;
+    --fx-accent-soft: #dcefeb;
+    --fx-authority: #b56b32;
+    --fx-authority-soft: #f4e6d9;
+    --fx-radius-control: 4px;
+    --fx-radius-panel: 6px;
+    --intro-gutter: clamp(1.25rem, 5vw, 7.5rem);
+    --intro-max: 135rem;
+    --sl-color-accent-low: #d6ebe6;
+    --sl-color-accent: #087f70;
+    --sl-color-accent-high: #075348;
+    --sl-color-white: #10252a;
+    --sl-color-gray-1: #1d383d;
+    --sl-color-gray-2: #40575c;
+    --sl-color-gray-3: #6d8083;
+    --sl-color-gray-4: #a9bbb7;
+    --sl-color-gray-5: #d9e3e0;
+    --sl-color-gray-6: #edf2f0;
+    --sl-color-black: #ffffff;
+    --sl-font:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    --sl-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --fx-font-display:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --fx-ink: #f3f8f6;
+    --fx-heading: #e3efec;
+    --fx-text: #b9cbc7;
+    --fx-muted: #91a6a2;
+    --fx-canvas: #0f191b;
+    --fx-surface: #152527;
+    --fx-surface-muted: #1b3030;
+    --fx-border: #304847;
+    --fx-border-strong: #54716d;
+    --fx-accent: #59c8b6;
+    --fx-accent-hover: #7bd6c7;
+    --fx-on-accent: #0c2823;
+    --fx-inverse-surface: #e8f1ee;
+    --fx-on-inverse: #10252a;
+    --fx-accent-soft: #183f3b;
+    --fx-authority: #e7aa7e;
+    --fx-authority-soft: #3a2922;
+    --sl-color-accent-low: #183f3b;
+    --sl-color-accent: #59c8b6;
+    --sl-color-accent-high: #c7f0e8;
+    --sl-color-white: #f3f8f6;
+    --sl-color-gray-1: #e3efec;
+    --sl-color-gray-2: #b9cbc7;
+    --sl-color-gray-3: #91a6a2;
+    --sl-color-gray-4: #657e7a;
+    --sl-color-gray-5: #304847;
+    --sl-color-gray-6: #1b3030;
+    --sl-color-black: #0f191b;
+  }
+}
+
+@layer mendry.base {
+  :root {
+    font-variant-numeric: tabular-nums;
+  }
+  body {
+    color: var(--fx-text);
+    background: var(--fx-canvas);
+  }
+  header.header .site-title {
+    color: var(--fx-ink);
+    font-weight: 750;
+  }
+  header.header {
+    background: color-mix(in srgb, var(--fx-surface) 95%, transparent);
+    border-bottom-color: var(--fx-border);
+    backdrop-filter: blur(12px);
+  }
+  a,
+  button,
+  select {
+    border-radius: var(--fx-radius-control);
+  }
+  :focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--fx-accent) 55%, transparent);
+    outline-offset: 3px;
+  }
+}
+
+/* Shared brand tokens override Starlight's theme defaults in both modes. */
+:root,
+:root[data-theme="light"],
+:root[data-theme="dark"] {
+  --fx-ink: var(--home-ink);
+  --fx-heading: var(--home-ink);
+  --fx-text: var(--home-copy);
+  --fx-muted: var(--home-copy);
+  --fx-canvas: var(--home-paper);
+  --fx-surface: var(--home-paper);
+  --fx-surface-muted: var(--home-tint);
+  --fx-border: var(--home-line);
+  --fx-accent: var(--home-accent);
+  --fx-accent-soft: var(--home-soft);
+  --sl-color-white: var(--home-ink);
+  --sl-color-gray-1: var(--home-ink);
+  --sl-color-gray-2: var(--home-copy);
+  --sl-color-gray-3: var(--home-copy);
+  --sl-color-gray-5: var(--home-line);
+  --sl-color-gray-6: var(--home-tint);
+  --sl-color-black: var(--home-paper);
+  --sl-color-accent: var(--home-accent);
+  --sl-color-accent-high: var(--home-accent);
+  --sl-color-accent-low: var(--home-soft);
+  --sl-color-bg: var(--home-paper);
+  --sl-color-bg-nav: var(--home-paper);
+  --sl-color-bg-sidebar: var(--home-paper);
+  --sl-color-hairline: var(--home-line);
+  --sl-color-hairline-light: var(--home-line);
+  --sl-color-text: var(--home-copy);
+  --sl-color-text-accent: var(--home-accent);
+}
+
+/* Homepage shell and native Starlight controls; page composition is in homepage.css. */
+html:has(.intro-shell) {
+  --sl-color-accent: var(--home-accent);
+  --sl-color-bg-nav: var(--home-paper);
+  --sl-color-gray-1: var(--home-ink);
+  accent-color: var(--home-accent);
+}
+
+html:not([data-has-sidebar]) {
+  --sl-content-width: var(--intro-max);
+}
+html:has(.intro-shell) .content-panel > .sl-container {
+  width: 100%;
+  max-width: none;
+}
+html:not([data-has-sidebar]) main {
+  padding: 0;
+}
+html:not([data-has-sidebar]) .content-panel {
+  padding: 0;
+  border: 0;
+}
+html:not([data-has-sidebar]) main > .content-panel:has(.sl-container:empty) {
+  display: none;
+}
+.skip-navigation {
+  display: contents;
+}
+/* Documentation uses the same paper, restrained type and fine rules as home. */
+html[data-has-sidebar] {
+  --sl-content-width: 48rem;
+  --sl-sidebar-width: 17rem;
+  --sl-text-h1: clamp(2rem, 4vw, 3rem);
+  --sl-text-h2: 1.65rem;
+  --sl-text-h3: 1.2rem;
+}
+html[data-has-sidebar] .sidebar-pane {
+  border-inline-end: 1px solid var(--home-line);
+}
+html[data-has-sidebar] .sidebar-content a {
+  padding-block: 0.45rem;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+html[data-has-sidebar] .sidebar-content .large {
+  color: var(--home-ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+html[data-has-sidebar] .sidebar-content a:hover {
+  color: var(--home-accent);
+  background: var(--home-tint);
+}
+html[data-has-sidebar] .sidebar-content a[aria-current="page"] {
+  color: var(--home-accent);
+  background: var(--home-soft);
+  font-weight: 600;
+}
+html[data-has-sidebar] .content-panel {
+  padding-block: 2rem;
+}
+html[data-has-sidebar] .content-panel + .content-panel {
+  border-top: 1px solid var(--home-line);
+}
+html[data-has-sidebar] h1 {
+  color: var(--home-ink);
+  font-weight: 570;
+  letter-spacing: -0.045em;
+  line-height: 1.2;
+}
+html[data-has-sidebar] .sl-markdown-content {
+  font-size: 0.9375rem;
+  line-height: 1.85;
+}
+html[data-has-sidebar] .sl-markdown-content :is(h2, h3, h4) {
+  color: var(--home-ink);
+  font-weight: 580;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
+}
+html[data-has-sidebar] .sl-markdown-content strong {
+  color: var(--home-ink);
+  font-weight: 600;
+}
+html[data-has-sidebar] .sl-markdown-content a {
+  text-underline-offset: 0.2em;
+}
+html[data-has-sidebar] .sl-markdown-content :not(pre) > code {
+  border: 1px solid var(--home-line);
+  border-radius: 4px;
+  background: var(--home-tint);
+  color: var(--home-ink);
+  padding: 0.1em 0.3em;
+  font-size: 0.85em;
+}
+@media (max-width: 49.99rem) {
+  html[data-has-sidebar] .sl-markdown-content pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+html[data-has-sidebar] .sl-markdown-content th {
+  color: var(--home-ink);
+  background: var(--home-tint);
+  font-weight: 600;
+}
+html[data-has-sidebar] .sl-markdown-content :is(th, td) {
+  border-color: var(--home-line);
+  padding: 0.8rem 1rem;
+  font-size: 0.875rem;
+}
+html[data-has-sidebar] .sl-markdown-content blockquote {
+  border-color: var(--home-accent);
+  background: var(--home-tint);
+  padding: 1rem 1.25rem;
+}
+html[data-has-sidebar] .pagination-links a {
+  border: 1px solid var(--home-line);
+  border-radius: 5px;
+  background: var(--home-paper);
+  box-shadow: none;
+}
+html[data-has-sidebar] .pagination-links a:hover {
+  border-color: var(--home-accent);
+  background: var(--home-tint);
+}
+html[data-has-sidebar] .pagination-links .link-title {
+  color: var(--home-ink);
+  font-size: 1rem;
+  font-weight: 550;
+}
+html[data-has-sidebar] starlight-toc a {
+  font-size: 0.8rem;
+}
+html[data-has-sidebar] starlight-toc a[aria-current="true"] {
+  color: var(--home-accent);
+  font-weight: 600;
+}
+@media (min-width: 72rem) {
+  html[data-has-sidebar][data-has-toc] .right-sidebar-container {
+    flex: 0 0 14rem;
+    width: 14rem;
+  }
+  html[data-has-sidebar][data-has-toc] .right-sidebar {
+    width: 14rem;
+  }
+  html[data-has-sidebar][data-has-toc] .main-pane {
+    --sl-content-margin-inline: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+  }
+}
+
+@media (min-width: 50rem) {
+  html[data-has-sidebar] main > .content-panel:first-child {
+    padding-block: 3.5rem 2rem;
+  }
+}
+@media (max-width: 49.99rem) {
+  html[data-has-sidebar] .content-panel {
+    padding-block: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

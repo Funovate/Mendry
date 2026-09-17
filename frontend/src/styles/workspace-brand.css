@@ -1,0 +1,1043 @@
+/* ==========================================================================
+   Mendry Workspace Brand Styles
+   Aligned with Mendry Logo & Brand Guide (Ink #17281F, Cream #F3F0E7, Amber #C1893E)
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Root Variables & Canvas Overrides
+   -------------------------------------------------------------------------- */
+.app-shell,
+.project-directory {
+  --color-canvas: #fafbf8;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f6f8f6;
+  --color-border: #e2e7e3;
+  --color-border-soft: #edf2ee;
+  --color-accent: #17281f;
+  --color-accent-hover: #243a2e;
+  --color-accent-soft: #eaf2ee;
+  --color-heading: #17281f;
+  --color-ink: #17281f;
+  --color-text: #3e5046;
+  --color-muted: #5c6f65;
+  --color-subtle: #788a80;
+  --color-amber: #c1893e;
+  --color-amber-soft: #fcf6ec;
+  --color-amber-glow: rgb(193 137 62 / 24%);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/* --------------------------------------------------------------------------
+   AppShell Layout & Sidebar
+   -------------------------------------------------------------------------- */
+.app-shell {
+  min-height: 100vh;
+  min-height: 100svh;
+  background: var(--color-canvas);
+}
+
+.app-shell .sidebar {
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
+  height: 100vh;
+  padding: 24px 14px 18px;
+  background: #ffffff;
+  border-right: 1px solid #e2e7e3;
+  box-shadow: 1px 0 8px rgb(23 40 31 / 3%);
+}
+
+/* Top hairline amber kintsugi accent on sidebar */
+.app-shell .sidebar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.app-shell .brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 6px 20px;
+}
+
+.brand-header-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-shell .brand-logo {
+  width: 128px;
+  height: auto;
+  object-fit: contain;
+}
+
+
+/* --------------------------------------------------------------------------
+   Project Switcher
+   -------------------------------------------------------------------------- */
+.app-shell .project-switcher-row,
+.app-shell .project-switcher-edit {
+  min-height: 48px;
+  padding: 6px 8px 6px 12px;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 9px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 4%);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.app-shell .project-switcher-row:hover {
+  border-color: #17281f;
+  background: #f8faf9;
+  box-shadow: 0 2px 8px rgb(23 40 31 / 6%);
+}
+
+.app-shell .project-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #17281f;
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-switcher-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.project-switcher-eyebrow {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7b8d83;
+}
+
+.app-shell .project-switcher strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #17281f;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .project-switcher svg {
+  color: #7b8d83;
+  flex-shrink: 0;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.app-shell .project-switcher:hover svg {
+  color: #17281f;
+}
+
+.app-shell .project-switcher-row .icon-button,
+.app-shell .project-switcher-edit .icon-button {
+  width: 28px;
+  height: 28px;
+  color: #7b8d83;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: all 160ms ease;
+}
+
+.app-shell .project-switcher-row .icon-button:hover,
+.app-shell .project-switcher-edit .icon-button:hover:not(:disabled) {
+  color: #17281f;
+  background: #eaf2ee;
+  border-color: #dce3de;
+}
+
+.app-shell .project-switcher-edit input {
+  height: 28px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #17281f;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar Navigation
+   -------------------------------------------------------------------------- */
+.app-shell .sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 22px;
+}
+
+.app-shell .sidebar nav a {
+  position: relative;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: #4b5e54;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 160ms ease;
+}
+
+.app-shell .sidebar nav a svg {
+  color: #7b8d83;
+  flex-shrink: 0;
+  transition: color 160ms ease;
+}
+
+.app-shell .sidebar nav a:hover {
+  color: #17281f;
+  background: #eaf2ee;
+  border-color: #dce3de;
+}
+
+.app-shell .sidebar nav a:hover svg {
+  color: #17281f;
+}
+
+.app-shell .sidebar nav a.nav-active {
+  color: #ffffff;
+  background: #17281f;
+  border: 1px solid #17281f;
+  box-shadow: 0 3px 10px rgb(23 40 31 / 14%);
+  font-weight: 600;
+}
+
+.app-shell .sidebar nav a.nav-active svg {
+  color: #dfb579;
+}
+
+
+/* --------------------------------------------------------------------------
+   Sidebar Foot (User & Operational Beacon)
+   -------------------------------------------------------------------------- */
+.app-shell .sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: auto;
+  padding: 16px 4px 2px;
+  border-top: 1px solid #e2e7e3;
+}
+
+.sidebar-foot-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.app-shell .user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+}
+
+.app-shell .avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #17281f;
+  background: #eaf2ee;
+  border: 1.5px solid #dce3de;
+  border-radius: 50%;
+}
+
+.user-card-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-shell .user-card strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #17281f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-card-role {
+  font-size: 11px;
+  color: #728379;
+}
+
+.app-shell .sidebar-foot > .sidebar-foot-user-row .icon-button,
+.app-shell .sidebar-foot > .icon-button {
+  width: 32px;
+  height: 32px;
+  color: #728379;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: all 160ms ease;
+}
+
+.app-shell .sidebar-foot > .sidebar-foot-user-row .icon-button:hover,
+.app-shell .sidebar-foot > .icon-button:hover {
+  color: #992c3a;
+  background: #faeaed;
+  border-color: #f1c5cc;
+}
+
+
+/* --------------------------------------------------------------------------
+   Topbar
+   -------------------------------------------------------------------------- */
+.app-shell .topbar {
+  background: #ffffff;
+  border-bottom: 1px solid #e2e7e3;
+}
+
+/* --------------------------------------------------------------------------
+   Incidents Page Layout
+   -------------------------------------------------------------------------- */
+.app-shell .incidents-layout {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  background: var(--color-canvas);
+}
+
+.app-shell .incident-list-pane {
+  background: var(--color-canvas);
+  border-right: 1px solid #e2e7e3;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell .list-header {
+  padding: 24px 20px 14px;
+}
+
+.app-shell .list-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  color: #17281f;
+}
+
+.incident-count-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: #17281f;
+  background: #f0f4f1;
+  border: 1px solid #dce2de;
+  border-radius: 999px;
+}
+
+.app-shell .filter-row {
+  padding: 0 20px 16px;
+}
+
+.app-shell .filter-row select {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #17281f;
+  background: #ffffff;
+  border: 1px solid #d4ded6;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.app-shell .filter-row select:focus-visible {
+  border-color: #17281f;
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
+}
+
+.app-shell .incident-list {
+  padding: 0 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-shell .incident-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.app-shell .incident-row:hover {
+  background: #f6f9f7;
+  border-color: #b8c8be;
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 18px rgb(23 40 31 / 7%);
+}
+
+.app-shell .incident-row.selected {
+  background: #eaf2ee;
+  border-color: #17281f;
+  box-shadow: inset 3px 0 0 #17281f, 0 4px 14px rgb(23 40 31 / 7%);
+}
+
+.app-shell .row-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-shell .incident-id {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #576b60;
+  letter-spacing: 0.02em;
+}
+
+.app-shell .time {
+  font-size: 11.5px;
+  color: #7d8f85;
+}
+
+.app-shell .incident-row > strong {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #17281f;
+  letter-spacing: -0.015em;
+}
+
+.app-shell .row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #728379;
+}
+
+/* --------------------------------------------------------------------------
+   Status Pills Refinement
+   -------------------------------------------------------------------------- */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+.status-pill.open {
+  color: #a26922;
+  background: #faf0de;
+  border: 1px solid #edd4b2;
+}
+
+.status-pill.recovered {
+  color: #1b6348;
+  background: #e5f1ea;
+  border: 1px solid #c8e2d4;
+}
+
+.status-pill.closed {
+  color: #5d6f66;
+  background: #eceae3;
+  border: 1px solid #ddd9cc;
+}
+
+.status-pill.p2 {
+  color: #b06018;
+  background: #fdf0e6;
+  border: 1px solid #f6d2b8;
+}
+
+.status-pill.info {
+  color: #3b574a;
+  background: #e8efe9;
+  border: 1px solid #cedecf;
+}
+
+.app-shell .muted {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7a8a81;
+  background: #eceae3;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Welcome & Incident Placeholder (The Right Pane Landing State)
+   -------------------------------------------------------------------------- */
+.app-shell .empty-detail.incident-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 4vw, 48px);
+  background: var(--color-canvas);
+  min-height: 100vh;
+}
+
+.incident-welcome-card {
+  position: relative;
+  width: min(100%, 640px);
+  padding: clamp(28px, 4vw, 44px);
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 14px;
+  box-shadow: 0 16px 44px rgb(23 40 31 / 5%), 0 2px 8px rgb(23 40 31 / 2%);
+  text-align: center;
+}
+
+/* Amber hairline kintsugi stitch at the top of welcome card */
+.incident-welcome-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 28px;
+  right: 28px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+.welcome-beacon-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #4b5e54;
+  background: #f0f4f1;
+  border: 1px solid #dce2de;
+  border-radius: 999px;
+  margin-bottom: 22px;
+}
+
+.welcome-art {
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+}
+
+.welcome-mark-box {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #17281f;
+  border: 1px solid rgb(193 137 62 / 24%);
+  box-shadow: 0 2px 8px rgb(23 40 31 / 8%);
+}
+
+.welcome-mark-box img {
+  width: 32px;
+  height: 32px;
+}
+
+.incident-welcome-card h2 {
+  margin: 0 0 8px;
+  font-size: clamp(22px, 2.4vw, 28px);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  color: #17281f;
+}
+
+.welcome-subtitle {
+  max-width: 480px;
+  margin: 0 auto 26px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #5c6f65;
+}
+
+.welcome-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  text-align: left;
+}
+
+.welcome-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 9px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
+}
+
+.welcome-stat-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #7b8d83;
+}
+
+.welcome-stat-value {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #17281f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-stat-meta {
+  font-size: 11px;
+  color: #5c6f65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Incident Detail View
+   -------------------------------------------------------------------------- */
+.app-shell .detail {
+  background: var(--color-canvas);
+}
+
+.app-shell .detail-header {
+  padding: 24px clamp(20px, 3vw, 40px) 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e7e3;
+}
+
+.app-shell .detail-heading h1 {
+  font-size: clamp(22px, 2.2vw, 26px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  color: #17281f;
+}
+
+.app-shell .incident-lifecycle select {
+  min-height: 38px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #17281f;
+  background: #ffffff;
+  border: 1px solid #d4ded6;
+  border-radius: 8px;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.app-shell .incident-lifecycle select:focus-visible {
+  border-color: #17281f;
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
+}
+
+
+/* --------------------------------------------------------------------------
+   Project Directory Page (/projects, /projects/new)
+   -------------------------------------------------------------------------- */
+.project-directory {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 4vw, 56px) 20px;
+  background: var(--color-canvas);
+}
+
+.project-directory-panel {
+  position: relative;
+  width: min(100%, 540px);
+  padding: clamp(28px, 4vw, 40px);
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgb(23 40 31 / 5%), 0 2px 8px rgb(23 40 31 / 2%);
+}
+
+/* Amber hairline kintsugi stitch at the top of the directory panel */
+.project-directory-panel::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 28px;
+  right: 28px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+.directory-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.directory-logo {
+  width: 140px;
+  height: auto;
+  margin: 0;
+}
+
+
+.project-directory-panel header {
+  margin-bottom: 24px;
+}
+
+.project-directory-panel h1 {
+  margin: 0 0 6px;
+  font-size: clamp(24px, 2.5vw, 30px);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  color: #17281f;
+}
+
+.project-directory-subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  color: #5c6f65;
+}
+
+.project-directory-panel .project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+}
+
+.project-directory-panel .project-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 9px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
+  text-decoration: none;
+  color: #17281f;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.project-directory-panel .project-row:hover {
+  background: #ffffff;
+  border-color: #17281f;
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 18px rgb(23 40 31 / 7%);
+}
+
+.project-directory-panel .project-initial {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #17281f;
+  border: 1px solid rgb(193 137 62 / 36%);
+  box-shadow: 0 2px 6px rgb(23 40 31 / 14%);
+  flex-shrink: 0;
+}
+
+.project-row-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-directory-panel .project-row strong {
+  font-size: 14.5px;
+  font-weight: 650;
+  color: #17281f;
+  letter-spacing: -0.01em;
+}
+
+.project-directory-panel .project-row small {
+  margin-top: 2px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: #5c6f65;
+}
+
+.project-directory-panel .project-row svg {
+  color: #7b8d83;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.project-directory-panel .project-row:hover svg {
+  color: #17281f;
+  transform: translateX(3px);
+}
+
+.project-directory-panel .create-project-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 18px;
+  margin-top: 6px;
+  background: #f8faf9;
+  border: 1.5px dashed #cfd7d1;
+  border-radius: 9px;
+  color: #17281f;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.project-directory-panel .create-project-row:hover {
+  background: #eaf2ee;
+  border-color: #17281f;
+  border-style: solid;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgb(23 40 31 / 8%);
+}
+
+.create-project-plus {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #eaf2ee;
+  color: #17281f;
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.project-directory-panel .create-project-row strong {
+  font-size: 14px;
+  font-weight: 650;
+  color: #17281f;
+}
+
+.project-directory-panel .create-project-row svg {
+  margin-left: auto;
+  color: #7b8d83;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.project-directory-panel .create-project-row:hover svg {
+  color: #17281f;
+  transform: translateX(3px);
+}
+
+/* --------------------------------------------------------------------------
+   Create Project Form Styling
+   -------------------------------------------------------------------------- */
+.project-directory-panel .create-project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.project-directory-panel .create-project-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #3e5046;
+}
+
+.project-directory-panel .create-project-form input,
+.project-directory-panel .create-project-form textarea {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: #17281f;
+  background: #ffffff;
+  border: 1px solid #d4ded6;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.project-directory-panel .create-project-form input:focus-visible,
+.project-directory-panel .create-project-form textarea:focus-visible {
+  border-color: #17281f;
+  box-shadow: 0 0 0 3px rgb(23 40 31 / 14%);
+}
+
+.project-directory-panel .create-project-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.project-directory-panel .create-project-form footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 18px;
+  border-top: 1px solid #edf2ee;
+}
+
+/* --------------------------------------------------------------------------
+   Brand Button Styles
+   -------------------------------------------------------------------------- */
+.primary-button {
+  min-height: 42px;
+  padding: 0 18px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #17281f;
+  color: #ffffff;
+  border: 1px solid rgb(193 137 62 / 28%);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 3px 12px rgb(23 40 31 / 14%);
+  cursor: pointer;
+  transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.primary-button:hover:not(:disabled),
+.primary-button:focus-visible:not(:disabled) {
+  background: #243a2e;
+  border-color: rgb(193 137 62 / 60%);
+  transform: translateY(-1.5px);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 6px 18px rgb(23 40 31 / 20%), 0 0 0 2px rgb(193 137 62 / 16%);
+}
+
+.primary-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.988);
+}
+
+.primary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.secondary-button {
+  min-height: 42px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #ffffff;
+  color: #3e5046;
+  border: 1px solid #dce2de;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #eaf2ee;
+  color: #17281f;
+  border-color: #17281f;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Adjustments
+   -------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .app-shell .incidents-layout {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell .incidents-layout {
+    display: block;
+  }
+  .app-shell .incident-list-pane.with-detail {
+    display: none;
+  }
+  .app-shell .incident-placeholder {
+    display: none;
+  }
+  .welcome-stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .welcome-steps-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .welcome-step-divider {
+    display: none;
+  }
+}

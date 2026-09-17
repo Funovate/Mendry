@@ -1,0 +1,41 @@
+---
+title: Mendry 操作文档
+description: 接入生产告警，结合日志与代码排查问题，并审查候选解决方案。
+availability: available
+translationKey: docs
+sources:
+  - backend/internal/modules/agentcore/domain/ports.go
+  - backend/internal/modules/agentcore/domain/types.go
+  - backend/internal/modules/agentcore/application/runner.go
+  - backend/README.md
+---
+
+**可用性：available**
+
+Mendry 面向生产问题的监控、排查与解决：接入已有监控的告警信号，结合日志与代码调查原因，并在自己的环境中审查候选解决方案。合并与部署仍由人决定。
+
+从下方的源码评估流程开始。受支持的能力、安装就绪状态与仍在推进的工作，请查看[产品状态](/zh-cn/docs/project/status/)。
+
+## 排查第一个生产问题
+
+- 按[入门流程](/zh-cn/docs/get-started/)准备环境并配置项目。
+- 通过[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)接入受支持的监控信号，或了解[腾讯云 CLS](/zh-cn/docs/guides/tencent-cls/)。
+- 查看[首个事故](/zh-cn/docs/get-started/first-incident/)，检查证据、诊断结果与建议的处理方式。
+
+## 查看现有功能
+
+- 通过[功能导航](/zh-cn/docs/reference/features/)查找控制台模块、配置边界与详细指南。
+- 按[日常操作流程](/zh-cn/docs/guides/operator-workflow/)开展调查并审查候选修复。
+- 使用预览能力或评估生产上线前，先确认[产品状态](/zh-cn/docs/project/status/)。
+
+## 了解底层架构
+
+Agent Harness 是底层执行架构，其扩展契约服务于调查系统的开发。操作人员的主要使用流程仍围绕生产问题展开。共享 Foundation 已实现并通过聚焦测试，完整事故循环迁移仍按阶段推进。
+
+- 阅读[架构](/zh-cn/docs/concepts/architecture/)、[生命周期](/zh-cn/docs/concepts/lifecycle/)与[安全边界](/zh-cn/docs/concepts/security/)。
+- 需要了解执行与扩展契约时，阅读 [Agent Harness](/zh-cn/docs/concepts/agent-harness/) 和[扩展 Harness](/zh-cn/docs/guides/extending-harness/)。
+- [本地流程状态](/zh-cn/docs/get-started/local-harness/)说明独立的开发路径，其前提条件与就绪状态不同于事故应用。
+
+## 文档原则
+
+只有当前代码、测试或经过验证的 release artifact 支持时，文档才会给出命令。Local 源码树不等同于已验证的 onboarding release；生产安装页也会保持阻塞，直到安装制品与支持边界通过验证。

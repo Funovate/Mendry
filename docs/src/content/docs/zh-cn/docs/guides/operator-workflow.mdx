@@ -1,0 +1,71 @@
+---
+title: 日常操作流程
+description: 配置项目、查看信号与事故，并审查分析结果或受策略约束的修复。
+availability: preview
+translationKey: operator-workflow
+sources:
+  - frontend/src/features/configuration/ConfigurationEditorPage.tsx
+  - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+  - frontend/src/features/observations/ObservationsPage.tsx
+  - frontend/src/features/board/PipelinePage.tsx
+  - frontend/src/features/incidents/IncidentsPage.tsx
+  - frontend/src/features/incidents/RemediationPanel.tsx
+  - backend/docs/automatic-hotfix.md
+  - backend/internal/modules/remediation/adapter/http/handler.go
+---
+
+**可用性：preview**
+
+完成[应用初始化](/zh-cn/docs/get-started/bootstrap/)和[首个项目配置](/zh-cn/docs/get-started/first-project/)后，按本页开展操作。下文保留当前英文控制台的按钮名称。本流程用于源码评估，不是生产安装方案，也不保证自动恢复服务。
+
+## 准备项目配置
+
+打开 `/projects/:key/configuration/edit`，依次检查 Git、Source、Trigger、LLM、Automatic hotfix 和 Review。
+
+1. 配置 Git 凭据，并确认能够读取部署基线。
+2. 配置证据 Source。SSH Docker 模式需要发现容器并选择目标容器；仅填写连接配置不代表已经选定工作负载。
+3. 配置 Trigger 与凭据。签名与凭据轮换见[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)。
+4. 选择 LLM 模型，并完成成功的聊天测试。
+5. 允许写入仓库前，检查 Automatic hotfix 策略。配置向导支持自动扫描仓库代码结构并一键配置 Go 或 npm 的本地测试预验证。
+6. 在 Review 中检查配置，并确认每个配置步骤都已保存。
+
+各配置步骤独立保存。切换步骤或选择 Done 不能代替保存修改。保存或连接测试失败时，应先处理问题，再将新配置用于事故调查。
+
+## 查看输入信号
+
+打开 `/projects/:key/observations` 的 Event stream，检查 message、service、source、level 与时间戳，通过 Refresh 获取更新。搜索与等级筛选仅作用于当前页的 25 条记录；查看更早信号时需要翻页，数量也只反映当前加载页，而非全部历史。
+
+首次验证接入时，按[首个事故](/zh-cn/docs/get-started/first-incident/)操作。信号被接收与调查完成是不同的结果。
+
+## 分流事故
+
+通过 Pipeline 查看当前 Open 工作负载。它最多加载 100 条 Open 事故，每 25 秒刷新。按阶段、优先级或可操作性筛选，然后进入事故查看原始证据。需要浏览更广的列表时，使用每批加载 25 条的 Incidents。
+
+不要根据 Pipeline 阶段或修复结果推断服务已经恢复。Open、Recovered 和 Closed 是人工控制的事故状态，应在检查真实服务状态后修改。
+
+## 审查调查与操作
+
+进入 `/projects/:key/incidents/:id`，检查诊断、证据引用、候选计划、候选 Diff 与尝试历史。展开 Diff 文件比较 Original 和 Changed；无法解析的 Diff 会展示原始输出。存在验证或交付记录时，应核对记录，而不是假定候选修改已经执行或测试。
+
+| 操作                         | 含义                                     | 使用前检查                                                       |
+| ---------------------------- | ---------------------------------------- | ---------------------------------------------------------------- |
+| Start remediation            | 在界面提供此操作时启动事故的修复工作流。 | 确认项目配置与证据适合调查；策略仍可能是仅分析。                 |
+| Continue analysis            | 服务端允许继续时，请求进一步分析。       | 阅读当前结果与恢复原因；当前状态下可能不提供该操作。             |
+| Repair with current settings | 按项目当前修复配置请求修复。             | 检查 Automatic hotfix 与写入权限，包括上次分析后发生的配置变更。 |
+
+Continue 和 Repair 请求携带 run/version/generation 上下文，用于拒绝过期操作。其他操作改变事故后，应重新加载并检查最新状态再尝试。遇到活动运行或冲突时，不要盲目重复提交可能产生外部效果的请求。`remediation_policy_unavailable` 表示所需修复策略未启用，按钮本身不会授予执行权限。
+
+## 审查修复策略
+
+默认策略为 `analysis_only`。Draft PR 选项使用 `auto_hotfix`，需要适当的 Git 写凭据与仓库平台 API 配置。检查允许修改的路径与规模上限：控制台接受 1–30 个文件和 1–5000 行变更。
+
+选择发布前在本地验证，还是依赖仓库 CI。本地验证需要完整的镜像 SHA256、工作目录、命令 ID 与参数数组（`argv`）。这些属于可信配置，不应从输入告警载荷接受执行指令。详细配置与沙箱隔离要求见[自动修复与本地预验证](/zh-cn/docs/guides/automatic-hotfix/)。
+
+AWS 来源事故保持仅分析。对符合条件的来源，Hotfix delivery 可以创建分支和草稿 Pull Request。核对实际交付结果与 CI 结果；合并、部署、回滚与服务恢复仍由人决定。
+
+## 确认恢复与关闭
+
+独立检查服务后，按实际情况将事故设为 Recovered 或 Closed。保留证据、尝试记录与交付引用，供后续审查。模型成功响应、候选 Diff、草稿 PR 或本地测试都不能单独证明生产服务恢复。
+
+操作失败时，保留错误信息与当前运行状态，再查阅[故障排查](/zh-cn/docs/guides/troubleshooting/)。功能范围见[功能导航](/zh-cn/docs/reference/features/)，就绪情况见[产品状态](/zh-cn/docs/project/status/)。

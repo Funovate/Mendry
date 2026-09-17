@@ -1,0 +1,22 @@
+---
+title: 单用户认证
+description: 一个登录账号管理全部项目，保留密码验证和 Redis Session。
+availability: available
+translationKey: roles
+sources:
+  - backend/internal/modules/auth/application/service.go
+  - backend/internal/commands/migrate/migrations/000020_single_user.up.sql
+  - backend/README.md
+---
+
+**可用性：available**
+
+事故应用永久采用单用户模式。通过 `bootstrap-admin` 创建唯一登录账号，使用用户名和密码登录。认证保留 bcrypt 密码验证及可撤销的 Redis Session。
+
+登录后可创建和管理所有项目、修改配置与凭据、更新事故状态，以及启动或继续 remediation。项目仍隔离各自的配置和业务数据。系统不再提供系统角色、项目角色、成员关系、用户创建 API 或应用审计事件流。
+
+数据库唯一索引保证最多存在一个账号，包括并发执行 bootstrap 的情况。相同用户名重复 bootstrap 不覆盖密码；不同用户名不能创建第二个账号。
+
+迁移 `000020` 删除成员表、审计表和用户角色列。如果已有多个账号，迁移会拒绝执行，需要先明确保留哪个账号。已有单账号的密码保持不变。
+
+Harness 的工具执行继续受可信工具注册和 `Policy` 约束。数据源能力与工具执行策略描述工具可以执行什么，与登录账号无关。
