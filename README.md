@@ -45,31 +45,28 @@ and recovery decisions.
 
 ## How it works
 
-```text
-Production signal
-       |
-       v
-Observation ---> Incident ---> Evidence collection
-                                      |
-                                      v
-                             Diagnosis + proposal
-                                      |
-                     +----------------+----------------+
-                     |                                 |
-                     v                                 v
-        [Conservative Mode]                   [Enhanced Mode]
-         Constrained Patch                     Constrained Patch
-                 |                                     |
-                 |                             Isolated Sandbox
-                 |                           Pre-validation (Docker)
-                 |                                     |
-                 +----------------+--------------------+
-                                  |
-                                  v
-                        Draft PR/MR Publication
-                                  |
-                                  v
-                             Human review
+```mermaid
+flowchart TD
+    Signal(["Production signal"]) --> Obs["Observation"]
+    Obs --> Inc["Incident"]
+    Inc --> Evid["Evidence collection"]
+    Evid --> Diag["Diagnosis + proposal"]
+
+    subgraph Conservative ["Conservative Mode"]
+        ConsPatch["Constrained Patch"]
+    end
+
+    subgraph Enhanced ["Enhanced Mode"]
+        EnhPatch["Constrained Patch"] --> Sandbox["Isolated Sandbox<br/>Pre-validation (Docker)"]
+    end
+
+    Diag --> ConsPatch
+    Diag --> EnhPatch
+
+    ConsPatch --> Pub["Draft PR/MR Publication"]
+    Sandbox --> Pub
+
+    Pub --> Review(["Human review"])
 ```
 
 The current incident application accepts project-scoped observations and signed
