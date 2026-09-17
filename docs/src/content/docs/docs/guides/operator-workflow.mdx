@@ -1,0 +1,108 @@
+---
+title: Operator workflow
+description: Configure a project, inspect signals and incidents, and review analysis or policy-controlled repair.
+availability: preview
+translationKey: operator-workflow
+sources:
+  - frontend/src/features/configuration/ConfigurationEditorPage.tsx
+  - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+  - frontend/src/features/observations/ObservationsPage.tsx
+  - frontend/src/features/board/PipelinePage.tsx
+  - frontend/src/features/incidents/IncidentsPage.tsx
+  - frontend/src/features/incidents/RemediationPanel.tsx
+  - backend/docs/automatic-hotfix.md
+  - backend/internal/modules/remediation/adapter/http/handler.go
+---
+
+**Availability: preview**
+
+Use this workflow after [bootstrapping the application](/docs/get-started/bootstrap/)
+and creating a [first project](/docs/get-started/first-project/). UI labels below
+match the current English console. This is a source-evaluation workflow, not a
+production installation or automatic recovery guarantee.
+
+## Prepare project configuration
+
+Open `/projects/:key/configuration/edit` and work through Git, Source, Trigger,
+LLM, Automatic hotfix, and Review.
+
+1. Configure Git credentials and confirm the deployment baseline can be read.
+2. Configure the evidence Source. In SSH Docker mode, discover containers and select the intended container; connection settings alone do not select a workload.
+3. Configure the Trigger and its credentials. Use the [signed webhook guide](/docs/guides/signed-webhooks/) for signing and credential rotation.
+4. Select the LLM model and complete a successful chat test.
+5. Review Automatic hotfix policy before permitting repository writes. The setup wizard can automatically inspect project structure for Go or npm test runners and enable local pre-validation.
+6. Inspect Review and confirm each configuration step was saved.
+
+Each configuration step saves independently. Navigating to another step or
+selecting Done is not a substitute for saving edits. Resolve a failed save or
+connection test before using the new configuration for an incident.
+
+## Inspect incoming signals
+
+Open Event stream at `/projects/:key/observations`. Check message, service,
+source, level, and timestamps, then use Refresh to fetch updates. Search and
+level filters apply only to the current page of 25 records. Move between pages
+to inspect older signals; counts reflect the loaded page, not the entire history.
+
+For initial integration validation, follow [first incident](/docs/get-started/first-incident/).
+An accepted signal and a completed investigation are separate outcomes.
+
+## Triage incidents
+
+Use Pipeline for the current Open workload. It loads at most 100 Open incidents
+and refreshes every 25 seconds. Filter by stage, priority, or actionability, then
+open the incident to inspect the underlying evidence. Use Incidents for the
+broader list, loaded in batches of 25.
+
+Do not infer recovery from a Pipeline stage or a repair outcome. Open, Recovered,
+and Closed are incident states controlled manually after checking the real
+service condition.
+
+## Review investigation and actions
+
+Open `/projects/:key/incidents/:id` and inspect diagnosis, evidence citations,
+proposed plan, suggested diff, and attempt history. Expand diff files to compare
+Original and Changed; unparseable diffs are shown as raw output. Check validation
+and delivery records when present rather than assuming the proposed change was
+executed or tested.
+
+| Action                       | Meaning                                                              | Before using it                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Start remediation            | Start the incident's remediation workflow when offered.              | Confirm evidence and project configuration are appropriate. The policy may remain analysis-only.             |
+| Continue analysis            | Request further analysis when continuation is allowed by the server. | Read the current result and recovery reason; the action may be unavailable for the current state.            |
+| Repair with current settings | Request repair using the project's current repair settings.          | Review Automatic hotfix configuration and write authority, including any changes since the earlier analysis. |
+
+Continue and Repair requests carry run/version/generation context to reject
+stale actions. If another operation changes the incident, reload and inspect the
+latest state before retrying. An active run or a conflict is not a reason to
+blindly resubmit an effectful request. `remediation_policy_unavailable` means the
+required repair policy is not enabled; do not assume the button grants authority.
+
+## Review repair policy
+
+The default is `analysis_only`. The Draft PR option uses `auto_hotfix` and needs
+appropriate Git write credentials and repository-platform API configuration.
+Review allowed paths and size limits: the console accepts 1-30 files and 1-5000
+changed lines.
+
+Choose whether validation runs locally before publication or relies on repository
+CI. Local validation requires an immutable image SHA256, working directory, and
+command IDs with argument vectors (`argv`). These are trusted configuration,
+not instructions to accept from incoming alert payloads. See the
+[automatic hotfix guide](/docs/guides/automatic-hotfix/) for complete setup and container sandbox details.
+
+AWS-origin incidents remain analysis-only. For eligible sources, hotfix delivery
+may create a branch and draft pull request. Review the actual delivery result and
+CI outcome. Merge, deployment, rollback, and service recovery remain human decisions.
+
+## Confirm recovery and close
+
+After independently checking the service, update the incident to Recovered or
+Closed as appropriate. Preserve the evidence, attempts, and delivery references
+for review. A successful model response, suggested diff, draft PR, or local test
+alone is not proof that production recovered.
+
+When an action fails, keep its error and current run state, then follow
+[troubleshooting](/docs/guides/troubleshooting/). Check [feature map](/docs/reference/features/)
+for scope and [product status](/docs/project/status/) for readiness.

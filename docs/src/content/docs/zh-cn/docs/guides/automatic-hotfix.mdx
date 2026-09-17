@@ -1,0 +1,101 @@
+---
+title: 自动修复与本地预验证
+description: 了解受策略约束的事故自动修复流程、可选的容器化本地预验证与草稿 Pull Request 交付机制。
+availability: preview
+translationKey: automatic-hotfix
+sources:
+  - backend/docs/automatic-hotfix.md
+  - backend/docs/remediation-recovery.md
+  - backend/internal/modules/projects/application/hotfix_setup.go
+  - backend/internal/modules/remediation/adapter/runner/docker.go
+  - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+---
+
+**Availability: preview**
+
+Mendry 的自动 Hotfix 修复流水线将生产故障诊断与受约束的源码修复串联起来。系统能够生成符合变更策略的候选补丁，可选在无网络的容器环境中执行本地测试预验证，并将修复结果推送到评审分支并自动创建草稿 Pull Request / Merge Request（Draft PR/MR）。
+
+仓库 CI 与工程研发团队仍是代码合并与验证的最终权威。Mendry 严格遵循“控制行动权限”原则，不会未经人工审批静默合并代码或直接触发生产部署。
+
+```text
+诊断 -> 受限补丁 -> 容器预验证（可选） -> Draft PR/MR -> 仓库 CI -> 人工审查合并 -> 用户 CD
+```
+
+## 修复执行模式
+
+在 **项目配置 -> Automatic hotfix** 中，可在两种执行模式间切换：
+
+| 模式            | 行为                                                                                   | 依赖要求                                                                     |
+| --------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `analysis_only` | 仅在控制台产出故障诊断、证据引用、推荐方案与候选 Diff 供人工审阅。                     | Git 基线与证据源的只读权限。系统默认模式。                                   |
+| `auto_hotfix`   | 在严格变更策略约束下生成修复补丁，可选运行本地预验证，推送评审分支并创建 Draft PR/MR。 | Git 写凭据以及仓库平台 API 令牌（支持 GitHub、GitLab、Gitea 或阿里云云效）。 |
+
+当 Generic Git 或云效仓库适配器无法通过 API 直接创建合并请求时，系统会自动推送独立的评审分支供研发团队提审。
+
+## 受限变更策略
+
+生成的自动化补丁受到严格的项目变更策略约束，防止非预期的代码修改：
+
+- **允许路径白名单（`allowedPaths`）**：配置 1 到 64 个明确的相对路径前缀，补丁只能修改白名单范围内的文件。
+- **保护与拒绝路径（`deniedPaths`）**：严格禁止修改控制面配置、凭据文件、依赖清单（`package.json`、`go.mod`）、锁文件（`package-lock.json`、`go.sum`）以及运行时版本定义文件。
+- **变更规模上限**：单次修复最多修改 1–30 个文件、1–5000 行变更。
+- **安全检查**：二进制文件、软链接、子模块变更以及目标分支分叉时立即阻断（Fail Closed）。
+
+## 可选本地预验证（Enhanced 增强模式）
+
+本地预验证是可选的增强模式。系统会在发布评审分支前，在完全隔离的 Docker 容器中分别执行基线命令和打补丁后的测试命令：
+
+```text
+克隆工作区 -> 运行基线测试 -> 应用候选补丁 -> 运行后置测试 -> 提交并发布 PR
+```
+
+### 沙箱安全隔离
+
+增强预验证运行在严格的安全边界内：
+
+- **完全断网**：容器启动附加 `--network none`，杜绝测试过程中的外部网络外联。
+- **无凭据暴露**：容器内不挂载 Git 凭据、Docker Socket 或外部 API 令牌。
+- **只读源码挂载**：原始源码以只读方式挂载，临时文件写入和执行输出有严格上限。
+- **管理员预置工具链**：构建镜像由部署运维方在平台环境统一配置不可变 SHA-256 摘要（`MENDRY_REMEDIATION_GO_BUILDER_IMAGE`、`MENDRY_REMEDIATION_NODE_BUILDER_IMAGE`）。项目用户无法注入自定义镜像、Shell 脚本或安装命令。
+
+### 支持的项目结构
+
+增强模式当前支持单独立服务目录：
+
+- **Go 模块**：目录必须包含独立的 `go.mod`、`go.sum` 并具备可执行的测试套件。
+- **Node/npm 项目**：目录必须包含 `package.json`、`package-lock.json` 并具备真实的 `test` 脚本。
+- npm 工作区（workspaces）、`go.work`、跨目录本地依赖或未支持的运行时会自动回退至基础 Draft PR 模式。
+
+### 设置向导与检测 API
+
+前端配置界面提供了自动化检测向导（`AutoHotfixSetup`）：
+
+1. **检查**：调用 `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` 发起仓库结构异步扫描。
+2. **轮询**：调用 `GET /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` 查询状态：`idle`、`checking`、`needs_selection`、`ready`、`enabling`、`enabled` 或 `blocked`。
+3. **启用**：调用 `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable` 提交生成的验证配置。
+
+生产环境部署 Commit 更新时，本地增强验证 Profile 会自动失效并重新构建，确保测试环境与当前基线完全一致。
+
+## 运行韧性与崩溃恢复
+
+系统基于 `resilient_v1` 提供持久化的执行恢复保证：
+
+- **会话级 Advisory Lock**：每个运行任务持有唯一的 PostgreSQL Session Advisory Lock，多实例并发部署下互斥接管，避免重复执行。
+- **持久化检查点**：工具意图、诊断结果、候选补丁与验证输出在外部操作前均持久化至数据库。
+- **后台恢复工作线程**：系统内置恢复 Worker 按 `MENDRY_REMEDIATION_RECOVERY_INTERVAL`（默认 `15s`）轮询。API 进程崩溃或重启后，未完成的修复任务会自动从最近检查点恢复。
+- **并发控制**：通过 `MENDRY_REMEDIATION_CONCURRENCY`（默认 `4`）限制单进程内的活跃执行上限。
+
+## 触发修复操作
+
+在事故详情页（`/projects/:key/incidents/:id`）中，操作员可执行：
+
+- **Start remediation**：开始初始调查与修复流程。
+- **Repair with current settings**：按当前项目最新策略重新执行修复。请求携带 `generation`、`expectedRunId` 和 `expectedVersion` 乐观并发锁，杜绝陈旧操作冲突。
+
+## 相关页面
+
+- [日常操作流程](/zh-cn/docs/guides/operator-workflow/)
+- [配置参考](/zh-cn/docs/reference/configuration/)
+- [Git 与基线](/zh-cn/docs/guides/git-baseline/)
+- [生命周期](/zh-cn/docs/concepts/lifecycle/)

@@ -7,6 +7,7 @@ sources:
   - backend/internal/modules/agentcore/domain/ports.go
   - backend/internal/modules/agentcore/domain/types.go
   - backend/internal/modules/agentcore/application/runner.go
+  - backend/docs/remediation-recovery.md
 ---
 
 **Availability: available**
@@ -69,6 +70,10 @@ reopening a recovered incident creates a new generation. The remediation
 coordinator owns automatic eligibility, evidence gates, diagnosis/planning states,
 checkpoint recovery, and review projection.
 
-The incident application uses selected shared foundation mechanics but does not
-currently map all of those states to the generic Run state machine. Its review
-outputs do not grant merge, deployment, rollback, or recovery authority.
+Under `resilient_v1` execution, each active remediation run acquires a PostgreSQL
+session advisory lock to guarantee single-process execution across API replicas and
+restarts. Durable checkpoints preserve intent, candidate patches, and validation results
+so that uncompleted runs can be resumed by the background recovery worker without
+re-running from scratch. Repair actions require generation and version context to reject
+stale requests. Its review outputs do not grant merge, deployment, rollback, or recovery
+authority.

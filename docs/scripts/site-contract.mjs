@@ -8,6 +8,17 @@ const pages = [
     "preview",
   ],
   ["docs", "src/content/docs/docs/index.mdx", "available"],
+  ["features", "src/content/docs/docs/reference/features.mdx", "preview"],
+  [
+    "operator-workflow",
+    "src/content/docs/docs/guides/operator-workflow.mdx",
+    "preview",
+  ],
+  [
+    "automatic-hotfix",
+    "src/content/docs/docs/guides/automatic-hotfix.mdx",
+    "preview",
+  ],
   ["get-started", "src/content/docs/docs/get-started.mdx", "preview"],
   [
     "local-harness",

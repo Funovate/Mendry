@@ -5,30 +5,35 @@ const pages = [
   {
     path: "/",
     lang: "en",
-    heading: "AI incident investigation.From alert to repair proposal.",
+    heading: "From production alertto a fix ready for review.",
     primaryHref: "/docs/get-started/",
     example: "ILLUSTRATIVE EXAMPLE",
     removedHeading: "From the first alert",
-    current: "CURRENT SCOPE · PREVIEW",
-    future: "EVOLUTION · PLANNED",
-    recovery: "Verify recovery & close",
+    current: "INVESTIGATION · DEFAULT",
+    hotfix: "AUTOMATIC HOTFIX · OPT-IN",
+    handoff: "Your team takes it from here",
+    optionalValidation: "Prevalidate locally · optional",
+    boundary:
+      "Mendry does not automatically merge, deploy, roll back, or confirm production recovery.",
   },
   {
     path: "/zh-cn/",
     lang: "zh-CN",
-    heading: "从生产告警，定位问题根因。",
+    heading: "从生产告警，到可审查的修复。",
     primaryHref: "/zh-cn/docs/get-started/",
-    example: "调查示例",
+    example: "流程示例",
     removedHeading: "从告警到修复方案",
-    current: "当前覆盖 · 预览",
-    future: "演进方向 · 规划中",
-    recovery: "确认恢复，关闭问题",
+    current: "问题调查 · 默认启用",
+    hotfix: "自动 HOTFIX · 按项目启用",
+    handoff: "由你的团队接续",
+    optionalValidation: "本地预验证 · 可选",
+    boundary: "Mendry 不自动合并、部署、回滚或确认生产恢复。",
   },
 ];
 
 for (const pageCase of pages) {
   for (const theme of ["light", "dark"]) {
-    test(`${pageCase.lang} ${theme} presents the full incident-to-recovery story`, async ({
+    test(`${pageCase.lang} ${theme} presents investigation, opt-in hotfix, and team handoff`, async ({
       page,
     }, testInfo) => {
       await page.goto(pageCase.path);
@@ -50,16 +55,24 @@ for (const pageCase of pages) {
       await expect(page.locator(".home-stage-label > span")).toHaveCount(0);
       await expect(page.locator("#demo-note")).toBeVisible();
       await expect(
-        page.locator(".home-current-flow .home-flow-label"),
+        page.locator(".home-investigation-flow .home-flow-label"),
       ).toHaveText(pageCase.current);
       await expect(
-        page.locator(".home-future-flow .home-flow-label"),
-      ).toHaveText(pageCase.future);
-      await expect(page.locator(".home-current-stages li")).toHaveCount(3);
-      await expect(page.locator(".home-future-stages li")).toHaveCount(4);
-      await expect(page.locator(".home-recovery strong")).toHaveText(
-        pageCase.recovery,
+        page.locator(".home-hotfix-flow .home-flow-label"),
+      ).toHaveText(pageCase.hotfix);
+      await expect(page.locator(".home-investigation-flow li")).toHaveCount(3);
+      await expect(page.locator(".home-hotfix-flow li")).toHaveCount(3);
+      await expect(page.locator(".home-hotfix-flow")).toContainText(
+        pageCase.optionalValidation,
       );
+      await expect(page.locator(".home-handoff h3")).toHaveText(
+        pageCase.handoff,
+      );
+      await expect(page.locator(".home-handoff")).toContainText(
+        pageCase.boundary,
+      );
+      await expect(page.locator(".home-delivery-strip li")).toHaveCount(3);
+      await expect(page.locator(".home-workspace-paths a")).toHaveCount(3);
       await expect(page.locator(".home-stack")).toBeVisible();
       await expect(page.locator(".home-paths a")).toHaveCount(3);
       await expect(page.locator(".home-footer")).toBeVisible();
@@ -69,6 +82,7 @@ for (const pageCase of pages) {
           ".home-hero",
           ".home-investigation",
           ".home-workflow",
+          ".home-workspace",
           ".home-integration",
           ".home-start",
           ".home-footer",
@@ -160,17 +174,20 @@ test("homepage navigation, search, and locale switch remain usable", async ({
 test.describe("homepage static semantics", () => {
   test.use({ javaScriptEnabled: false });
   for (const pageCase of pages) {
-    test(`${pageCase.lang} explains current capabilities and future direction without JavaScript`, async ({
+    test(`${pageCase.lang} explains current capabilities and team handoff without JavaScript`, async ({
       page,
     }) => {
       await page.goto(pageCase.path);
       await expect(page.locator("[data-execution-model]")).toBeVisible();
       await expect(page.locator("canvas")).toHaveCount(0);
-      await expect(page.locator(".home-current-flow")).toContainText(
+      await expect(page.locator(".home-investigation-flow")).toContainText(
         pageCase.current,
       );
-      await expect(page.locator(".home-future-flow")).toContainText(
-        pageCase.future,
+      await expect(page.locator(".home-hotfix-flow")).toContainText(
+        pageCase.hotfix,
+      );
+      await expect(page.locator(".home-handoff")).toContainText(
+        pageCase.boundary,
       );
       await expect(page.locator(".home-paths a")).toHaveCount(3);
       await page.locator(".home-button-primary").click();

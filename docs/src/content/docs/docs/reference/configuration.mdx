@@ -6,6 +6,8 @@ translationKey: configuration
 sources:
   - backend/.env.example
   - backend/README.md
+  - backend/docs/automatic-hotfix.md
+  - backend/docs/remediation-recovery.md
   - backend/internal/modules/auth/adapter/http/handler.go
   - backend/internal/platform/observability/telemetry.go
   - frontend/src/features/configuration/configuration.ts
@@ -26,26 +28,44 @@ configuration. Do not move secrets between them casually.
 
 ## Process environment
 
-| Area       | Key examples                                                  | Notes                                                           |
-| ---------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
-| Runtime    | `MENDRY_ENVIRONMENT`, `MENDRY_HTTP_ADDR`, `MENDRY_PUBLIC_URL` | Public URL derives webhook URLs; use one absolute origin        |
-| Data       | `MENDRY_POSTGRES_URL`, `MENDRY_REDIS_URL`                     | PostgreSQL is durable; Redis holds sessions                     |
-| Encryption | `MENDRY_ENCRYPTION_KEY`                                       | Base64 of 32 bytes; keep stable per database                    |
-| Auth       | `MENDRY_AUTH_SESSION_TTL`                                     | Defaults to 24 hours                                            |
-| HTTP       | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`, body/time limits           | CORS accepts one exact console origin                           |
-| Logging    | `MENDRY_LOG_FORMAT`, `MENDRY_LOG_LEVEL`, `MENDRY_LOG_FILE`    | Production defaults to JSON; local file needs external rotation |
+| Area        | Key examples                                                                                                                                 | Notes                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Runtime     | `MENDRY_ENVIRONMENT`, `MENDRY_HTTP_ADDR`, `MENDRY_PUBLIC_URL`                                                                                | Public URL derives webhook URLs; use one absolute origin                               |
+| Data        | `MENDRY_POSTGRES_URL`, `MENDRY_REDIS_URL`                                                                                                    | PostgreSQL is durable; Redis holds sessions                                            |
+| Encryption  | `MENDRY_ENCRYPTION_KEY`                                                                                                                      | Base64 of 32 bytes; keep stable per database                                           |
+| Auth        | `MENDRY_AUTH_SESSION_TTL`                                                                                                                    | Defaults to 24 hours                                                                   |
+| HTTP        | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`, body/time limits                                                                                          | CORS accepts one exact console origin                                                  |
+| Logging     | `MENDRY_LOG_FORMAT`, `MENDRY_LOG_LEVEL`, `MENDRY_LOG_FILE`                                                                                   | Production defaults to JSON; local file needs external rotation                        |
+| Remediation | `MENDRY_REMEDIATION_CONCURRENCY`, `MENDRY_REMEDIATION_RECOVERY_INTERVAL`, `MENDRY_REMEDIATION_MODEL_TIMEOUT`, storage roots, builder digests | Controls execution concurrency, crash recovery, timeouts, and sandboxed builder images |
 
 `backend/.env.example` is the complete current key/default reference. `MENDRY_*` is the preferred namespace; during the transition, every runtime key also accepts its `FIXTHE_*` predecessor, and `MENDRY_*` wins when both are present, including an explicitly empty value. An exported environment variable from either namespace overrides `.env` values.
 
 ## Project configuration
 
 A project stores at most one current environment, repository, source, trigger,
-and optional LLM provider. The draft endpoint returns partial state. Component
+optional LLM provider, and remediation policy. The draft endpoint returns partial state. Component
 PUT endpoints update one component without replacing siblings.
 
 Source kinds are `ssh`, `cloud`, or `mcp`; trigger kinds are
 `signed_webhook` or `custom_rule`. Persisting a configuration kind does not by
 itself prove its runtime connector is available. Check [product status](/docs/project/status/).
+
+### Remediation policy
+
+Project remediation policy (`/configuration/remediation`) configures automatic repair boundaries, validation, and change request delivery:
+
+- `executionMode`: `analysis_only` (default) or `auto_hotfix` (Draft PR mode).
+- `changePolicy`: Bounded modifications with `allowedPaths` (1–64 paths), `deniedPaths` (forbidden manifests, credentials, and lockfiles), `maxChangedFiles` (1–30), and `maxChangedLines` (1–5,000).
+- `publication`: Target branch, Git write credential (`gitCredentialSecretId`), and SCM provider API secret (`scmTokenSecretId`).
+- `validationProfile`: Optional local pre-validation sandbox configuration (`enabled`, `imageDigest`, `workingDirectory`, `requiredCommands`).
+
+Enhanced mode setup can be discovered automatically:
+
+- `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` starts inspection.
+- `GET /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` polls status (`idle`, `checking`, `ready`, `enabled`, etc.).
+- `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable` commits the generated profile atomically.
+
+See the [automatic hotfix guide](/docs/guides/automatic-hotfix/) for complete workflow and isolation details.
 
 ### Signed webhook providers
 
@@ -100,3 +120,5 @@ return plaintext values.
 
 - `backend/.env.example`
 - `backend/README.md`
+- `backend/docs/automatic-hotfix.md`
+- `backend/docs/remediation-recovery.md`

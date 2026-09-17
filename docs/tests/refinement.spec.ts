@@ -110,6 +110,6 @@ test("homepage supports reduced motion and 200 percent zoom", async ({
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
   expect(layout.reducedMotion).toBe(true);
   expect(layout.transitionDuration).toBeLessThanOrEqual(0.001);
-  await expect(page.locator(".home-future-flow")).toBeVisible();
+  await expect(page.locator(".home-hotfix-flow")).toBeVisible();
   await expect(page.locator(".home-footer-bottom a")).toBeVisible();
 });

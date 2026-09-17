@@ -7,6 +7,7 @@ sources:
   - backend/internal/modules/agentcore/domain/ports.go
   - backend/internal/modules/agentcore/domain/types.go
   - backend/internal/modules/agentcore/application/runner.go
+  - backend/docs/remediation-recovery.md
 ---
 
 **可用性：available**
@@ -46,4 +47,4 @@ Solution-delivery Profile 可以由模型生成的 solution artifact 完成。Ac
 
 Incident state 仍是独立的应用 lifecycle。新事故从 Open 开始；相同 webhook fingerprint 更新当前 open occurrence；显式重新打开 recovered incident 会创建新 generation。Remediation coordinator 负责自动 eligibility、证据门禁、diagnosis/planning state、checkpoint recovery 与 review projection。
 
-事故应用使用部分共享 Foundation 机制，但目前没有把全部状态映射到通用 Run 状态机。它的 review output 不授予 merge、deployment、rollback 或 recovery 权限。
+在 `resilient_v1` 执行机制下，每个活跃修复任务持有独占的 PostgreSQL 会话级 Advisory Lock，确保跨 API 实例或重启时由单一进程安全接管。持久化检查点会在发生外部操作前记录工具意图、候选补丁与验证结果，使后台恢复工作线程能在故障重启后从最近断点无缝续推，而无需重新运行。Repair 操作强制校验 generation 与 version 上下文以杜绝冲突。其审阅输出不授予自动 merge、deployment、rollback 或 recovery 权限。

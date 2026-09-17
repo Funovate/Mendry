@@ -1,0 +1,101 @@
+---
+title: Automatic hotfix and local pre-validation
+description: Configure policy-bounded remediation, optional containerized pre-validation, and Draft PR delivery for production incidents.
+availability: preview
+translationKey: automatic-hotfix
+sources:
+  - backend/docs/automatic-hotfix.md
+  - backend/docs/remediation-recovery.md
+  - backend/internal/modules/projects/application/hotfix_setup.go
+  - backend/internal/modules/remediation/adapter/runner/docker.go
+  - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+---
+
+**Availability: preview**
+
+Mendry's automatic hotfix pipeline connects production diagnosis to bounded source remediation. It generates a constrained patch, optionally validates it inside a network-disabled container, and publishes the result as a review branch and Draft Pull Request/Merge Request.
+
+Repository CI and engineering teams remain the ultimate validation and merge authorities. Mendry does not silently merge code or trigger production deployments.
+
+```text
+diagnosis -> constrained patch -> container pre-validation (optional) -> Draft PR/MR -> repository CI -> human review and merge -> user CD
+```
+
+## Remediation modes
+
+In **Project configuration -> Automatic hotfix**, choose between two execution modes:
+
+| Mode            | Behavior                                                                                                                                | Requirements                                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `analysis_only` | Produces diagnosis, citations, proposed plan, and candidate diff for review in the console.                                             | Read access to the Git baseline and evidence sources. Default mode.                         |
+| `auto_hotfix`   | Generates a candidate patch under strict change policies, optionally runs local tests, pushes a review branch, and opens a Draft PR/MR. | Git write credential and repository platform API token (GitHub, GitLab, Gitea, or Yunxiao). |
+
+Generic Git and Yunxiao publish a review branch directly when the repository adapter cannot create an API-managed change request.
+
+## Constrained change policy
+
+Automatic patches are strictly bounded by project policy to prevent unauthorized or unintended modifications:
+
+- **Path allowlist (`allowedPaths`)**: 1 to 64 explicit path prefixes that candidate changes may touch.
+- **Path denylist (`deniedPaths`)**: Protected control-plane files, credentials, dependency manifests (`package.json`, `go.mod`), lockfiles (`package-lock.json`, `go.sum`), and runtime version files are rejected.
+- **Size limits**: 1 to 30 files and 1 to 5,000 modified lines per repair attempt.
+- **Safety checks**: Binary files, symlinks, submodule alterations, and changes against diverged target branches fail closed.
+
+## Optional local pre-validation (Enhanced mode)
+
+Local pre-validation runs an approved baseline test command and post-patch test command in an isolated Docker container before publishing the review branch or draft PR:
+
+```text
+clone workspace -> run baseline test -> apply candidate patch -> run post-patch test -> commit & publish PR
+```
+
+### Sandbox isolation
+
+Enhanced validation executes under strict security boundaries:
+
+- **No network access**: Container runs with `--network none`.
+- **No credential exposure**: Git credentials, Docker sockets, and external tokens are never mounted.
+- **Read-only source mount**: Source files are mounted read-only; output and temporary files are strictly bounded.
+- **Administrator-curated toolchain**: Builder images are configured at the platform deployment level using immutable SHA-256 digests (`MENDRY_REMEDIATION_GO_BUILDER_IMAGE`, `MENDRY_REMEDIATION_NODE_BUILDER_IMAGE`). Project operators cannot inject arbitrary images, shell scripts, or install commands.
+
+### Supported project layouts
+
+Enhanced mode currently supports single independent service directories per project:
+
+- **Go modules**: Directory must contain `go.mod`, `go.sum`, and native `go test ./...` suites.
+- **Node/npm projects**: Directory must contain `package.json`, `package-lock.json`, and a verified `test` script.
+- Unsupported layouts (such as multi-service npm workspaces or `go.work`) and missing toolchains fail closed to basic Draft PR mode.
+
+### Setup wizard and API check
+
+The configuration wizard includes an automated inspection step (`AutoHotfixSetup`):
+
+1. **Check**: `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` initiates asynchronous inspection of the repository structure.
+2. **Poll**: `GET /api/v1/projects/{projectKey}/configuration/auto-hotfix/check` tracks status: `idle`, `checking`, `needs_selection`, `ready`, `enabling`, `enabled`, or `blocked`.
+3. **Enable**: `POST /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable` with `{ "checkId": "..." }` commits the server-generated profile atomically.
+
+When a new commit is deployed to production, the enhanced validation profile is automatically invalidated and rebuilt to ensure image and dependency provenance remain fresh.
+
+## Execution resilience and recovery
+
+Remediation runs use `resilient_v1` durable execution:
+
+- **Session advisory locks**: Each active run acquires an exclusive PostgreSQL session advisory lock. Multiple API replicas will not concurrently drive or recover the same run.
+- **Durable checkpoints**: Tool execution intent, intermediate diagnosis, candidate diffs, and validation outcomes persist atomically to PostgreSQL before external actions occur.
+- **Restart recovery worker**: A background worker scans every `MENDRY_REMEDIATION_RECOVERY_INTERVAL` (default `15s`). If an API process crashes or restarts, uncompleted runs resume from their latest checkpoint rather than re-running from scratch.
+- **Concurrency control**: `MENDRY_REMEDIATION_CONCURRENCY` (default `4`) bounds active remediation executions per API process.
+
+## Triggering repair
+
+From an incident review page (`/projects/:key/incidents/:id`), operators can trigger remediation:
+
+- **Start remediation**: Begins the initial investigation and repair cycle.
+- **Repair with current settings**: Re-evaluates an existing diagnosis against the current project policy. The request includes generation and version guards (`generation`, `expectedRunId`, `expectedVersion`) to reject stale or conflicting concurrent actions.
+
+## Related pages
+
+- [Operator workflow](/docs/guides/operator-workflow/)
+- [Configuration reference](/docs/reference/configuration/)
+- [Git and baseline](/docs/guides/git-baseline/)
+- [Lifecycle concepts](/docs/concepts/lifecycle/)

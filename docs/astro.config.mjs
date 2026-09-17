@@ -143,6 +143,16 @@ export default defineConfig({
           translations: { "zh-CN": "指南" },
           items: [
             {
+              slug: "docs/guides/operator-workflow",
+              label: "Operator workflow",
+              translations: { "zh-CN": "日常操作流程" },
+            },
+            {
+              slug: "docs/guides/automatic-hotfix",
+              label: "Automatic hotfix",
+              translations: { "zh-CN": "自动修复与预验证" },
+            },
+            {
               slug: "docs/guides/tencent-cls",
               label: "Tencent CLS",
               translations: { "zh-CN": "腾讯云 CLS" },
@@ -173,6 +183,11 @@ export default defineConfig({
           label: "Reference",
           translations: { "zh-CN": "参考" },
           items: [
+            {
+              slug: "docs/reference/features",
+              label: "Feature map",
+              translations: { "zh-CN": "功能导航" },
+            },
             {
               slug: "docs/reference/configuration",
               label: "Configuration",

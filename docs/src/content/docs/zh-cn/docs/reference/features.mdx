@@ -1,0 +1,54 @@
+---
+title: 功能导航
+description: 按模块查找现有控制台功能、操作入口及当前评估边界。
+availability: preview
+translationKey: features
+sources:
+  - frontend/src/features/configuration/ConfigurationEditorPage.tsx
+  - frontend/src/features/configuration/wizard/RemediationStep.tsx
+  - frontend/src/features/observations/ObservationsPage.tsx
+  - frontend/src/features/board/PipelinePage.tsx
+  - frontend/src/features/incidents/IncidentsPage.tsx
+  - frontend/src/features/incidents/RemediationPanel.tsx
+  - backend/README.md
+---
+
+**可用性：preview**
+
+本页整理现有事故应用，不代表受支持的生产发行版，也不是规划中的通用 Harness UI。下表中的控制台路径相对于你自己的控制台地址；将 `:key` 和 `:id` 替换为项目 key 与事故 ID。
+
+## 控制台功能
+
+| 模块       | 操作入口                            | 当前行为                                                                                                          |
+| ---------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 项目与配置 | `/projects/:key/configuration/edit` | 配置 Git、Source、Trigger、LLM、Automatic hotfix 和 Review。各配置步骤独立保存。                                  |
+| 事件流     | `/projects/:key/observations`       | 查看 Observation，按等级或 message/service/source 筛选当前页，并手动刷新。                                        |
+| Pipeline   | 项目导航中的 Pipeline               | 展示最多 100 条 Open 事故，按阶段、优先级或可操作性筛选，再进入事故详情。每 25 秒刷新。                           |
+| 事故列表   | 项目导航中的 Incidents              | 增量加载事故、检查证据，人工设置 Open、Recovered 或 Closed。                                                      |
+| 调查与修复 | `/projects/:key/incidents/:id`      | 查看诊断、引用、计划、候选 Diff、尝试记录、恢复信息及已有的 Hotfix delivery。操作是否可用取决于服务端状态与策略。 |
+| 登录认证   | 登录页与侧栏 Sign out               | 使用唯一配置身份和 Cookie Session；当前没有多用户角色体系。                                                       |
+
+事件流每页包含 25 条 Observation，搜索、等级筛选和数量徽标只作用于当前已加载页，而非全部事件历史。事故列表每批加载 25 条。这两个视图都不应被当作覆盖全部存储信号的全量搜索。
+
+## 配置与接入
+
+| 配置领域       | 配置或检查内容                                         | 详细文档                                                                                          |
+| -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Git 与部署基线 | 仓库凭据及可读取的部署基线                             | [Git 与基线](/zh-cn/docs/guides/git-baseline/)                                                    |
+| 运行时证据     | 项目 Source，包括受支持的腾讯云 CLS 或 SSH Docker 配置 | [腾讯云 CLS](/zh-cn/docs/guides/tencent-cls/)与[首个项目](/zh-cn/docs/get-started/first-project/) |
+| 输入信号       | 项目 Trigger 与签名 Webhook 凭据                       | [签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)                                               |
+| 模型提供方     | 提供方凭据、模型选择与聊天测试                         | [LLM 提供方](/zh-cn/docs/guides/llm-providers/)                                                   |
+| 修复策略       | 仅分析或自动 Hotfix、写凭据、验证与变更限制            | [自动修复与本地预验证](/zh-cn/docs/guides/automatic-hotfix/)                                      |
+| 服务与登录会话 | 环境配置及初始化身份                                   | [配置](/zh-cn/docs/reference/configuration/)与[认证](/zh-cn/docs/reference/roles/)                |
+
+配置了接入不代表某次运行已取得有效证据。信任结论前，应检查事故中的实际证据与执行结果。凭据应留在配置边界内，不要放入信号载荷。
+
+## 能力边界
+
+- 默认修复策略是 `analysis_only`。诊断或候选 Diff 不代表发生了写操作或验证。
+- 自动 Hotfix 可在配置策略约束下准备分支、运行容器沙箱测试预验证并自动创建草稿 Pull Request，但不自动合并、部署、回滚或确认恢复。
+- AWS 来源事故保持仅分析；启用项目修复策略不会覆盖这一来源边界。
+- 通用 event/run/call/artifact 产品界面和生产安装包仍属于规划内容。
+- Local Harness 是独立的开发组合，事故控制台的功能不代表本地路径已达到同样的就绪状态。
+
+通过[产品状态](/zh-cn/docs/project/status/)确认就绪矩阵，按[日常操作流程](/zh-cn/docs/guides/operator-workflow/)开展操作；配置后的流程失败时，查阅[故障排查](/zh-cn/docs/guides/troubleshooting/)。

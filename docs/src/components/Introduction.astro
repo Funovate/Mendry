@@ -20,13 +20,16 @@ const { content: c } = Astro.props;
         </h1>
         <p class="home-summary">{c.summary}</p>
         <div class="home-actions">
-          <a class="home-button home-button-primary" href={c.primaryHref}
-            >{c.primaryAction}<Icon name="right-arrow" aria-hidden="true" /></a
-          >
-          <a class="home-button home-button-secondary" href={c.secondaryHref}
-            >{c.secondaryAction}<Icon name="down-arrow" aria-hidden="true" /></a
-          >
+          <a class="home-button home-button-primary" href={c.primaryHref}>
+            {c.primaryAction}<Icon name="right-arrow" aria-hidden="true" />
+          </a>
+          <a class="home-button home-button-secondary" href={c.secondaryHref}>
+            {c.secondaryAction}<Icon name="down-arrow" aria-hidden="true" />
+          </a>
         </div>
+        <a class="home-preview-link" href={c.statusHref}>
+          <span class="home-dot" aria-hidden="true"></span>{c.statusLabel}
+        </a>
       </div>
       <HomeBrand />
     </section>
@@ -38,21 +41,21 @@ const { content: c } = Astro.props;
         aria-describedby="demo-note"
       >
         <div class="home-console-bar">
-          <span class="home-console-brand"
-            ><img
+          <span class="home-console-brand">
+            <img
               src="/brand/mendry-mark-reversed.svg"
               width="24"
               height="24"
               alt=""
-            />Mendry <span>/ incident</span></span
-          >
+            />
+            Mendry <span>/ incident</span>
+          </span>
           <span class="home-example">{c.demo.example}</span>
         </div>
         <div class="home-incident-heading">
           <div>
-            <p class="home-console-meta">{c.demo.source}</p><h2>
-              {c.demo.incident}
-            </h2>
+            <p class="home-console-meta">{c.demo.source}</p>
+            <h2>{c.demo.incident}</h2>
           </div>
           <span class="home-incident-id">INC / 0042</span>
         </div>
@@ -63,16 +66,18 @@ const { content: c } = Astro.props;
               <div class="home-chart-label">
                 <span>HTTP 5xx</span><span>↑</span>
               </div>
-              <svg viewBox="0 0 280 92" fill="none"
-                ><path class="home-chart-grid" d="M0 20H280M0 50H280M0 80H280"
-                ></path><path
+              <svg viewBox="0 0 280 92" fill="none">
+                <path class="home-chart-grid" d="M0 20H280M0 50H280M0 80H280"
+                ></path>
+                <path
                   class="home-chart-area"
                   d="M0 77L25 75L50 77L75 73L100 76L125 69L145 73L160 49L173 56L189 25L205 35L220 12L237 21L252 7L280 13V92H0Z"
-                ></path><path
+                ></path>
+                <path
                   class="home-chart-line"
                   d="M0 77L25 75L50 77L75 73L100 76L125 69L145 73L160 49L173 56L189 25L205 35L220 12L237 21L252 7L280 13"
-                ></path></svg
-              >
+                ></path>
+              </svg>
               <div class="home-chart-label">
                 <span>14:20</span><span>14:25</span>
               </div>
@@ -99,6 +104,23 @@ const { content: c } = Astro.props;
             <h3>{c.demo.proposalTitle}</h3><p>{c.demo.proposalText}</p>
           </article>
         </div>
+        <ol class="home-delivery-strip">
+          {
+            c.demo.delivery.map((item, i) => (
+              <li>
+                <span class="home-delivery-number" aria-hidden="true">
+                  0{i + 4}
+                </span>
+                <div>
+                  <>
+                    <strong>{item.title}</strong>
+                    <p>{item.text}</p>
+                  </>
+                </div>
+              </li>
+            ))
+          }
+        </ol>
         <figcaption id="demo-note">
           <span aria-hidden="true">ⓘ</span>{c.demo.note}
         </figcaption>
@@ -107,21 +129,14 @@ const { content: c } = Astro.props;
         {
           c.demo.traits.map((trait) => (
             <li>
-              <svg
-                class="home-proof-mark"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="m5 12 4 4L19 6"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+              <>
+                <Icon
+                  name="approve-check"
+                  aria-hidden="true"
+                  class="home-proof-mark"
                 />
-              </svg>
-              <span>{trait}</span>
+                <span>{trait}</span>
+              </>
             </li>
           ))
         }
@@ -139,305 +154,102 @@ const { content: c } = Astro.props;
       <p class="home-section-description">{c.workflow.text}</p>
     </div>
     <div class="home-loop">
-      <div class="home-current-flow">
-        <div class="home-flow-header">
-          <p class="home-flow-label">
-            <span class="home-dot" aria-hidden="true"></span>{
-              c.workflow.current
-            }
-          </p>
-          {
-            c.workflow.currentBadge && (
-              <span class="home-flow-badge home-flow-badge-current">
-                {c.workflow.currentBadge}
-              </span>
-            )
-          }
-        </div>
-        <ol class="incident-sequence home-current-stages">
-          {
-            c.workflow.currentStages.map((stage, i) => (
-              <li class="home-stage-card home-stage-card-current">
-                <div class="home-stage-card-inner">
-                  <div class="home-stage-top">
-                    <span class="home-flow-number">0{i + 1}</span>
-                    <span class="home-stage-icon" aria-hidden="true">
-                      {i === 0 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <circle cx="12" cy="12" r="9" />
-                          <circle cx="12" cy="12" r="3" />
-                          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
-                        </svg>
-                      )}
-                      {i === 1 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <circle cx="11" cy="11" r="8" />
-                          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                          <path d="m13 8-4 6M8 8l6 6" />
-                        </svg>
-                      )}
-                      {i === 2 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                          <path d="M9 13h6M12 10v6" />
-                        </svg>
-                      )}
-                    </span>
-                  </div>
-                  <div class="home-stage-content">
-                    <strong class="home-stage-title">{stage}</strong>
-                    {c.workflow.currentStageDescriptions?.[i] && (
-                      <p class="home-stage-desc">
-                        {c.workflow.currentStageDescriptions[i]}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <span class="home-flow-arrow" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" class="home-arrow-svg">
-                    <path
-                      d="M6 3l5 5-5 5"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </span>
-              </li>
-            ))
-          }
-        </ol>
-      </div>
-
       {
-        c.workflow.gateLabel && (
-          <div class="home-flow-gate" aria-hidden="true">
-            <div class="home-gate-line" />
-            <div class="home-gate-node">
-              <svg
-                class="home-gate-icon"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M8 1.5 2.5 3.8v4.5c0 2.8 2.4 5.2 5.5 6.2 3.1-1 5.5-3.4 5.5-6.2V3.8L8 1.5z" />
-                <path d="m6 8 1.5 1.5L10.5 6.5" />
-              </svg>
-              <span>{c.workflow.gateLabel}</span>
-            </div>
-            <div class="home-gate-line" />
-          </div>
-        )
-      }
-
-      <div class="home-future-flow">
-        <div class="home-flow-header">
-          <p class="home-flow-label">
-            <span class="home-planned-dot" aria-hidden="true"></span>{
-              c.workflow.future
-            }
-          </p>
-          {
-            c.workflow.futureBadge && (
-              <span class="home-flow-badge home-flow-badge-future">
-                {c.workflow.futureBadge}
-              </span>
-            )
-          }
-        </div>
-        <ol class="home-future-stages" start="4">
-          {
-            c.workflow.futureStages.map((stage, i) => (
-              <li class="home-stage-card home-stage-card-future">
-                <div class="home-stage-card-inner">
-                  <div class="home-stage-top">
-                    <span class="home-flow-number">0{i + 4}</span>
-                    <span class="home-stage-icon" aria-hidden="true">
-                      {i === 0 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                        </svg>
-                      )}
-                      {i === 1 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                          <path d="m9 12 2 2 4-4" />
-                        </svg>
-                      )}
-                      {i === 2 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <circle cx="18" cy="18" r="3" />
-                          <circle cx="6" cy="6" r="3" />
-                          <path d="M13 6h3a2 2 0 0 1 2 2v7" />
-                          <line x1="6" y1="9" x2="6" y2="21" />
-                        </svg>
-                      )}
-                      {i === 3 && (
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
-                          <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
-                          <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
-                        </svg>
-                      )}
-                    </span>
-                  </div>
-                  <div class="home-stage-content">
-                    <strong class="home-stage-title">{stage}</strong>
-                    {c.workflow.futureStageDescriptions?.[i] && (
-                      <p class="home-stage-desc">
-                        {c.workflow.futureStageDescriptions[i]}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <span class="home-flow-arrow" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" class="home-arrow-svg">
-                    <path
-                      d="M6 3l5 5-5 5"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
+        c.workflow.flows.map((flow, flowIndex) => (
+          <>
+            {flowIndex > 0 && (
+              <div class="home-flow-gate">
+                <div class="home-gate-line" aria-hidden="true" />
+                <p class="home-gate-node">{c.workflow.gateLabel}</p>
+                <div class="home-gate-line" aria-hidden="true" />
+              </div>
+            )}
+            <div class:list={["home-current-flow", `home-${flow.id}-flow`]}>
+              <div class="home-flow-header">
+                <h3 class="home-flow-label">
+                  <span class="home-dot" aria-hidden="true" />
+                  {flow.label}
+                </h3>
+                <span class="home-flow-badge home-flow-badge-current">
+                  {flow.badge}
                 </span>
-              </li>
-            ))
-          }
-        </ol>
-        <div class="home-recovery">
-          <div class="home-recovery-primary">
-            <div class="home-recovery-track" aria-hidden="true">
-              <span class="home-recovery-mark">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="home-recovery-mark-svg"
-                >
-                  <polyline points="15 10 20 15 15 20"></polyline>
-                  <path d="M4 4v7a4 4 0 0 0 4 4h12"></path>
-                </svg>
-              </span>
-            </div>
-            <div class="home-recovery-verified">
-              <span class="home-recovery-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="10" cy="10" r="8"></circle>
-                  <path d="m6.5 10 2.5 2.5 4.5-5"></path>
-                </svg>
-              </span>
-              <strong>{c.workflow.recovery}</strong>
-            </div>
-          </div>
-          <div class="home-recovery-feedback">
-            <span class="home-feedback-icon" aria-hidden="true">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+              </div>
+              <ol
+                class="incident-sequence home-current-stages"
+                start={flowIndex * 3 + 1}
               >
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"
-                ></path>
-                <path d="M3 3v5h5"></path>
-              </svg>
-            </span>
-            <span>{c.workflow.retry}</span>
-          </div>
-        </div>
+                {flow.stages.map((stage, i) => (
+                  <li class="home-stage-card home-stage-card-current">
+                    <div class="home-stage-card-inner">
+                      <div class="home-stage-top">
+                        <span class="home-flow-number" aria-hidden="true">
+                          0{flowIndex * 3 + i + 1}
+                        </span>
+                        <span class="home-stage-icon" aria-hidden="true">
+                          <Icon
+                            name={flowIndex === 0 ? "magnifier" : "setting"}
+                          />
+                        </span>
+                      </div>
+                      <div class="home-stage-content">
+                        <h4 class="home-stage-title">{stage.title}</h4>
+                        <p class="home-stage-desc">{stage.text}</p>
+                      </div>
+                    </div>
+                    <span class="home-flow-arrow" aria-hidden="true">
+                      <Icon name="right-arrow" class="home-arrow-svg" />
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </>
+        ))
+      }
+      <div class="home-handoff">
+        <h3>{c.workflow.handoff.heading}</h3>
+        <ol>{c.workflow.handoff.stages.map((stage) => <li>{stage}</li>)}</ol>
+        <p>{c.workflow.handoff.text}</p>
       </div>
       <div class="home-loop-caption">
-        <div class="home-policy-note">
-          <svg
-            class="home-policy-icon"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path
-              d="M8 1.5 2.5 3.8v4.5c0 2.8 2.4 5.2 5.5 6.2 3.1-1 5.5-3.4 5.5-6.2V3.8L8 1.5z"
-            ></path>
-            <path d="m6 8 1.5 1.5L10.5 6.5"></path>
-          </svg>
-          <p>{c.workflow.policy}</p>
-        </div>
-        <a class="home-status-link" href={c.statusHref}>
-          <span>{c.footer.links[2].label}</span>
-          <span aria-hidden="true">↗</span>
-        </a>
+        <p class="home-policy-note">{c.workflow.policy}</p>
+        <a class="home-status-link" href={c.statusHref}
+          >{c.footer.links[2].label}<span aria-hidden="true">↗</span></a
+        >
       </div>
     </div>
+  </section>
+
+  <section
+    class="home-workspace home-container"
+    aria-labelledby="workspace-title"
+  >
+    <div class="home-section-top home-section-top-split">
+      <h2 id="workspace-title">{c.workspace.heading}</h2>
+      <p class="home-section-description">{c.workspace.text}</p>
+    </div>
+    <nav class="home-workspace-paths" aria-labelledby="workspace-title">
+      {
+        c.workspace.paths.map((path, i) => (
+          <a href={path.href}>
+            <div class="home-workspace-visual" aria-hidden="true" data-view={i}>
+              {[0, 1, 2].map(() => (
+                <span>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              ))}
+            </div>
+            <h3>
+              {path.title}
+              <Icon name="right-arrow" aria-hidden="true" />
+            </h3>
+            <p>{path.text}</p>
+          </a>
+        ))
+      }
+    </nav>
   </section>
 
   <section
@@ -448,11 +260,9 @@ const { content: c } = Astro.props;
     <div class="home-container">
       <div class="home-integration-layout">
         <div class="home-integration-copy">
-          <h2 id="integration-title">{c.integration.heading}</h2><p
-            class="home-section-description"
-          >
-            {c.integration.text}
-          </p><a class="home-text-link" href={c.integration.href}
+          <h2 id="integration-title">{c.integration.heading}</h2>
+          <p class="home-section-description">{c.integration.text}</p>
+          <a class="home-text-link" href={c.integration.href}
             >{c.integration.action}<Icon
               name="right-arrow"
               aria-hidden="true"
@@ -493,12 +303,14 @@ const { content: c } = Astro.props;
                 ></circle></svg
               >
               Mendry
-            </strong><span>{c.integration.hub}</span>
+            </strong>
+            <span>{c.integration.hub}</span>
           </div>
-          <div class="home-stack-future">
-            <span aria-hidden="true">↓</span><p>{c.integration.future}</p><ul>
-              {c.integration.targets.map((target) => <li>{target}</li>)}
-            </ul>
+          <div class="home-stack-delivery">
+            <span aria-hidden="true">↓</span><p>
+              {c.integration.deliveryLabel}
+            </p>
+            <ul>{c.integration.targets.map((target) => <li>{target}</li>)}</ul>
           </div>
         </div>
       </div>
@@ -506,10 +318,10 @@ const { content: c } = Astro.props;
         {
           c.integration.traits.map((trait, i) => (
             <li>
+              <span class="home-trait-symbol" aria-hidden="true">
+                {["⌂", "⊙", "↗"][i]}
+              </span>
               <>
-                <span class="home-trait-symbol" aria-hidden="true">
-                  {["⌂", "⊙", "↗"][i]}
-                </span>
                 <h3>{trait.title}</h3>
                 <p>{trait.text}</p>
               </>
@@ -558,7 +370,8 @@ const { content: c } = Astro.props;
             loading="lazy"
           />
         </a><p>{c.footer.tagline}</p>
-      </div><nav aria-label={c.footer.navigation}>
+      </div>
+      <nav aria-label={c.footer.navigation}>
         {c.footer.links.map((link) => <a href={link.href}>{link.label}</a>)}
       </nav>
     </div>

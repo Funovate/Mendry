@@ -16,12 +16,12 @@ test("every route has a reciprocal locale counterpart", () => {
 });
 
 test("the expected route count includes introductions and operator pages", () => {
-  assert.equal(routeEntries.length, 44);
-  assert.equal(expectedRoutes.length, 46);
+  assert.equal(routeEntries.length, 50);
+  assert.equal(expectedRoutes.length, 52);
 });
 
 test("operator entries have matching locale metadata", () => {
-  assert.equal(routeEntries.length, 44);
+  assert.equal(routeEntries.length, 50);
   for (const entry of routeEntries) {
     const pair = routeEntries.find(
       (candidate) => candidate.route === counterpart(entry.route),
@@ -29,6 +29,17 @@ test("operator entries have matching locale metadata", () => {
     assert.equal(pair?.translationKey, entry.translationKey);
     assert.equal(pair?.availability, entry.availability);
     assert.notEqual(pair?.locale, entry.locale);
+  }
+});
+
+test("feature and operator guides have paired preview routes", () => {
+  for (const key of ["features", "operator-workflow", "automatic-hotfix"]) {
+    const entries = routeEntries.filter(
+      ({ translationKey }) => translationKey === key,
+    );
+    assert.equal(entries.length, 2);
+    assert.ok(entries.every(({ availability }) => availability === "preview"));
+    for (const { route } of entries) assert.ok(indexableRoutes.includes(route));
   }
 });
 
