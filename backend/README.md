@@ -11,10 +11,11 @@ The existing incident API remains a separate compatibility application.
 PostgreSQL is its source of truth for the single login identity, projects, collection
 configuration, encrypted credentials, observations, and incidents.
 Redis stores only revocable login sessions. Its remediation coordinator uses
-selected shared model/history mechanics but still owns the incident loop,
-evidence gates, checkpoints, and lifecycle. RabbitMQ, background workers,
-durable jobs/outbox, and remote telemetry export are deferred until a product
-use case requires them.
+selected shared model/history mechanics and owns the incident loop,
+evidence gates, checkpoints, and lifecycle. An in-process execution recovery worker
+scans and recovers interrupted or orphaned runs using PostgreSQL session advisory locks.
+RabbitMQ, external distributed worker queues, generic outbox brokers, and
+remote telemetry export remain deferred until a product use case requires them.
 
 ## Layout
 
@@ -291,7 +292,7 @@ curl -b /tmp/mendry-cookie.txt \
 Projects scope configuration and operational data. Every authenticated user
 request can access every project; an unknown project returns 404.
 
-The current MVP stores at most one row for each configuration component per project. The editor saves environment, Git repository, source, trigger, and optional LLM provider independently; the complete configuration read is available once the required environment, repository, source, and trigger rows exist:
+The current MVP stores at most one row for each configuration component per project. The editor saves environment, Git repository, source, trigger, optional LLM provider, and remediation policy independently; the complete configuration read is available once the required environment, repository, source, and trigger rows exist:
 
 | Resource | Persisted fields |
 |---|---|
@@ -300,6 +301,7 @@ The current MVP stores at most one row for each configuration component per proj
 | Source | `ssh`, `cloud`, or `mcp`; typed config, credential reference, capabilities, enabled state |
 | Trigger | `signed_webhook` or `custom_rule`; typed config, optional signing-secret reference, enabled state; signed webhook also stores a hashed inbound token |
 | LLM provider | OpenAI-compatible base URL, credential reference, and selected model |
+| Remediation policy | mode (`conservative`/`enhanced`), change request target (`pr_draft`/`mr_draft`), write credential reference, path allow/deny lists, max changed lines/files, timeout, and pre-validation profile |
 | Credential | stable ID/name/kind and AES-256-GCM ciphertext/nonce; reads expose metadata only |
 
 The editor reads partial state from `GET /configuration/draft`. Each component write uses `PUT /configuration/{component}` and sends only that component's fields. The legacy complete `PUT /configuration` remains available for clients that already submit a full snapshot.
@@ -328,14 +330,22 @@ GET|POST /api/v1/projects/{projectKey}/secrets
 GET      /api/v1/projects/{projectKey}/configuration
 GET      /api/v1/projects/{projectKey}/configuration/draft
 PUT      /api/v1/projects/{projectKey}/configuration
-PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm}
+PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm|remediation}
 POST     /api/v1/projects/{projectKey}/configuration/webhook-token
+POST     /api/v1/projects/{projectKey}/configuration/auto-hotfix/check
+GET      /api/v1/projects/{projectKey}/configuration/auto-hotfix/check
+POST     /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable
 GET|POST /api/v1/projects/{projectKey}/observations
 GET|POST /api/v1/projects/{projectKey}/incidents
 GET      /api/v1/projects/{projectKey}/incidents/{incidentId}
 PATCH    /api/v1/projects/{projectKey}/incidents/{incidentId}/status
+POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/repair
+POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/continue
 POST     /hooks/{token}
 ```
+
+`GET /observations` supports query filtering: `limit` (default 50), `cursor`, `level` (`info`, `warn`, `error`), and `search`.
+`GET /incidents` supports pagination and status filtering: `limit` (default 50), `cursor`, and `status`.
 
 After logging in, create a project:
 
@@ -389,6 +399,22 @@ panics without exposing internal values, rejects request bodies over 1 MiB by
 default, and strictly decodes JSON. Same-origin browser requests work by default;
 set `MENDRY_HTTP_CORS_ALLOWED_ORIGIN` to one exact console origin for cross-origin
 development with authenticated cookies.
+
+## Automatic remediation and restart recovery
+
+The incident application supports bounded automatic hotfix patch generation and publication:
+
+- **Conservative mode**: Generates a constrained source patch against the deployed commit and publishes a Draft PR (GitHub) or Draft MR (GitLab) for human review. Repository CI acts as the engineering gate.
+- **Enhanced mode**: Optionally runs pre-validation in an isolated, network-disabled container (Docker) using immutable Go or Node builder images before publishing.
+
+Key environment variables:
+- `MENDRY_REMEDIATION_CONCURRENCY`: max concurrent normal and recovered runs (default: `4`, range: `1`–`32`).
+- `MENDRY_REMEDIATION_RECOVERY_INTERVAL`: scan interval for interrupted or orphaned runs (default: `15s`, range: `1s`–`5m`).
+- `MENDRY_REMEDIATION_MODEL_TIMEOUT`: timeout per model turn (default: `5m`).
+- `MENDRY_REMEDIATION_WORKSPACE_ROOT` & `MENDRY_REMEDIATION_ARTIFACT_ROOT`: persistent directories for workspace checkouts and artifacts.
+- `MENDRY_REMEDIATION_GO_BUILDER_IMAGE` & `MENDRY_REMEDIATION_NODE_BUILDER_IMAGE`: pinned builder images with sha256 digests for enhanced pre-validation.
+
+See [Automatic repair](./docs/automatic-hotfix.md) and [Remediation restart recovery](./docs/remediation-recovery.md) for full architectural contracts and operational runbooks.
 
 ## PostgreSQL and sqlc
 

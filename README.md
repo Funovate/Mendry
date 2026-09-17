@@ -14,8 +14,9 @@
 <p align="center">
   <a href="https://www.mendry.net/docs/">Documentation</a> &middot;
   <a href="https://www.mendry.net/docs/get-started/">Get started</a> &middot;
-  <a href="https://www.mendry.net/docs/concepts/architecture/">Architecture</a> &middot;
-  <a href="https://www.mendry.net/docs/project/status/">Project status</a> &middot;
+  <a href="https://www.mendry.net/docs/guides/operator-workflow/">Operator workflow</a> &middot;
+  <a href="https://www.mendry.net/docs/guides/automatic-hotfix/">Automatic hotfix</a> &middot;
+  <a href="https://www.mendry.net/docs/reference/features/">Feature map</a> &middot;
   <a href="https://www.mendry.net/zh-cn/docs/">Chinese docs</a>
 </p>
 
@@ -40,7 +41,7 @@ and recovery decisions.
 | **Evidence before conclusions** | Correlate alerts, logs, code, and immutable deployment context before proposing a cause.      |
 | **Bounded execution**           | Restrict tools and effects with trusted policy, explicit schemas, and independent budgets.    |
 | **Inspectable by default**      | Preserve ordered model/tool history, invocation outcomes, artifacts, and completion reasons.  |
-| **Human-controlled action**     | Present evidence-backed remediation for review without silently merging or deploying changes. |
+| **Human-controlled action**     | Deliver evidence-backed patches as Draft PRs/MRs for review without silent merge or deploy.  |
 
 ## How it works
 
@@ -53,13 +54,33 @@ Observation ---> Incident ---> Evidence collection
                                       v
                              Diagnosis + proposal
                                       |
-                                      v
-                                 Human review
+                     +----------------+----------------+
+                     |                                 |
+                     v                                 v
+        [Conservative Mode]                   [Enhanced Mode]
+         Constrained Patch                     Constrained Patch
+                 |                                     |
+                 |                             Isolated Sandbox
+                 |                           Pre-validation (Docker)
+                 |                                     |
+                 +----------------+--------------------+
+                                  |
+                                  v
+                        Draft PR/MR Publication
+                                  |
+                                  v
+                             Human review
 ```
 
 The current incident application accepts project-scoped observations and signed
-webhooks, groups signals into incidents, collects trusted evidence, and exposes
-the resulting diagnosis and proposed change for review.
+webhooks, groups signals into incidents, tracks incident lifecycle on a
+Pipeline Board, collects trusted evidence, and coordinates repair proposals.
+
+Remediation can run in **Conservative mode** (creating a constrained patch and
+publishing a Draft PR/MR to GitHub or GitLab for repository CI and human review)
+or **Enhanced mode** (with optional containerized pre-validation against
+approved Go or Node builder toolchains in a network-isolated Docker sandbox).
+All runs are backed by durable checkpoints and an execution recovery worker.
 
 Underneath it, the neutral Agent Harness owns the reusable execution contract:
 
@@ -69,7 +90,9 @@ Underneath it, the neutral Agent Harness owns the reusable execution contract:
 - unknown write outcomes stop for resolution instead of being replayed blindly;
 - artifacts distinguish model-authored, observed, and independently verified claims.
 
-Read [Agent Harness concepts](https://www.mendry.net/docs/concepts/agent-harness/)
+Read [Operator workflow](https://www.mendry.net/docs/guides/operator-workflow/),
+[Automatic hotfix](https://www.mendry.net/docs/guides/automatic-hotfix/), and
+[Agent Harness concepts](https://www.mendry.net/docs/concepts/agent-harness/)
 for the complete execution and extension boundaries.
 
 ## Project status
@@ -77,13 +100,14 @@ for the complete execution and extension boundaries.
 Mendry is under active development. Status labels describe verified evidence,
 not product ambition.
 
-| Area                            | Status            | Current boundary                                                                                |
-| ------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
-| Shared Agent Harness foundation | **Preview**       | Neutral execution contracts and core mechanics are implemented and focused-tested.              |
-| Existing incident application   | **Preview**       | Single-user workflow with projects, sessions, webhooks, evidence, and remediation review.       |
-| Account-free Local composition  | **In validation** | Source and examples exist; a supported walkthrough has not been released.                       |
-| Generic run service and UI      | **Planned**       | Generic event, run, call, and artifact product surfaces are not yet available.                  |
-| Production distribution         | **Planned**       | No supported image, Compose bundle, upgrade path, or rollback package is published.             |
+| Area                                    | Status      | Current boundary                                                                                |
+| --------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| Shared Agent Harness foundation         | **Preview** | Neutral execution contracts and core mechanics are implemented and focused-tested.              |
+| Existing incident application           | **Preview** | Single-user workflow with projects, sessions, webhooks, evidence, and remediation review.       |
+| Account-free Local composition          | **Preview** | Source CLI supports run, inspect, resume, and operator resolution with durable snapshots.       |
+| Automatic hotfix & local pre-validation | **Preview** | Bounded patch generation, container test verification, and draft PR/MR creation on SCMs.        |
+| Generic run service and UI              | **Planned** | Generic event, run, call, and artifact product surfaces are not yet available.                  |
+| Production distribution                 | **Planned** | No supported image, Compose bundle, upgrade path, or rollback package is published.             |
 
 See the [detailed capability matrix](https://www.mendry.net/docs/project/status/)
 before evaluating an integration. PostgreSQL, Redis, one login identity, and
@@ -104,6 +128,7 @@ neutral Harness core.
 - PostgreSQL
 - Redis
 - OpenSSL, or another secure generator for a 32-byte encryption key
+- Docker (optional, required only for Enhanced local pre-validation mode)
 
 ### Start the API
 
