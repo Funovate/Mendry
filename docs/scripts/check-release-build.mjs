@@ -146,8 +146,46 @@ for (const route of routes) {
       html.includes('type="application/ld+json"') === indexable,
       `${route} must ${indexable ? "emit" : "omit"} structured data`,
     );
+    if (indexable) {
+      const jsonMatch = html.match(
+        /<script type="application\/ld\+json">([\s\S]*?)<\/script>/,
+      );
+      if (jsonMatch) {
+        const json = JSON.parse(jsonMatch[1]);
+        const breadcrumb = json["@graph"]?.find(
+          (entity) => entity["@type"] === "BreadcrumbList",
+        );
+        if (breadcrumb?.itemListElement) {
+          for (const item of breadcrumb.itemListElement) {
+            const itemUrl = new URL(item.item);
+            requireMatch(
+              itemUrl.origin === origin,
+              `${route} breadcrumb item has invalid origin: ${item.item}`,
+            );
+            requireMatch(
+              routes.includes(itemUrl.pathname),
+              `${route} breadcrumb item points to non-existent route: ${itemUrl.pathname}`,
+            );
+          }
+        }
+      }
+    }
   }
 }
+
+const notFoundHtml = await readFile("dist/404.html", "utf8");
+requireMatch(
+  findMeta(notFoundHtml, "robots", "noindex, nofollow"),
+  "404.html must emit noindex, nofollow robots metadata",
+);
+requireMatch(
+  !findLink(notFoundHtml, "canonical"),
+  "404.html must not emit a canonical URL",
+);
+requireMatch(
+  !notFoundHtml.includes('type="application/ld+json"'),
+  "404.html must not emit structured data",
+);
 
 const files = await collectFiles("dist");
 const sitemapFiles = files.filter((file) => {
