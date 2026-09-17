@@ -1,0 +1,900 @@
+/* ==========================================================================
+   Mendry Remediation Pipeline Board
+   Theme: Ink (#17281F), Cream Canvas (#FAFBF8), Amber Kintsugi (#C1893E)
+   ========================================================================== */
+
+.mendry-board {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 58px);
+  min-height: calc(100vh - 58px);
+  background-color: var(--color-canvas, #fafbf8);
+  color: var(--color-ink, #17281f);
+  overflow: hidden;
+  position: relative;
+}
+
+/* --------------------------------------------------------------------------
+   Top Command Header
+   -------------------------------------------------------------------------- */
+.mendry-board .board-header {
+  position: relative;
+  z-index: 2;
+  background: #ffffff;
+  border-bottom: 1px solid var(--color-border, #e2e7e3);
+  padding: 16px 28px 14px;
+  box-shadow: 0 1px 4px rgb(23 40 31 / 3%);
+  flex-shrink: 0;
+}
+
+/* Amber hairline kintsugi stitch accent at the top of board header */
+.mendry-board .board-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 10%, #c1893e 50%, transparent 90%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.mendry-board .board-header-kicker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.mendry-board .board-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-muted, #5c6f65);
+  letter-spacing: 0.02em;
+}
+
+.mendry-board .breadcrumb-brand {
+  font-weight: 700;
+  color: #17281f;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mendry-board .breadcrumb-sep {
+  color: #a8b8ae;
+}
+
+.mendry-board .breadcrumb-project {
+  color: #2e4337;
+  font-weight: 600;
+}
+
+.mendry-board .breadcrumb-current {
+  color: #c1893e;
+  font-weight: 600;
+}
+
+.mendry-board .board-live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  background: #eaf5ee;
+  border: 1px solid #c9e4d2;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #156644;
+}
+
+.mendry-board .live-pulsing-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #22c55e;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  animation: live-pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+@keyframes live-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+.mendry-board .board-header-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.mendry-board .board-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mendry-board .board-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mendry-board .title-icon {
+  color: #176d52;
+}
+
+.mendry-board .board-title-line h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  color: #17281f;
+  letter-spacing: -0.02em;
+}
+
+.mendry-board .board-tasks-total {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: #f1f5f2;
+  border: 1px solid #dbe5dd;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3b5044;
+}
+
+.mendry-board .board-tagline {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #5c6f65;
+  line-height: 1.5;
+}
+
+.mendry-board .board-tagline strong {
+  color: #17281f;
+}
+
+/* --------------------------------------------------------------------------
+   Header Controls: Search & Filters
+   -------------------------------------------------------------------------- */
+.mendry-board .board-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mendry-board .board-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: 7px;
+  padding: 0 10px;
+  height: 33px;
+  width: 240px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mendry-board .board-search-box:focus-within {
+  border-color: #176d52;
+  box-shadow: 0 0 0 3px rgb(23 109 82 / 10%);
+}
+
+.mendry-board .search-icon {
+  color: #788a80;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.mendry-board .board-search-box input {
+  border: none;
+  background: transparent;
+  width: 100%;
+  font-size: 12px;
+  color: #17281f;
+  outline: none;
+}
+
+.mendry-board .board-search-box input::placeholder {
+  color: #8c9e94;
+}
+
+.mendry-board .search-clear-btn {
+  background: transparent;
+  border: none;
+  color: #788a80;
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.mendry-board .search-clear-btn:hover {
+  color: #17281f;
+  background: #eef3ef;
+}
+
+.mendry-board .board-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mendry-board .filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: 7px;
+  padding: 0 9px;
+  height: 33px;
+  color: #4b5e54;
+  font-size: 12px;
+}
+
+.mendry-board .filter-item select {
+  border: none;
+  background: transparent;
+  color: #17281f;
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+}
+
+.mendry-board .board-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 33px;
+  padding: 0 12px;
+  background: #ffffff;
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: 7px;
+  color: #3e5046;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mendry-board .board-refresh-button:hover {
+  background: #f6f9f6;
+  border-color: #176d52;
+  color: #176d52;
+}
+
+.mendry-board .board-refresh-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Pipeline Stepper Ribbon (Full Overview Track)
+   -------------------------------------------------------------------------- */
+.mendry-board .pipeline-stepper-ribbon {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2ee;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mendry-board .stepper-ribbon-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.mendry-board .stepper-node-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mendry-board .stepper-node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: #fafbf9;
+  border: 1px solid #e1e7e2;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.mendry-board .stepper-node:hover {
+  background: #ffffff;
+  border-color: #176d52;
+  box-shadow: 0 2px 6px rgb(23 40 31 / 6%);
+  transform: translateY(-1px);
+}
+
+.mendry-board .stepper-node.is-selected {
+  background: #ffffff;
+  border-color: #c1893e;
+  box-shadow: 0 0 0 2px rgb(193 137 62 / 20%), 0 3px 8px rgb(23 40 31 / 6%);
+}
+
+.mendry-board .stepper-badge {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: #eff3f0;
+  color: #384d41;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  flex-shrink: 0;
+}
+
+.mendry-board .stepper-node.has-tasks .stepper-badge {
+  background: #176d52;
+  color: #ffffff;
+}
+
+.mendry-board .stepper-node.accent-diagnose.has-tasks .stepper-badge {
+  background: #c1893e;
+  color: #ffffff;
+}
+
+.mendry-board .stepper-pulse-glow {
+  position: absolute;
+  inset: -3px;
+  border-radius: 8px;
+  border: 2px solid #c1893e;
+  opacity: 0.6;
+  animation: ripple 2s infinite;
+}
+
+@keyframes ripple {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+.mendry-board .stepper-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.mendry-board .stepper-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #17281f;
+  line-height: 1.2;
+}
+
+.mendry-board .stepper-sublabel {
+  font-size: 10px;
+  color: #73857b;
+  margin-top: 1px;
+}
+
+.mendry-board .stepper-count-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #e6ede8;
+  color: #2b3d33;
+}
+
+.mendry-board .stepper-node.has-tasks .stepper-count-pill {
+  background: #f9edd9;
+  color: #925c16;
+}
+
+.mendry-board .stepper-connector {
+  color: #9eb2a6;
+  display: grid;
+  place-items: center;
+}
+
+.mendry-board .stepper-summary-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #5c6f65;
+}
+
+.mendry-board .stepper-summary-note strong {
+  color: #176d52;
+  font-weight: 700;
+}
+
+.mendry-board .stepper-loading-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #c1893e;
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+   Canvas & Column Grid
+   -------------------------------------------------------------------------- */
+.mendry-board .board-canvas-container {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 18px 24px;
+  background: var(--color-canvas, #fafbf8);
+}
+
+.mendry-board .board-canvas {
+  display: flex;
+  gap: 18px;
+  height: 100%;
+  align-items: stretch;
+}
+
+.mendry-board .board-column {
+  flex: 0 0 310px;
+  width: 310px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgb(23 40 31 / 3%);
+  overflow: hidden;
+  max-height: 100%;
+  position: relative;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mendry-board .board-column:hover {
+  border-color: #cfd8d1;
+  box-shadow: 0 3px 10px rgb(23 40 31 / 5%);
+}
+
+/* Stage top border highlights */
+.mendry-board .board-column.accent-gather {
+  border-top: 3px solid #3b7ca6;
+}
+
+.mendry-board .board-column.accent-diagnose {
+  border-top: 3px solid #c1893e;
+  background: #fdfcf9;
+}
+
+.mendry-board .board-column.accent-plan {
+  border-top: 3px solid #176d52;
+}
+
+.mendry-board .board-column.accent-validate {
+  border-top: 3px solid #7359a6;
+}
+
+.mendry-board .board-column.accent-terminal {
+  border-top: 3px solid #486358;
+}
+
+.mendry-board .board-column.accent-neutral {
+  border-top: 3px solid #a3b3a9;
+}
+
+/* --------------------------------------------------------------------------
+   Column Header
+   -------------------------------------------------------------------------- */
+.mendry-board .board-column-header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #edf2ee;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mendry-board .column-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mendry-board .column-step-chip {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: #73857b;
+  letter-spacing: 0.08em;
+  background: #eff3f0;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.mendry-board .column-badge-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: #eff3f0;
+  color: #2b3d33;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+}
+
+.mendry-board .board-column.accent-diagnose .column-badge-count {
+  background: #fbf0e0;
+  color: #925c16;
+}
+
+.mendry-board .column-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.mendry-board .column-header-title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #17281f;
+  letter-spacing: -0.01em;
+}
+
+.mendry-board .column-header-title small {
+  font-size: 11px;
+  color: #7b8f84;
+  font-weight: 500;
+}
+
+.mendry-board .column-desc {
+  margin: 0;
+  font-size: 11px;
+  color: #5c6f65;
+  line-height: 1.4;
+}
+
+.mendry-board .column-flow-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed #e4ebe5;
+  font-size: 10px;
+  color: #788c81;
+}
+
+.mendry-board .flow-prev,
+.mendry-board .flow-next {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mendry-board .flow-arrow {
+  color: #c1893e;
+}
+
+/* --------------------------------------------------------------------------
+   Cards Container
+   -------------------------------------------------------------------------- */
+.mendry-board .board-column-cards {
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Custom slender scrollbar */
+.mendry-board .board-column-cards::-webkit-scrollbar {
+  width: 5px;
+}
+
+.mendry-board .board-column-cards::-webkit-scrollbar-thumb {
+  background: #d6e0d9;
+  border-radius: 4px;
+}
+
+.mendry-board .board-column-cards::-webkit-scrollbar-thumb:hover {
+  background: #bcc9c0;
+}
+
+/* --------------------------------------------------------------------------
+   Kanban Incident Card
+   -------------------------------------------------------------------------- */
+.mendry-board .mendry-kanban-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  background: #ffffff;
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 4%);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.mendry-board .mendry-kanban-card:hover {
+  border-color: #c1893e;
+  box-shadow: 0 6px 16px rgb(193 137 62 / 12%), 0 2px 4px rgb(23 40 31 / 4%);
+  transform: translateY(-2px);
+}
+
+.mendry-board .card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mendry-board .card-id-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mendry-board .card-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #176d52;
+}
+
+.mendry-board .card-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-weight: 700;
+  color: #17281f;
+  letter-spacing: -0.01em;
+}
+
+.mendry-board .card-pills {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mendry-board .card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #17281f;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --------------------------------------------------------------------------
+   Card Workflow Stepper (Explicit Previous, Current, Next State Tokens)
+   -------------------------------------------------------------------------- */
+.mendry-board .card-workflow-box {
+  background: #f7f9f7;
+  border: 1px solid #e5ede7;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mendry-board .workflow-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.mendry-board .workflow-status-label {
+  color: #687d72;
+}
+
+.mendry-board .workflow-current-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #17281f;
+  font-weight: 600;
+}
+
+.mendry-board .inline-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c1893e;
+  animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+.mendry-board .card-step-ruler {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 5px 0 3px;
+  border-top: 1px dashed #dbe5dd;
+  font-size: 10px;
+}
+
+.mendry-board .ruler-step {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mendry-board .ruler-step.passed {
+  color: #718479;
+}
+
+.mendry-board .ruler-step.current {
+  color: #17281f;
+  font-weight: 700;
+  background: #ffffff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #c9decb;
+}
+
+.mendry-board .current-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #176d52;
+}
+
+.mendry-board .ruler-step.upcoming {
+  color: #8c9e94;
+}
+
+.mendry-board .ruler-arrow {
+  color: #9eb2a6;
+  flex-shrink: 0;
+}
+
+.mendry-board .workflow-next-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #5c6f65;
+}
+
+.mendry-board .workflow-next-hint em {
+  font-style: normal;
+  color: #c1893e;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Card Footer
+   -------------------------------------------------------------------------- */
+.mendry-board .card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f2;
+  font-size: 11px;
+  color: #73857b;
+}
+
+.mendry-board .card-meta-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mendry-board .meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: #f1f5f2;
+  border-radius: 4px;
+  color: #43554a;
+}
+
+.mendry-board .card-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #82948a;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Empty Column State
+   -------------------------------------------------------------------------- */
+.mendry-board .board-column-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 36px 16px;
+  border: 1px dashed #dbe5dd;
+  border-radius: 8px;
+  background: #fafbf9;
+  color: #7b8f84;
+}
+
+.mendry-board .empty-icon-box {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #eef5f0;
+  color: #176d52;
+  margin-bottom: 8px;
+}
+
+.mendry-board .board-column-empty h4 {
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3b4e42;
+}
+
+.mendry-board .board-column-empty p {
+  margin: 0;
+  font-size: 11px;
+  color: #84968b;
+  line-height: 1.4;
+}

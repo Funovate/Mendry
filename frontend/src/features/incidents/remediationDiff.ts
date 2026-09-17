@@ -86,10 +86,18 @@ export function parseUnifiedDiff(input: string): ParsedUnifiedDiff {
     if (current) appendPendingChanges(current, pendingRemoved, pendingAdded);
   };
 
-  for (const line of lines) {
-    if (line.startsWith("diff --git ")) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const normalizedLine = line.trimStart();
+    const isIndentedGitHeader = line !== normalizedLine &&
+      normalizedLine.startsWith("diff --git ") &&
+      lines[index + 1]?.startsWith("--- ") &&
+      lines[index + 2]?.startsWith("+++ ");
+    const gitHeader = line.startsWith("diff --git ") ? line : isIndentedGitHeader ? normalizedLine : null;
+
+    if (gitHeader) {
       flushChanges();
-      current = createFile(pathFromGitHeader(line) ?? undefined, line);
+      current = createFile(pathFromGitHeader(gitHeader) ?? undefined, gitHeader);
       files.push(current);
       hunkPosition = null;
       continue;

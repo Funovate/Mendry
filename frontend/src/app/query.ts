@@ -8,9 +8,13 @@ export const queryKeys = {
   configuration: (projectKey: string) => ["project", projectKey, "configuration"] as const,
   configurationDraft: (projectKey: string) => ["project", projectKey, "configuration-draft"] as const,
   secrets: (projectKey: string) => ["project", projectKey, "secrets"] as const,
-  incidents: (projectKey: string) => ["project", projectKey, "incidents"] as const,
+  incidents: (projectKey: string, status?: string) =>
+    status && status !== "All"
+      ? (["project", projectKey, "incidents", status] as const)
+      : (["project", projectKey, "incidents"] as const),
+  incident: (projectKey: string, incidentId: string) => ["project", projectKey, "incidents", incidentId] as const,
   remediation: (projectKey: string, incidentId: string) => ["project", projectKey, "incidents", incidentId, "remediation"] as const,
-  observations: (projectKey: string) => ["project", projectKey, "observations"] as const,
+  observations: (projectKey: string, page?: number) => ["project", projectKey, "observations", page ?? 1] as const,
 };
 
 function handleUnauthorized(client: QueryClient, error: unknown) {

@@ -68,6 +68,40 @@ describe("parseUnifiedDiff", () => {
     ]);
   });
 
+  it("recognizes an indented file boundary from model-generated diffs", () => {
+    const result = parseUnifiedDiff([
+      "diff --git a/one.txt b/one.txt",
+      "--- a/one.txt",
+      "+++ b/one.txt",
+      "@@ -1 +1 @@",
+      "-one",
+      "+ONE",
+      " diff --git a/two.txt b/two.txt",
+      "--- a/two.txt",
+      "+++ b/two.txt",
+      "@@ -1 +1 @@",
+      "-two",
+      "+TWO",
+    ].join("\n"));
+
+    expect(result.files.map((file) => file.path)).toEqual(["one.txt", "two.txt"]);
+    expect(result.files[1].header).toBe("diff --git a/two.txt b/two.txt");
+  });
+
+  it("keeps diff-like source text as hunk context", () => {
+    const result = parseUnifiedDiff([
+      "diff --git a/example.txt b/example.txt",
+      "--- a/example.txt",
+      "+++ b/example.txt",
+      "@@ -1,2 +1,2 @@",
+      " diff --git a/not-a-boundary b/not-a-boundary",
+      " unchanged source text",
+    ].join("\n"));
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].rows[1].original?.text).toBe("diff --git a/not-a-boundary b/not-a-boundary");
+  });
+
   it("groups multiple files and falls back for non-unified text", () => {
     const result = parseUnifiedDiff([
       "diff --git a/one.txt b/one.txt",

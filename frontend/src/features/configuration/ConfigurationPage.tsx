@@ -152,6 +152,23 @@ export function ConfigurationPage() {
               <small>{value.llm ? `${formatLlmProvider(value.llm.provider)} ready` : "Setup required"}</small>
             </div>
           </div>
+
+          {value.remediation && (
+            <div className="config-overview-item">
+              <div className="config-overview-icon">
+                <ShieldCheck size={18} />
+              </div>
+              <div className="config-overview-meta">
+                <label>Automatic Hotfix</label>
+                <strong>{value.remediation.executionMode === "auto_hotfix" ? "Draft PR" : "Analysis only"}</strong>
+                <small>
+                  {value.remediation.validationProfile.enabled === false
+                    ? "Repository CI"
+                    : `${value.remediation.validationProfile.requiredCommands.length} validation command${value.remediation.validationProfile.requiredCommands.length === 1 ? "" : "s"}`}
+                </small>
+              </div>
+            </div>
+          )}
         </div>
 
         {viewMode === "cards" ? (
@@ -399,8 +416,99 @@ export function ConfigurationPage() {
               </div>
             </div>
 
-            {/* 5. Trigger & Webhook Card (Full width) */}
-            <div className="config-card config-card-full">
+            {/* 5. Automatic Hotfix Card */}
+            {value.remediation && (
+              <div className="config-card">
+                <div className="config-card-header">
+                  <div className="config-card-title-group">
+                    <div className="config-card-icon">
+                      <ShieldCheck size={18} />
+                    </div>
+                    <h2>Automatic Hotfix</h2>
+                  </div>
+                  {value.remediation.executionMode === "auto_hotfix" ? (
+                    <span className="config-badge config-badge-teal">
+                      <span className="config-dot-pulse" />
+                      Draft PR
+                    </span>
+                  ) : (
+                    <span className="config-badge config-badge-neutral">Analysis only</span>
+                  )}
+                </div>
+                <div className="config-card-body">
+                  <div className="config-prop-row">
+                    <span className="config-prop-label">Execution Mode</span>
+                    <div className="config-prop-value">
+                      <span className="config-provider-pill">
+                        {value.remediation.executionMode === "auto_hotfix" ? "Draft PR" : "Analysis only"}
+                      </span>
+                      <span className="config-code-pill">
+                        {value.remediation.agentLoopMode === "resilient_v1" ? "Resilient v1" : "Legacy"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="config-prop-row">
+                    <span className="config-prop-label">Pre-validation</span>
+                    <div className="config-prop-value">
+                      {value.remediation.validationProfile.enabled === false ? (
+                        <span className="config-provider-pill">Repository CI</span>
+                      ) : (
+                        <>
+                          <span className="config-provider-pill">Local runner</span>
+                          {value.remediation.validationProfile.imageDigest && (
+                            <span className="config-code-pill" title={value.remediation.validationProfile.imageDigest}>
+                              <code>{value.remediation.validationProfile.imageDigest.slice(0, 19)}...</code>
+                            </span>
+                          )}
+                          <span className="config-code-pill">
+                            {value.remediation.validationProfile.requiredCommands.length} command{value.remediation.validationProfile.requiredCommands.length === 1 ? "" : "s"}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="config-prop-row">
+                    <span className="config-prop-label">Publication Target</span>
+                    <div className="config-prop-value">
+                      <span className="config-branch-pill">
+                        <GitBranch size={13} />
+                        {value.remediation.publication.branchPrefix}/*
+                      </span>
+                      {value.remediation.publication.gitCredentialSecretId ? (
+                        <span className="config-badge config-badge-teal">
+                          <Lock size={12} />
+                          Git write linked
+                        </span>
+                      ) : (
+                        <span className="config-badge config-badge-neutral">No write credential</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="config-prop-row">
+                    <span className="config-prop-label">Change Limits</span>
+                    <div className="config-prop-value">
+                      <span className="config-code-pill">
+                        Max {value.remediation.changePolicy.maxChangedFiles} files
+                      </span>
+                      <span className="config-code-pill">
+                        Max {value.remediation.changePolicy.maxChangedLines} lines
+                      </span>
+                      {value.remediation.changePolicy.allowedPaths.length > 0 && (
+                        <span className="config-code-pill" title={`Allowed: ${value.remediation.changePolicy.allowedPaths.join(", ")}`}>
+                          {value.remediation.changePolicy.allowedPaths.join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 6. Trigger & Webhook Card */}
+            <div className="config-card">
               <div className="config-card-header">
                 <div className="config-card-title-group">
                   <div className="config-card-icon">
@@ -639,6 +747,43 @@ export function ConfigurationPage() {
                     )}
                   </td>
                 </tr>
+
+                {value.remediation && (
+                  <tr>
+                    <td>
+                      <div className="config-component-cell">
+                        <div className="config-component-icon">
+                          <ShieldCheck size={15} />
+                        </div>
+                        <span>Automatic hotfix</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="config-provider-pill">
+                        {value.remediation.executionMode === "auto_hotfix" ? "Draft PR" : "Analysis only"}
+                      </span>
+                    </td>
+                    <td>
+                      <span>
+                        {value.remediation.validationProfile.enabled === false
+                          ? "Repository CI"
+                          : `${value.remediation.validationProfile.requiredCommands.length} local command${value.remediation.validationProfile.requiredCommands.length === 1 ? "" : "s"}`}
+                        {" · "}
+                        {value.remediation.changePolicy.maxChangedFiles} files / {value.remediation.changePolicy.maxChangedLines} lines max
+                      </span>
+                    </td>
+                    <td>
+                      {value.remediation.executionMode === "auto_hotfix" ? (
+                        <span className="config-badge config-badge-teal">
+                          <span className="config-dot-pulse" />
+                          Draft PR
+                        </span>
+                      ) : (
+                        <span className="config-badge config-badge-neutral">Analysis only</span>
+                      )}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

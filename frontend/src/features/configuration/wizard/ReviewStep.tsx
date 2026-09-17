@@ -1,4 +1,4 @@
-import { CircleHelp, Cpu, FileSearch, GitBranch, Layers, Webhook } from "lucide-react";
+import { CircleHelp, Cpu, FileSearch, GitBranch, Layers, ShieldCheck, Webhook } from "lucide-react";
 import type { ProjectConfigurationDraft } from "../../../api";
 
 export function ReviewStep({ configuration, inboundUrl }: { configuration: ProjectConfigurationDraft; inboundUrl?: string | null }) {
@@ -112,6 +112,28 @@ export function ReviewStep({ configuration, inboundUrl }: { configuration: Proje
                 <code>{triggerUrl}</code>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Automatic hotfix */}
+        <div className="review-block">
+          <div className="review-block-header">
+            <ShieldCheck size={16} />
+            <h3>Automatic hotfix</h3>
+          </div>
+          <div className="review-block-body">
+            <div className="review-row">
+              <span>Mode</span>
+              <strong>{configuration.remediation?.executionMode === "auto_hotfix" ? "Draft PR" : "Analysis only"}</strong>
+            </div>
+            <div className="review-row">
+              <span>Validation</span>
+              <span>{configuration.remediation?.validationProfile.enabled === false ? "Repository CI" : `${configuration.remediation?.validationProfile.requiredCommands.length ?? 0} local commands`}</span>
+            </div>
+            <div className="review-row">
+              <span>Limits</span>
+              <span>{configuration.remediation?.changePolicy.maxChangedFiles ?? 10} files / {configuration.remediation?.changePolicy.maxChangedLines ?? 400} lines</span>
+            </div>
           </div>
         </div>
 

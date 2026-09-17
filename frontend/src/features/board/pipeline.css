@@ -1,0 +1,1150 @@
+/* ==========================================================================
+   Mendry Remediation Pipeline — Graphic-Driven Process Flow
+   High visual density, minimal text, interactive subway/circuit tracks
+   ========================================================================== */
+
+.pipeline-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 58px);
+  min-height: calc(100vh - 58px);
+  background-color: var(--color-canvas, #fafbf8);
+  color: var(--color-ink, #17281f);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Modern Console Header (Spacious, consistent with Configuration & Directory)
+   -------------------------------------------------------------------------- */
+.pipeline-compact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md, 16px);
+  padding: 18px 32px;
+  background: var(--color-surface, #ffffff);
+  border-bottom: 1px solid var(--color-border, #e2e7e3);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Hairline amber accent */
+.pipeline-compact-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 32px;
+  right: 32px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c1893e 50%, transparent);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.header-brand-glyph {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-control, 8px);
+  background: var(--color-ink, #17281f);
+  color: var(--color-amber, #c1893e);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.pipeline-compact-header h1 {
+  margin: 0;
+  font-size: var(--font-size-xl, 22px);
+  font-weight: 650;
+  color: var(--color-heading, #17281f);
+  letter-spacing: -0.025em;
+}
+
+/* Kinetic Actionability Filter Group in Header */
+.header-action-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-surface-muted, #f1f5f2);
+  padding: 3px 5px;
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid var(--color-border-soft, #dce5dd);
+}
+
+.action-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-muted, #5c6f65);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.action-filter-pill:hover {
+  background: #ffffff;
+  color: var(--color-ink, #17281f);
+  border-color: #d2ded5;
+}
+
+.action-filter-pill .pill-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(23, 40, 31, 0.08);
+  font-weight: 700;
+}
+
+.action-filter-pill.is-active {
+  background: var(--color-ink, #17281f);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(23, 40, 31, 0.12);
+}
+
+.action-filter-pill.is-active .pill-count {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.action-filter-pill.is-running.is-active {
+  background: #176d52;
+  color: #ffffff;
+}
+
+.action-filter-pill.is-action.has-urgent {
+  color: #9a5e12;
+  background: #fff7eb;
+  border-color: #f1be70;
+}
+
+.action-filter-pill.is-action.has-urgent .urgent-count {
+  background: #c1893e;
+  color: #ffffff;
+}
+
+.action-filter-pill.is-action.is-active {
+  background: #c1893e;
+  color: #ffffff;
+}
+
+.action-filter-pill.is-blocked.has-urgent {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.action-filter-pill.is-blocked.has-urgent .urgent-count {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.action-filter-pill.is-blocked.is-active {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.action-filter-pill.is-recoverable.is-active {
+  background: var(--color-info, #256889);
+  color: #ffffff;
+}
+
+.action-filter-pill.is-unstarted.is-active {
+  background: #475569;
+  color: #ffffff;
+}
+
+@keyframes alert-shake {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-12deg); }
+  40% { transform: rotate(10deg); }
+  60% { transform: rotate(-8deg); }
+  80% { transform: rotate(6deg); }
+}
+
+.alert-shake {
+  animation: alert-shake 2.2s infinite ease-in-out;
+  transform-origin: bottom center;
+}
+
+.header-metric-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--color-success-soft, #eaf5f0);
+  border: 1px solid #c9ded0;
+  border-radius: var(--radius-full, 9999px);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  color: var(--color-success, #1d7454);
+}
+
+.metric-pulse {
+  animation: pulse-icon 2s infinite ease-in-out;
+}
+
+@keyframes pulse-icon {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.6; }
+}
+
+.header-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-amber, #c1893e);
+  font-weight: 500;
+}
+
+.header-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 12px);
+}
+
+.compact-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: var(--radius-control, 8px);
+  padding: 0 12px;
+  height: 38px;
+  width: 170px;
+  transition: all 0.18s ease;
+}
+
+.compact-search:focus-within {
+  width: 220px;
+  border-color: var(--color-ink, #17281f);
+  box-shadow: 0 0 0 3px rgba(23, 40, 31, 0.08);
+}
+
+.compact-search .search-icon {
+  color: var(--color-muted, #5c6f65);
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.compact-search input {
+  border: none;
+  background: transparent;
+  width: 100%;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-ink, #17281f);
+  outline: none;
+}
+
+.compact-search input::placeholder {
+  color: var(--color-subtle, #788a80);
+}
+
+.search-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-muted, #5c6f65);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.compact-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: var(--radius-control, 8px);
+  padding: 0 10px;
+  height: 38px;
+  color: var(--color-muted, #5c6f65);
+  font-size: var(--font-size-sm, 13px);
+}
+
+.compact-filter select {
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 500;
+  color: var(--color-ink, #17281f);
+  outline: none;
+  cursor: pointer;
+}
+
+.compact-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: var(--radius-control, 8px);
+  color: var(--color-muted, #5c6f65);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.compact-refresh-btn:hover {
+  border-color: var(--color-ink, #17281f);
+  color: var(--color-ink, #17281f);
+  background: var(--color-surface-muted, #f6f8f6);
+}
+
+/* --------------------------------------------------------------------------
+   Hero Visual Process Track (Subway / Circuit Node Diagram)
+   -------------------------------------------------------------------------- */
+.pipeline-visual-track-hero {
+  background: #ffffff;
+  border-bottom: 1px solid #e5ede7;
+  padding: 16px 24px 14px;
+  box-shadow: 0 2px 6px rgb(23 40 31 / 3%);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.visual-track-rail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.visual-stage-node-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.visual-stage-node-wrap:last-child {
+  flex: 0 0 auto;
+}
+
+.visual-stage-node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+  background: #fbfcfb;
+  border: 1px solid #e1e8e2;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  text-align: left;
+}
+
+.visual-stage-node:hover {
+  background: #ffffff;
+  border-color: #176d52;
+  box-shadow: 0 3px 10px rgb(23 40 31 / 6%);
+  transform: translateY(-1px);
+}
+
+.visual-stage-node.is-selected {
+  border-color: #c1893e;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgb(193 137 62 / 24%), 0 3px 10px rgb(23 40 31 / 6%);
+}
+
+.node-icon-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #eef3ef;
+  color: #556c5f;
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.visual-stage-node.is-active .node-icon-circle {
+  background: #176d52;
+  color: #ffffff;
+}
+
+.visual-stage-node:nth-child(1).is-active .node-icon-circle {
+  background: #176d52;
+}
+
+.visual-stage-node.is-active .node-ring-glow {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid #c1893e;
+  animation: ripple-glow 2s infinite ease-out;
+}
+
+@keyframes ripple-glow {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  70% { transform: scale(1.2); opacity: 0; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+
+.node-caption {
+  display: flex;
+  align-items: center;
+}
+
+.node-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #17281f;
+  line-height: 1.2;
+}
+
+.node-count-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  margin-left: 2px;
+}
+
+.node-count-badge.has-count {
+  background: #fbf0df;
+  color: #925c16;
+  border: 1px solid #eed8b7;
+}
+
+.node-count-badge.zero-count {
+  background: #eef2ee;
+  color: #83948a;
+}
+
+.visual-stage-node.has-action-alert {
+  border-color: #f3c27e;
+  background: #fffdf8;
+}
+
+.visual-stage-node.has-blocked-alert {
+  border-color: #fca5a5;
+  background: #fffafa;
+}
+
+.node-alert-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.node-alert-badge.alert-action {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+}
+
+.node-alert-badge.alert-blocked {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+/* Connecting track tube / line between nodes */
+.visual-track-link {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin: 0 8px;
+}
+
+.link-bar {
+  width: 100%;
+  height: 3px;
+  background: #e2e8e4;
+  border-radius: 2px;
+}
+
+.link-hot .link-bar {
+  background: linear-gradient(90deg, #176d52, #c1893e);
+}
+
+.link-arrow {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid #d6ded7;
+  color: #63776b;
+  display: grid;
+  place-items: center;
+}
+
+.link-hot .link-arrow {
+  border-color: #c1893e;
+  color: #c1893e;
+  background: #fdfaf5;
+}
+
+/* --------------------------------------------------------------------------
+   Canvas & Station Columns
+   -------------------------------------------------------------------------- */
+.pipeline-flow-scroll {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 16px 24px;
+}
+
+.pipeline-flow-canvas {
+  display: flex;
+  gap: 14px;
+  height: 100%;
+  align-items: stretch;
+}
+
+.station-column {
+  width: 280px;
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e2e7e3;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.station-column.active-column {
+  border-top: 3px solid #176d52;
+}
+
+.station-column.empty-column {
+  border-top: 3px solid #dbe3dd;
+  background: #fcfdfc;
+}
+
+.unstarted-column {
+  border-top: 3px solid #94a59a;
+  background: #fafbf9;
+}
+
+/* Station Pill Header */
+.station-pill-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eff3ef;
+  background: #ffffff;
+}
+
+.station-pill-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #17281f;
+}
+
+.station-glyph {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  background: #eef3ef;
+  color: #176d52;
+}
+
+.station-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #17281f;
+}
+
+.station-alert-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  margin-left: 3px;
+}
+
+.station-alert-tag.is-action {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.station-alert-tag.is-blocked {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.station-counter {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  background: #eef3ef;
+  color: #485c51;
+}
+
+.active-counter {
+  background: #fbf0df;
+  color: #925c16;
+  border: 1px solid #eed8b7;
+}
+
+/* Cards Area */
+.station-cards-container {
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.station-cards-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.station-cards-container::-webkit-scrollbar-thumb {
+  background: #d8e2da;
+  border-radius: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   Graphic Task Card (Clean Modern Console Card)
+   -------------------------------------------------------------------------- */
+.graphic-task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e7e3);
+  border-radius: var(--radius-panel, 10px);
+  text-decoration: none;
+  color: inherit;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.graphic-task-card:hover {
+  border-color: var(--color-ink, #17281f);
+  box-shadow: 0 4px 14px rgba(23, 40, 31, 0.08);
+  transform: translateY(-1.5px);
+}
+
+/* Card Tone Accents: Left border indicates kinetic/advancing nature */
+.graphic-task-card.card-tone-running {
+  border-left: 3.5px solid #176d52;
+}
+
+.graphic-task-card.card-tone-action {
+  border-left: 3.5px solid #c1893e;
+  background: #fffdf9;
+}
+
+.graphic-task-card.card-tone-action:hover {
+  border-color: #c1893e;
+}
+
+.graphic-task-card.card-tone-blocked {
+  border-left: 3.5px solid #dc2626;
+  background: #fffafa;
+}
+
+.graphic-task-card.card-tone-blocked:hover {
+  border-color: #dc2626;
+}
+
+.graphic-task-card.card-tone-recoverable {
+  border-left: 3.5px solid var(--color-info, #256889);
+  background: #fbfdfd;
+}
+
+.graphic-task-card.card-tone-unstarted {
+  border-left: 3.5px solid #94a3b8;
+}
+
+.task-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.task-id-badge {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-2xs, 11.5px);
+  font-weight: 650;
+  color: var(--color-ink, #17281f);
+  background: var(--color-surface-muted, #f1f5f2);
+  padding: 2px 7px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--color-border-soft, #dce5dd);
+}
+
+/* Kinetic Status Badge in Top Row */
+.task-kinetic-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+}
+
+.task-kinetic-badge.tone-running {
+  background: #eaf5ee;
+  color: #156644;
+  border: 1px solid #bce1ca;
+}
+
+.task-kinetic-badge.tone-action {
+  background: #fef7ec;
+  color: #a36113;
+  border: 1px solid #f9d9a8;
+}
+
+.task-kinetic-badge.tone-blocked {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.task-kinetic-badge.tone-recoverable {
+  background: #edf5f9;
+  color: var(--color-info, #256889);
+  border: 1px solid #c8e1ee;
+}
+
+.task-kinetic-badge.tone-terminal {
+  background: #f1f5f2;
+  color: #556c5e;
+  border: 1px solid #dbe4dd;
+}
+
+.task-kinetic-badge.tone-unstarted {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.task-time-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-muted, #7d8f84);
+  margin-left: auto;
+}
+
+.task-title-line {
+  margin: 0;
+  font-size: var(--font-size-sm, 13.5px);
+  font-weight: 600;
+  color: var(--color-ink, #17281f);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: var(--line-height-normal, 1.45);
+}
+
+/* --------------------------------------------------------------------------
+   Advancement Status Banner: Tells user whether it will move & what is needed
+   -------------------------------------------------------------------------- */
+.task-advancement-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  margin-top: -2px;
+}
+
+.task-advancement-banner.is-running {
+  background: #f2f9f5;
+  border: 1px solid #cce7d6;
+  color: #156644;
+}
+
+.task-advancement-banner.is-action {
+  background: #fff9ed;
+  border: 1px solid #f6deb6;
+  color: #925c16;
+}
+
+.task-advancement-banner.is-blocked {
+  background: #fef4f4;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.task-advancement-banner.is-recoverable {
+  background: #f2f7fa;
+  border: 1px solid #cde3ef;
+  color: #1e5773;
+}
+
+.task-advancement-banner.is-terminal {
+  background: #f6f8f6;
+  border: 1px solid #e5ece7;
+  color: #556c5e;
+}
+
+.task-advancement-banner.is-unstarted {
+  background: #f8faf9;
+  border: 1px solid #e3eae5;
+  color: #64748b;
+}
+
+.advancement-desc {
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.advancement-next-condition {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  opacity: 0.92;
+}
+
+.advancement-next-arrow {
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.advancement-next-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   5-Segment Graphical Progress Gauge
+   -------------------------------------------------------------------------- */
+.task-gauge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.gauge-track {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.gauge-segment {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: #e5ede7;
+  transition: all 0.2s ease;
+}
+
+.gauge-segment.is-passed {
+  background: #176d52;
+}
+
+/* Tone-specific current segments (only running gets a pulse; blocked & waiting are solid) */
+.gauge-segment.is-current.is-running {
+  background: #176d52;
+  box-shadow: 0 0 5px rgba(23, 109, 82, 0.45);
+  animation: gauge-pulse 1.8s infinite ease-in-out;
+}
+
+.gauge-segment.is-current.is-action {
+  background: #c1893e;
+  box-shadow: none;
+  animation: none;
+}
+
+.gauge-segment.is-current.is-blocked {
+  background: #dc2626;
+  box-shadow: none;
+  animation: none;
+}
+
+.gauge-segment.is-current.is-recoverable {
+  background: var(--color-info, #256889);
+  box-shadow: none;
+  animation: none;
+}
+
+.gauge-segment.is-current.is-terminal {
+  background: #64748b;
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes gauge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.gauge-segment.is-upcoming {
+  background: #e6eee8;
+}
+
+/* --------------------------------------------------------------------------
+   Graphical Flow Tokens [Prev] ➔ [Current Driver] ➔ [Next Gate]
+   -------------------------------------------------------------------------- */
+.task-flow-tokens {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: #f8faf8;
+  border: 1px solid #e7ece8;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 9.5px;
+}
+
+.token {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80px;
+}
+
+.token-prev {
+  color: #556c5e;
+}
+
+.token-arrow {
+  color: #a8b8af;
+  flex-shrink: 0;
+}
+
+.token-current {
+  color: #17281f;
+  background: #ffffff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #c8dcd0;
+  max-width: 100px;
+}
+
+.token-current.is-action {
+  border-color: #f0c98f;
+  background: #fff8ee;
+  color: #925c16;
+}
+
+.token-current.is-blocked {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.token-current.is-recoverable {
+  border-color: #c8e1ee;
+  background: #f4f8fb;
+  color: #1e5773;
+}
+
+.token-current.is-running {
+  border-color: #bce1ca;
+  background: #f2f8f4;
+  color: #156644;
+}
+
+.token-icon {
+  flex-shrink: 0;
+}
+
+.token-pulse-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #176d52;
+  flex-shrink: 0;
+  animation: dot-flicker 1.5s infinite;
+}
+
+@keyframes dot-flicker {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.token-next {
+  color: #7e9185;
+}
+
+.token-next.is-blocked {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.token-next.is-action {
+  color: #925c16;
+  font-weight: 600;
+}
+
+.token-next.is-recoverable {
+  color: var(--color-info, #256889);
+}
+
+/* --------------------------------------------------------------------------
+   Task Bottom Row & Quick Action Cues
+   -------------------------------------------------------------------------- */
+.task-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.task-meta-glyphs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.glyph-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  color: #63776b;
+  background: #f2f6f3;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.card-action-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.card-action-cue.is-action {
+  background: #fff4e2;
+  color: #9a5e12;
+  border: 1px solid #f2cf97;
+}
+
+.card-action-cue.is-blocked {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.card-action-cue.is-recoverable {
+  background: #edf5f9;
+  color: #205c7a;
+  border: 1px solid #c8e1ee;
+}
+
+.card-action-cue.is-running {
+  background: #eaf5ee;
+  color: #176d52;
+  border: 1px solid #c2e2cf;
+}
+
+.card-action-cue.is-unstarted {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.graphic-task-card:hover .card-action-cue.is-action {
+  background: #c1893e;
+  color: #ffffff;
+  border-color: #c1893e;
+}
+
+.graphic-task-card:hover .card-action-cue.is-blocked {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+}
+
+.graphic-task-card:hover .card-action-cue.is-recoverable {
+  background: var(--color-info, #256889);
+  color: #ffffff;
+  border-color: var(--color-info, #256889);
+}
+
+/* Empty station */
+.station-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 28px 8px;
+  color: #9cb0a3;
+  font-size: 10px;
+}
+
+.unstarted-token-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: #7b8d82;
+  background: #f4f6f4;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.token-dot-hollow {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid #8e9e95;
+}

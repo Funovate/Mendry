@@ -426,6 +426,44 @@ describe("API contract boundary", () => {
     }));
   });
 
+  it("posts a strict current-policy repair request without policy fields", async () => {
+    const action = {
+      runId: "run-2",
+      seriesId: "series-1",
+      status: "queued",
+      generation: 1,
+      attemptNumber: 2,
+      version: 1,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: action,
+      meta: { requestId: "request-14", durationMs: 2 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.repairRemediation("payments", "INC-2049", {
+      generation: 1,
+      expectedRunId: "run-1",
+      expectedVersion: 2,
+    })).resolves.toEqual(action);
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/projects/payments/incidents/INC-2049/remediation/repair", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      body: JSON.stringify({ generation: 1, expectedRunId: "run-1", expectedVersion: 2 }),
+    }));
+  });
+
+  it("rejects a current-policy repair request with continuation field names", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(api.repairRemediation("payments", "INC-2049", {
+      generation: 1,
+      runId: "run-1",
+      version: 2,
+    } as never)).rejects.toBeInstanceOf(ApiContractError);
+  });
+
   it("rejects a remediation retry input that does not satisfy the request contract", async () => {
     vi.stubGlobal("fetch", vi.fn());
     await expect(api.retryRemediation("payments", "INC-2049", {
@@ -490,5 +528,79 @@ describe("API contract boundary", () => {
       method: "POST",
       body: "{}",
     }));
+  });
+
+  it("constructs pagination and filter query parameters for listIncidents", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: [{
+        id: "INC-2049",
+        title: "High latency",
+        fingerprint: "pg:latency",
+        status: "Open",
+        priority: "P1",
+        source: "agent",
+        sourceId: "src-1",
+        environmentId: "env-1",
+        firstSeen: "2026-08-13T08:00:00Z",
+        lastSeen: "2026-08-13T08:00:00Z",
+        occurrenceCount: 3,
+        hostCount: 2,
+        muted: false,
+        notificationSummary: "summary",
+        version: 1,
+        lifecycleGeneration: 1,
+        createdAt: "2026-08-13T08:00:00Z",
+        updatedAt: "2026-08-13T08:00:00Z",
+      }],
+      meta: { requestId: "req-1", durationMs: 2, total: 42 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.listIncidents("payments", { limit: 25, offset: 50, status: "Open" });
+    expect(result.total).toBe(42);
+    expect(result.items).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/projects/payments/incidents?limit=25&offset=50&status=Open",
+      expect.objectContaining({ credentials: "include" })
+    );
+  });
+
+  it("fetches single incident by identifier", async () => {
+    const incidentData = {
+      id: "INC-2049",
+      title: "High latency",
+      fingerprint: "pg:latency",
+      status: "Open",
+      priority: "P1",
+      source: "agent",
+      sourceId: "src-1",
+      environmentId: "env-1",
+      firstSeen: "2026-08-13T08:00:00Z",
+      lastSeen: "2026-08-13T08:00:00Z",
+      occurrenceCount: 3,
+      hostCount: 2,
+      muted: false,
+      notificationSummary: "summary",
+      version: 1,
+      lifecycleGeneration: 1,
+      createdAt: "2026-08-13T08:00:00Z",
+      updatedAt: "2026-08-13T08:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "ok",
+      message: "OK",
+      data: incidentData,
+      meta: { requestId: "req-2", durationMs: 1 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await api.getIncident("payments", "INC-2049");
+    expect(result.id).toBe("INC-2049");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/projects/payments/incidents/INC-2049",
+      expect.objectContaining({ credentials: "include" })
+    );
   });
 });

@@ -11,12 +11,13 @@ import {
   readConfigNumber, readConfigObject, readConfigString, readStringRecord, type WebhookProvider,
 } from "./configuration";
 import { LLMStep } from "./wizard/LLMStep";
+import { RemediationStep } from "./wizard/RemediationStep";
 import { RepositoryStep } from "./wizard/RepositoryStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SourceStep } from "./wizard/SourceStep";
 import { TriggerStep } from "./wizard/TriggerStep";
 
-type StepId = "repository" | "source" | "trigger" | "llm" | "review";
+type StepId = "repository" | "source" | "trigger" | "llm" | "remediation" | "review";
 
 function readWebhookProvider(config: Record<string, unknown> | undefined): WebhookProvider {
   const provider = readConfigString(config, "provider", "generic");
@@ -28,7 +29,8 @@ const STEPS: { id: StepId; label: string; stepNumber: number }[] = [
   { id: "source", label: "Collection source", stepNumber: 2 },
   { id: "trigger", label: "Trigger", stepNumber: 3 },
   { id: "llm", label: "LLM provider", stepNumber: 4 },
-  { id: "review", label: "Review", stepNumber: 5 },
+  { id: "remediation", label: "Automatic hotfix", stepNumber: 5 },
+  { id: "review", label: "Review", stepNumber: 6 },
 ];
 
 export function ConfigurationEditorPage() {
@@ -98,6 +100,16 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [llmModel, setLlmModel] = useState(current.llm?.model ?? "");
   const [llmModels, setLlmModels] = useState<string[]>(current.llm?.model ? [current.llm.model] : []);
   const [llmChatReady, setLlmChatReady] = useState(false);
+  const [remediationPolicy, setRemediationPolicy] = useState<NonNullable<ProjectConfigurationDraft["remediation"]>>(current.remediation ?? {
+    agentLoopMode: "legacy",
+    executionMode: "analysis_only",
+    validationProfile: {
+      enabled: false, imageDigest: "", workingDirectory: ".", preparation: [], requiredCommands: [],
+      cpuLimit: 2, memoryLimitMiB: 4096, workspaceLimitMiB: 10240,
+    },
+    publication: { branchPrefix: "hotfix/remediation", gitCredentialSecretId: "", apiCredentialSecretId: "", apiBaseUrl: "" },
+    changePolicy: { allowedPaths: ["**"], deniedPaths: [], maxChangedFiles: 10, maxChangedLines: 400 },
+  });
 
   const updateDraft = (next: Partial<ProjectConfigurationDraft>) => {
     queryClient.setQueryData<ProjectConfigurationDraft>(queryKeys.configurationDraft(project.key), (draft) => ({
@@ -106,6 +118,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
       source: null,
       trigger: null,
       llm: null,
+      remediation: null,
       ...(draft ?? {}),
       ...next,
     }));
@@ -127,6 +140,11 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     enabled: current.trigger?.enabled ?? true,
   });
   const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
+  const buildRemediationPayload = () => {
+    const payload = { ...remediationPolicy };
+    delete (payload as { version?: unknown }).version;
+    return payload;
+  };
 
   const createSecret = useMutation({
     mutationFn: (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => api.createSecret(project.key, input),
@@ -203,6 +221,13 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     mutationFn: () => api.putConfigurationLLM(project.key, buildLLMPayload()),
     onSuccess: (saved) => updateDraft({ llm: saved }),
   });
+  const saveRemediation = useMutation({
+    mutationFn: () => api.putConfigurationRemediation(project.key, buildRemediationPayload()),
+    onSuccess: (saved) => {
+      setRemediationPolicy(saved);
+      updateDraft({ remediation: saved });
+    },
+  });
   const rotateWebhookToken = useMutation({
     mutationFn: () => api.rotateWebhookToken(project.key),
     onSuccess: (result) => {
@@ -231,18 +256,35 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
 
   return <section className="setup-view">
     <div className="setup-header">
-      <button type="button" className="back-link" onClick={onCancel}><ChevronLeft size={16} />Configuration</button>
+      <button type="button" className="back-link" onClick={onCancel}>
+        <ChevronLeft size={16} />
+        <span>Configuration</span>
+      </button>
       <h1>Project configuration</h1>
+      <p className="setup-header-desc">
+        Configure repository baseline, telemetry collection, alerts, and automatic remediation policies.
+      </p>
     </div>
     <div className="wizard-steps" role="tablist">
-      {STEPS.map((step) => <button
-        key={step.id} type="button" role="tab" aria-selected={activeStep === step.id}
-        className={activeStep === step.id ? "wizard-step-tab active" : "wizard-step-tab"}
-        onClick={() => setActiveStep(step.id)}
-      >
-        <span className="wizard-step-num">{step.stepNumber}</span>
-        <span className="wizard-step-name">{step.label}</span>
-      </button>)}
+      {STEPS.map((step) => {
+        const isCurrent = activeStep === step.id;
+        const isCompleted = step.stepNumber < (STEPS.find((s) => s.id === activeStep)?.stepNumber ?? 1);
+        return (
+          <button
+            key={step.id}
+            type="button"
+            role="tab"
+            aria-selected={isCurrent}
+            className={`wizard-step-tab ${isCurrent ? "active" : ""} ${isCompleted ? "completed" : ""}`}
+            onClick={() => setActiveStep(step.id)}
+          >
+            <span className="wizard-step-num">
+              {isCompleted ? <Check size={12} strokeWidth={2.5} /> : step.stepNumber}
+            </span>
+            <span className="wizard-step-name">{step.label}</span>
+          </button>
+        );
+      })}
     </div>
     <div className="real-config-form">
       {activeStep === "repository" && <RepositoryStep
@@ -305,10 +347,17 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}
         updateCredential={updateCredential} updatingCredential={updateSecret.isPending} updateCredentialError={updateSecret.error}
       />}
+      {activeStep === "remediation" && <RemediationStep
+        policy={remediationPolicy} setPolicy={setRemediationPolicy} secrets={knownSecrets}
+        onSave={() => saveRemediation.mutate()} saving={saveRemediation.isPending} saveError={saveRemediation.error}
+      />}
       {activeStep === "review" && <ReviewStep configuration={current} inboundUrl={inboundUrl} />}
       <footer className="setup-footer">
         <div className="setup-footer-left">
-          <button className="secondary-button" type="button" onClick={onCancel}>Return to configuration</button>
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            <ChevronLeft size={15} />
+            <span>Return to configuration</span>
+          </button>
         </div>
         <div className="setup-footer-nav">
           {prevStep && (

@@ -142,9 +142,9 @@ html {
 }
 
 .view-header {
-  min-height: 120px;
+  min-height: 84px;
   align-items: center;
-  padding-block: 28px 24px;
+  padding-block: 28px 20px;
 }
 
 .view-header h1,
@@ -152,9 +152,9 @@ html {
 .setup-header h1,
 .login-panel h1 {
   color: var(--color-heading);
-  font-size: 30px;
-  font-weight: 620;
-  letter-spacing: -0.035em;
+  font-size: var(--font-size-2xl, 26px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
   line-height: 1.25;
 }
 
@@ -162,8 +162,9 @@ html {
 .project-directory p,
 .setup-header p,
 .login-panel p {
-  color: var(--color-text);
-  line-height: 1.7;
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .settings-view { padding-bottom: 32px; }

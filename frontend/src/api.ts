@@ -101,12 +101,69 @@ const llmProviderSchema = z.object({
   version: z.number().optional(),
 });
 
+const validationCommandSchema = z.object({
+  id: z.string(),
+  version: z.number().int().positive(),
+  argv: z.array(z.string()).min(1).max(64),
+  timeoutSeconds: z.number().int().positive().max(3600),
+});
+
+const remediationPolicySchema = z.object({
+  agentLoopMode: z.enum(["legacy", "resilient_v1"]),
+  executionMode: z.enum(["analysis_only", "auto_hotfix"]),
+  validationProfile: z.object({
+    enabled: z.boolean().nullable(),
+    imageDigest: z.string(),
+    workingDirectory: z.string(),
+    preparation: z.array(validationCommandSchema).max(16),
+    requiredCommands: z.array(validationCommandSchema).max(32),
+    cpuLimit: z.number().int().positive(),
+    memoryLimitMiB: z.number().int().positive(),
+    workspaceLimitMiB: z.number().int().positive(),
+  }),
+  publication: z.object({
+    branchPrefix: z.literal("hotfix/remediation"),
+    gitCredentialSecretId: z.string(),
+    apiCredentialSecretId: z.string(),
+    apiBaseUrl: z.string(),
+  }),
+  changePolicy: z.object({
+    allowedPaths: z.array(z.string()).min(1).max(64),
+    deniedPaths: z.array(z.string()).max(64),
+    maxChangedFiles: z.number().int().positive().max(30),
+    maxChangedLines: z.number().int().positive().max(5000),
+  }),
+  version: z.number().int().positive().optional(),
+});
+
+const hotfixCandidateSchema = z.object({
+  directory: z.string(),
+  runtime: z.string(),
+});
+
+const hotfixStatusSchema = z.enum(["idle", "checking", "needs_selection", "ready", "enabling", "enabled", "blocked"]);
+
+const hotfixCheckSchema = z.object({
+  id: z.string(),
+  status: hotfixStatusSchema,
+  message: z.string(),
+  candidates: z.array(hotfixCandidateSchema),
+  directory: z.string(),
+  runtime: z.string(),
+  baselineCommit: z.string(),
+  validationSummary: z.string(),
+  branchOnly: z.boolean(),
+  credentialName: z.string(),
+  expiresAt: z.string(),
+});
+
 const projectConfigurationSchema = z.object({
   environment: environmentSchema,
   repository: repositorySchema,
   source: sourceSchema,
   trigger: triggerSchema,
   llm: llmProviderSchema.nullish(),
+  remediation: remediationPolicySchema,
 });
 
 const projectConfigurationDraftSchema = z.object({
@@ -115,6 +172,7 @@ const projectConfigurationDraftSchema = z.object({
   source: sourceSchema.nullable(),
   trigger: triggerSchema.nullable(),
   llm: llmProviderSchema.nullable(),
+  remediation: remediationPolicySchema.nullable(),
 });
 
 const llmModelsSchema = z.object({
@@ -214,6 +272,12 @@ const remediationContinuationInputSchema = z.object({
   version: z.number().int().positive(),
 }).strict();
 
+const remediationRepairInputSchema = z.object({
+  generation: z.number().int().positive(),
+  expectedRunId: z.string().min(1),
+  expectedVersion: z.number().int().positive(),
+}).strict();
+
 const remediationBudgetAmountSchema = z.object({
   elapsedSeconds: z.number().int().nonnegative(),
   modelCalls: z.number().int().nonnegative(),
@@ -237,7 +301,16 @@ const remediationCheckpointSchema = z.object({
   reason: z.string(),
   observedRunVersion: z.number().int().nonnegative(),
   updatedAt: z.string(),
-});
+  validations: z.array(z.object({
+    commandId: z.string(), commandVersion: z.number().int().nonnegative(),
+    treeHash: z.string(), passed: z.boolean(),
+  })).optional().default([]),
+  publication: z.object({
+    branchRef: z.string(), targetBranch: z.string(), commitHash: z.string(),
+    changeRef: z.string().optional(), compareUrl: z.string().optional(),
+    targetDiverged: z.boolean().optional(),
+  }).optional(),
+}).passthrough();
 
 const remediationRecoverySchema = z.object({
   active: z.boolean(),
@@ -317,6 +390,15 @@ export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 export type ProjectConfigurationDraft = z.infer<typeof projectConfigurationDraftSchema>;
 export type Observation = z.infer<typeof observationSchema>;
 export type ApiIncident = z.infer<typeof incidentSchema>;
+export type ListObservationsParams = {
+  limit?: number;
+  offset?: number;
+};
+export type ListIncidentsParams = {
+  limit?: number;
+  offset?: number;
+  status?: string;
+};
 export type RemediationReview = z.infer<typeof remediationReviewSchema>;
 export type RemediationCheckpoint = z.infer<typeof remediationCheckpointSchema>;
 export type RemediationRecovery = z.infer<typeof remediationRecoverySchema>;
@@ -324,7 +406,11 @@ export type RemediationBudgetProjection = z.infer<typeof remediationBudgetProjec
 export type RemediationAttempt = z.infer<typeof remediationAttemptSchema>;
 export type RemediationAction = z.infer<typeof remediationActionSchema>;
 export type RemediationContinuationInput = z.infer<typeof remediationContinuationInputSchema>;
+export type RemediationRepairInput = z.infer<typeof remediationRepairInputSchema>;
 export type RemediationRetryInput = RemediationContinuationInput;
+export type HotfixCandidate = z.infer<typeof hotfixCandidateSchema>;
+export type HotfixStatus = z.infer<typeof hotfixStatusSchema>;
+export type HotfixCheck = z.infer<typeof hotfixCheckSchema>;
 export type ListResult<T> = { items: T[]; total: number };
 
 export class ApiError extends Error {
@@ -432,6 +518,18 @@ const retryRemediation = (projectKey: string, incidentId: string, input: Remedia
   });
 };
 
+const repairRemediation = (projectKey: string, incidentId: string, input: RemediationRepairInput) => {
+  const path = projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation/repair`);
+  const parsed = remediationRepairInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return Promise.reject(new ApiContractError(path, "The remediation request does not match the frontend contract.", parsed.error));
+  }
+  return requestData(path, remediationActionSchema, {
+    method: "POST",
+    body: JSON.stringify(parsed.data),
+  });
+};
+
 export const api = {
   me: (signal?: AbortSignal) => requestData("/api/v1/auth/me", currentUserSchema, { signal }),
   login: (username: string, password: string) => requestData("/api/v1/auth/login", currentUserSchema, {
@@ -476,10 +574,47 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/trigger"), triggerSchema, { method: "PUT", body: JSON.stringify(input) }),
   putConfigurationLLM: (projectKey: string, input: Omit<NonNullable<ProjectConfiguration["llm"]>, "id" | "version">) =>
     requestData(projectPath(projectKey, "/configuration/llm"), llmProviderSchema, { method: "PUT", body: JSON.stringify(input) }),
+  putConfigurationRemediation: (projectKey: string, input: Omit<ProjectConfiguration["remediation"], "version">) => {
+    const cleanPayload = { ...(input as ProjectConfiguration["remediation"]) };
+    delete (cleanPayload as { version?: unknown }).version;
+    return requestData(projectPath(projectKey, "/configuration/remediation-policy"), remediationPolicySchema, { method: "PUT", body: JSON.stringify(cleanPayload) });
+  },
+  checkAutoHotfix: (projectKey: string, input?: { directory?: string }) =>
+    requestData(projectPath(projectKey, "/configuration/auto-hotfix/check"), hotfixCheckSchema, { method: "POST", body: JSON.stringify({ directory: input?.directory ?? "" }) }),
+  getAutoHotfixCheck: (projectKey: string, signal?: AbortSignal) =>
+    requestData(projectPath(projectKey, "/configuration/auto-hotfix/check"), hotfixCheckSchema, { signal }),
+  enableAutoHotfix: (projectKey: string, checkId: string) =>
+    requestData(projectPath(projectKey, "/configuration/auto-hotfix/enable"), remediationPolicySchema, { method: "POST", body: JSON.stringify({ checkId }) }),
   rotateWebhookToken: (projectKey: string) =>
     requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
-  listObservations: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/observations?limit=100"), observationSchema, { signal }),
-  listIncidents: (projectKey: string, signal?: AbortSignal) => requestList(projectPath(projectKey, "/incidents?limit=100"), incidentSchema, { signal }),
+  listObservations: (projectKey: string, params?: ListObservationsParams, signal?: AbortSignal) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit !== undefined) searchParams.set("limit", String(params.limit));
+    if (params?.offset !== undefined) searchParams.set("offset", String(params.offset));
+    const qs = searchParams.toString();
+    return requestList(projectPath(projectKey, `/observations${qs ? `?${qs}` : ""}`), observationSchema, { signal });
+  },
+  listIncidents: (
+    projectKey: string,
+    paramsOrSignal?: ListIncidentsParams | AbortSignal,
+    signal?: AbortSignal
+  ) => {
+    let params: ListIncidentsParams | undefined;
+    let actualSignal = signal;
+    if (paramsOrSignal instanceof AbortSignal) {
+      actualSignal = paramsOrSignal;
+    } else if (paramsOrSignal) {
+      params = paramsOrSignal;
+    }
+    const searchParams = new URLSearchParams();
+    if (params?.limit !== undefined) searchParams.set("limit", String(params.limit));
+    if (params?.offset !== undefined) searchParams.set("offset", String(params.offset));
+    if (params?.status && params.status !== "All") searchParams.set("status", params.status);
+    const qs = searchParams.toString();
+    return requestList(projectPath(projectKey, `/incidents${qs ? `?${qs}` : ""}`), incidentSchema, { signal: actualSignal });
+  },
+  getIncident: (projectKey: string, incidentId: string, signal?: AbortSignal) =>
+    requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}`), incidentSchema, { signal }),
   updateIncidentStatus: (projectKey: string, incidentId: string, status: IncidentStatus) =>
     requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/status`), incidentSchema, {
       method: "PATCH",
@@ -489,6 +624,7 @@ export const api = {
     requestData(projectPath(projectKey, `/incidents/${encodeURIComponent(incidentId)}/remediation`), remediationReviewSchema, { signal }),
   startRemediation,
   retryRemediation,
+  repairRemediation,
   continueRemediation: retryRemediation,
 };
 

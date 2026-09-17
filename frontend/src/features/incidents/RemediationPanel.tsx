@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpRight, BadgeCheck, Check, ChevronRight, ChevronsUpDown, Copy, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, ChevronRight, ChevronsUpDown, Copy, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, PanelRightClose, PanelRightOpen, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError, messageFromError, type RemediationContinuationInput } from "../../api";
+import { Link } from "react-router-dom";
+import { api, ApiError, messageFromError, type RemediationContinuationInput, type RemediationRepairInput } from "../../api";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
 import { ErrorNotice } from "../../shared/ui";
+import { STAGE_ICONS, STATE_METADATA, WORKFLOW_STAGES } from "../board/PipelinePage";
 import { parseUnifiedDiff, type DiffFile, type DiffLine } from "./remediationDiff";
 
 type RemediationPanelProps = {
@@ -211,6 +213,8 @@ export function DiffViewer({ value }: { value: string }) {
 export function RemediationPanel({ projectKey, incidentId, generation, fingerprint, notificationSummary }: RemediationPanelProps) {
   const queryClient = useQueryClient();
   const [copiedCommit, setCopiedCommit] = useState<string | null>(null);
+  const [contextExpanded, setContextExpanded] = useState(true);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const remediation = useQuery({
     queryKey: queryKeys.remediation(projectKey, incidentId),
     queryFn: ({ signal }) => api.getRemediation(projectKey, incidentId, signal),
@@ -222,18 +226,35 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
   const startRemediation = useMutation({
     mutationFn: () => api.startRemediation(projectKey, incidentId, generation),
     onSuccess: () => {
+      setSuccessNotice("Remediation started. Refreshing latest attempt...");
       void queryClient.invalidateQueries({ queryKey: queryKeys.remediation(projectKey, incidentId) });
     },
   });
   const continueRemediation = useMutation({
     mutationFn: (input: RemediationContinuationInput) => api.retryRemediation(projectKey, incidentId, input),
     onSuccess: () => {
+      setSuccessNotice("Continuation queued. Refreshing latest attempt...");
       void queryClient.invalidateQueries({ queryKey: queryKeys.remediation(projectKey, incidentId) });
     },
   });
+  const repairWithCurrentPolicy = useMutation({
+    mutationFn: (input: RemediationRepairInput) => api.repairRemediation(projectKey, incidentId, input),
+    onSuccess: () => {
+      setSuccessNotice("Repair with current settings queued. Refreshing latest attempt...");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.remediation(projectKey, incidentId) });
+    },
+  });
+
+  useEffect(() => {
+    if (!successNotice) return;
+    const timer = window.setTimeout(() => setSuccessNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [successNotice]);
   const continuationBlocked = continueRemediation.error instanceof ApiError &&
     (continueRemediation.error.status === 403 || continuationBlockingCodes.has(continueRemediation.error.code));
+  const repairPolicyUnavailable = repairWithCurrentPolicy.error instanceof ApiError && repairWithCurrentPolicy.error.code === "remediation_policy_unavailable";
   const review = remediation.data;
+  const repairEligible = review != null && ["diagnosis_ready_for_review", "failed", "budget_exhausted", "blocked_manual_review"].includes(review.status);
   const commitCopied = Boolean(review?.deployedCommit && copiedCommit === review.deployedCommit);
 
   const copyDeployedCommit = async () => {
@@ -254,6 +275,11 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
       runId: review.runId,
       version: review.version,
     });
+  };
+
+  const repairFromReview = () => {
+    if (!review || !canWrite || !repairEligible || repairWithCurrentPolicy.isPending) return;
+    repairWithCurrentPolicy.mutate({ expectedRunId: review.runId, expectedVersion: review.version, generation: review.generation });
   };
 
   const incidentProperties = (
@@ -286,11 +312,30 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
         </div>
       )}
       {remediation.isError && !missing && <ErrorNotice message={messageFromError(remediation.error)} onRetry={() => void remediation.refetch()} />}
-      {(startRemediation.error || continueRemediation.error) && (
-        <ErrorNotice message={messageFromError(startRemediation.error ?? continueRemediation.error)} />
+      {(startRemediation.error || continueRemediation.error || repairWithCurrentPolicy.error) && (
+        <ErrorNotice message={messageFromError(startRemediation.error ?? continueRemediation.error ?? repairWithCurrentPolicy.error)} />
       )}
-      {continueRemediation.isSuccess && (
-        <p className="remediation-action-success" role="status">Continuation queued. Refreshing the latest attempt.</p>
+      {repairPolicyUnavailable && (
+        <p className="readonly-note">
+          Automatic repair is not enabled for this project. <Link to={`/projects/${encodeURIComponent(projectKey)}/configuration/edit`}>Open project configuration</Link>.
+        </p>
+      )}
+      {successNotice && (
+        <aside className="remediation-action-success" role="status" aria-live="polite">
+          <CheckCircle2 size={16} className="success-icon" aria-hidden="true" />
+          <div className="success-text">
+            <strong>Action Scheduled</strong>
+            <span>{successNotice}</span>
+          </div>
+          <button
+            type="button"
+            className="success-dismiss-btn"
+            onClick={() => setSuccessNotice(null)}
+            aria-label="Dismiss notification"
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </aside>
       )}
       {review && (
         <div className="remediation-review">
@@ -298,16 +343,84 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
             <h2><Waypoints size={20} aria-hidden="true" />Remediation review</h2>
             <span className="remediation-state-label">{review.status.replaceAll("_", " ")}</span>
             <div className="remediation-actions">
-                {review.continuationAvailable && canWrite && (
-                  <button className="primary-button" type="button" disabled={continueRemediation.isPending || continuationBlocked} onClick={continueFromReview}>
-                    {continueRemediation.isPending ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
-                    {continueRemediation.isPending ? "Continuing analysis..." : "Continue analysis"}
-                  </button>
-                )}
-
+              {review.continuationAvailable && canWrite && (
+                <button className="primary-button" type="button" disabled={continueRemediation.isPending || continuationBlocked} onClick={continueFromReview}>
+                  {continueRemediation.isPending ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
+                  {continueRemediation.isPending ? "Continuing analysis..." : "Continue analysis"}
+                </button>
+              )}
+              {repairEligible && canWrite && (
+                <button className="secondary-button" type="button" disabled={repairWithCurrentPolicy.isPending} onClick={repairFromReview}>
+                  {repairWithCurrentPolicy.isPending ? <LoaderCircle className="spin" size={15} /> : <Wrench size={15} />}
+                  {repairWithCurrentPolicy.isPending ? "Starting current-policy repair..." : "Repair with current settings"}
+                </button>
+              )}
+              <button
+                type="button"
+                className={`context-toggle-button ${contextExpanded ? "is-expanded" : "is-collapsed"}`}
+                onClick={() => setContextExpanded((prev) => !prev)}
+                title={contextExpanded ? "Collapse context rail to expand main content" : "Show context rail"}
+                aria-label={contextExpanded ? "Collapse context rail" : "Show context rail"}
+              >
+                {contextExpanded ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}
+                <span>{contextExpanded ? "Hide details" : "Show details"}</span>
+              </button>
             </div>
           </header>
-          <div className="remediation-columns">
+          {/* Graphical Remediation Progression Stepper */}
+          <div className="remediation-pipeline-stepper" aria-label="Workflow Progress">
+            <div className="stepper-track">
+              {WORKFLOW_STAGES.map((stg, sIdx) => {
+                const Icon = STAGE_ICONS[stg.id] || Waypoints;
+                const currentIdx = WORKFLOW_STAGES.findIndex((s) => s.states.includes(review.status));
+                const isCurrent = stg.states.includes(review.status);
+                const isPassed = currentIdx > sIdx;
+
+                return (
+                  <div key={stg.id} className="stepper-item-wrap">
+                    <div className={`stepper-node-box ${isCurrent ? "current" : isPassed ? "passed" : "upcoming"}`}>
+                      <span className="stepper-node-dot">
+                        {isPassed ? <Check size={11} aria-hidden="true" /> : <Icon size={11} aria-hidden="true" />}
+                        {isCurrent && <span className="stepper-glow-ring" />}
+                      </span>
+                      <div className="stepper-node-text">
+                        <strong>{stg.title}</strong>
+                        <small>{isCurrent ? "Active" : isPassed ? "Done" : "Pending"}</small>
+                      </div>
+                    </div>
+                    {sIdx < WORKFLOW_STAGES.length - 1 && (
+                      <div className={`stepper-line ${isPassed ? "line-passed" : "line-upcoming"}`} aria-hidden="true" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Micro Flow Navigation Tokens */}
+            <div className="stepper-visual-tokens-row">
+              <div className="tokens-flow-strip">
+                <span className="flow-token token-passed">
+                  <Check size={10} aria-hidden="true" />
+                  <span>{STATE_METADATA[review.status]?.prev || "Telemetry"}</span>
+                </span>
+                <ArrowRight size={11} className="token-flow-arrow" />
+                <span className="flow-token token-active">
+                  <span className="token-pulse-dot" />
+                  <strong>{STATE_METADATA[review.status]?.label || review.status.replaceAll("_", " ")}</strong>
+                </span>
+                <ArrowRight size={11} className="token-flow-arrow" />
+                <span className="flow-token token-upcoming">
+                  <span>Next: {STATE_METADATA[review.status]?.next || "Resolution"}</span>
+                </span>
+              </div>
+
+              <Link to={`/projects/${encodeURIComponent(projectKey)}/pipeline`} className="stepper-pipeline-link">
+                <Waypoints size={12} aria-hidden="true" />
+                <span>Pipeline</span>
+              </Link>
+            </div>
+          </div>
+          <div className={`remediation-columns ${contextExpanded ? "with-context" : "context-collapsed"}`}>
           <div className="remediation-main">
 
           {review.recovery && review.recovery.active && (
@@ -358,25 +471,62 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
             <section className="remediation-block remediation-diagnosis" aria-labelledby="remediation-diagnosis-heading">
               <div className="remediation-block-heading">
                 <div>
-                  <h3 id="remediation-diagnosis-heading"><ScanSearch size={20} aria-hidden="true" />Diagnosis</h3>
-                  <span>AI Root-Cause Synthesis</span>
+                  <h3 id="remediation-diagnosis-heading"><ScanSearch size={18} aria-hidden="true" />Diagnosis</h3>
+                  <div className="diagnosis-heading-badges">
+                    {review.diagnosis?.fixability && (
+                      <span className="diagnosis-fixability-badge">
+                        <Wrench size={12} aria-hidden="true" />
+                        {review.diagnosis.fixability.replaceAll("_", " ")}
+                      </span>
+                    )}
+                    <span className="diagnosis-ai-badge">AI Root-Cause Synthesis</span>
+                  </div>
                 </div>
               </div>
               {review.diagnosis ? (
                 <>
                   <div className="diagnosis-visual-summary">
-                    <div className="diagnosis-overview">
-                      <div className="diagnosis-confidence">
-                        <svg className="confidence-ring" viewBox="0 0 64 64" aria-hidden="true"><circle className="confidence-track" cx="32" cy="32" r="27" /><circle className="confidence-value" cx="32" cy="32" r="27" pathLength="100" strokeDasharray={`${Math.max(0, Math.min(100, review.diagnosis.confidence * 100))} 100`} /></svg>
-                        <span className="confidence-number">{Math.round(review.diagnosis.confidence * 100)}%</span>
+                    <div className="diagnosis-kpi-card">
+                      <div className="diagnosis-kpi-head">
+                        <Activity size={14} className="kpi-icon" aria-hidden="true" />
+                        <span className="kpi-label">Diagnosis confidence</span>
                       </div>
-                      <div className="diagnosis-summary"><strong><Wrench size={16} aria-hidden="true" />{review.diagnosis.fixability.replaceAll("_", " ")}</strong><span>Diagnosis confidence</span></div>
+                      <div className="diagnosis-kpi-main">
+                        <strong className="kpi-number">{Math.round(review.diagnosis.confidence * 100)}%</strong>
+                        <div className="kpi-bar-track" aria-hidden="true">
+                          <div
+                            className="kpi-bar-fill"
+                            style={{ width: `${Math.max(0, Math.min(100, review.diagnosis.confidence * 100))}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="diagnosis-metric"><ScanSearch size={19} aria-hidden="true" /><strong>{review.diagnosis.evidenceRefs.length}</strong><span>Evidence references</span></div>
-                    <div className="diagnosis-metric"><ListChecks size={19} aria-hidden="true" /><strong>{review.plans.length}</strong><span>Repair plans</span></div>
+                    <div className="diagnosis-kpi-card">
+                      <div className="diagnosis-kpi-head">
+                        <ScanSearch size={14} className="kpi-icon" aria-hidden="true" />
+                        <span className="kpi-label">Evidence references</span>
+                      </div>
+                      <div className="diagnosis-kpi-main">
+                        <strong className="kpi-number">{review.diagnosis.evidenceRefs.length}</strong>
+                        <span className="kpi-subtext">citations</span>
+                      </div>
+                    </div>
+                    <div className="diagnosis-kpi-card">
+                      <div className="diagnosis-kpi-head">
+                        <ListChecks size={14} className="kpi-icon" aria-hidden="true" />
+                        <span className="kpi-label">Repair plans</span>
+                      </div>
+                      <div className="diagnosis-kpi-main">
+                        <strong className="kpi-number">{review.plans.length}</strong>
+                        <span className="kpi-subtext">candidates</span>
+                      </div>
+                    </div>
                   </div>
                   {review.diagnosis.recommendedNextAction && review.status !== "blocked_manual_review" && (
-                    <div className="remediation-next-step"><h4><ArrowUpRight size={18} aria-hidden="true" />Recommended next step</h4><p>{review.diagnosis.recommendedNextAction}</p></div>
+                    <div className="remediation-next-step">
+                      <h4><ArrowUpRight size={16} aria-hidden="true" />Recommended next step</h4>
+                      <p>{review.diagnosis.recommendedNextAction}</p>
+                    </div>
                   )}
                   <p className="remediation-prose">{review.diagnosis.causalReasoning}</p>
                 </>
@@ -387,26 +537,53 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
           {review.plans.length > 0 && (
             <section className="remediation-block remediation-plans" aria-labelledby="remediation-plans-heading">
               <div className="remediation-block-heading">
-                <div><h3 id="remediation-plans-heading"><GitBranch size={20} aria-hidden="true" />Plans</h3><span>{review.plans.length} candidates</span></div>
+                <div>
+                  <h3 id="remediation-plans-heading"><GitBranch size={18} aria-hidden="true" />Plans</h3>
+                  <span className="plans-count-badge">{review.plans.length} candidates</span>
+                </div>
               </div>
               <ol>
                 {review.plans.map((plan, index) => (
                   <li className={plan.recommended ? "is-recommended" : undefined} key={plan.planId}>
                     <div className="remediation-plan-heading">
                       <div className="remediation-plan-title">
-                        <span className="plan-number"><Layers size={14} aria-hidden="true" />Plan {index + 1}</span>
+                        <div className="plan-tag-group">
+                          <span className="plan-number"><Layers size={12} aria-hidden="true" />Plan {index + 1}</span>
+                          <span className="plan-risk-tag">{plan.risk}</span>
+                        </div>
                         <strong>{plan.intendedBehavior}</strong>
                       </div>
-                      <div className="remediation-plan-meta"><span>{plan.risk}</span>{plan.recommended && <span className="recommended"><BadgeCheck size={14} aria-hidden="true" />Recommended</span>}</div>
+                      <div className="remediation-plan-meta">
+                        {plan.recommended && (
+                          <span className="recommended">
+                            <BadgeCheck size={14} aria-hidden="true" />
+                            Recommended
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="remediation-plan-body">
                       {plan.rationale && <p className="remediation-prose">{plan.rationale}</p>}
-                      <div className="remediation-plan-details">
-                        {plan.affectedFiles.length > 0 && (
-                          <div className="remediation-plan-files"><span><FileCode2 size={14} aria-hidden="true" />Files</span><ul>{plan.affectedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></div>
-                        )}
-                        {plan.rollbackStrategy && <p className="remediation-plan-rollback"><span><RotateCcw size={14} aria-hidden="true" />Rollback</span>{plan.rollbackStrategy}</p>}
-                      </div>
+                      {(plan.affectedFiles.length > 0 || plan.rollbackStrategy) && (
+                        <div className="remediation-plan-details">
+                          {plan.affectedFiles.length > 0 && (
+                            <div className="remediation-plan-files">
+                              <span className="detail-label"><FileCode2 size={13} aria-hidden="true" />Files</span>
+                              <ul>
+                                {plan.affectedFiles.map((file) => (
+                                  <li key={file}><code>{file}</code></li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {plan.rollbackStrategy && (
+                            <div className="remediation-plan-rollback">
+                              <span className="detail-label"><RotateCcw size={13} aria-hidden="true" />Rollback</span>
+                              <p>{plan.rollbackStrategy}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -453,6 +630,27 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
             {activeStates.has(review.status) && <p className="run-context-note">An analysis attempt is currently active.</p>}
             {!review.continuationAvailable && !activeStates.has(review.status) && <p className="run-context-note">This remediation result cannot be continued.</p>}
           </section>
+          {review.checkpoint && (review.checkpoint.validations.length > 0 || review.checkpoint.publication) && (
+            <section className="remediation-attempts" aria-labelledby="delivery-heading">
+              <h3 id="delivery-heading"><GitBranch size={16} aria-hidden="true" />Hotfix delivery</h3>
+              {review.checkpoint.publication?.targetDiverged && <p className="run-context-note">The target branch advanced after deployment. This hotfix remains based on the deployed commit and was not rebased.</p>}
+              {review.checkpoint.validations.length > 0 && <ol>
+                {review.checkpoint.validations.map((validation) => <li key={`${validation.commandId}-${validation.commandVersion}`}>
+                  <div className="attempt-heading">
+                    <div className="attempt-label"><strong>{validation.commandId}</strong><span>v{validation.commandVersion}</span></div>
+                    <span className="attempt-state">{validation.passed ? "passed" : "failed"}</span>
+                  </div>
+                  <div className="attempt-details"><code>{validation.treeHash || "legacy tree"}</code></div>
+                </li>)}
+              </ol>}
+              {review.checkpoint.publication && <dl className="remediation-technical-facts">
+                <div><dt>Branch</dt><dd><code>{review.checkpoint.publication.branchRef}</code></dd></div>
+                <div><dt>Target</dt><dd><code>{review.checkpoint.publication.targetBranch}</code></dd></div>
+                <div><dt>Commit</dt><dd><code>{review.checkpoint.publication.commitHash}</code></dd></div>
+                {review.checkpoint.publication.compareUrl && <div><dt>Review</dt><dd><a href={review.checkpoint.publication.compareUrl} target="_blank" rel="noreferrer">{review.checkpoint.publication.changeRef || "Open change request"}</a></dd></div>}
+              </dl>}
+            </section>
+          )}
             {review.attempts.length > 0 && (
               <section className="remediation-attempts" aria-labelledby="attempt-history-heading">
                 <h3 id="attempt-history-heading"><History size={16} aria-hidden="true" />Attempt history <span>{review.attempts.length}</span></h3>
