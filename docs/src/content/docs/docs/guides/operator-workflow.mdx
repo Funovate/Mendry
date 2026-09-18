@@ -11,6 +11,8 @@ sources:
   - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
+  - frontend/src/features/notifications/NotificationsPage.tsx
+  - backend/internal/modules/notifications/README.md
   - backend/docs/automatic-hotfix.md
   - backend/internal/modules/remediation/adapter/http/handler.go
 ---
@@ -37,6 +39,17 @@ LLM, Automatic hotfix, and Review.
 Each configuration step saves independently. Navigating to another step or
 selecting Done is not a substitute for saving edits. Resolve a failed save or
 connection test before using the new configuration for an incident.
+
+## Prepare notifications
+
+Open **Configuration → Notifications** to add Telegram, Feishu, or WeCom
+channels. Save the credentials, send a test, and enable the intended channels
+before the next incident. See [project notifications](/docs/guides/notifications/)
+for setup and delivery troubleshooting.
+
+Notifications cover incident triggers and the first stopped AI result per
+lifecycle generation. They do not backfill earlier events or send recovery and
+closure messages. Read the incident itself for later attempts and current state.
 
 ## Inspect incoming signals
 

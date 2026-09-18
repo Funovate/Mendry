@@ -1,0 +1,92 @@
+---
+title: 项目通知
+description: 配置 Telegram、飞书和企业微信渠道，接收事故触发与 AI 处理结果，并排查投递失败。
+availability: available
+translationKey: notifications
+sources:
+  - backend/internal/modules/notifications/README.md
+  - backend/internal/modules/notifications/application/service.go
+  - backend/internal/modules/notifications/adapter/postgres/store.go
+  - backend/internal/modules/notifications/adapter/platform/sender.go
+  - backend/internal/modules/notifications/adapter/http/handler.go
+  - backend/internal/bootstrap/notifications.go
+  - frontend/src/features/notifications/NotificationsPage.tsx
+---
+
+**可用性：available**
+
+事故应用支持向 Telegram Bot、飞书自定义机器人和企业微信群机器人发送项目通知。每个项目可以配置多个渠道，包括多个 Telegram Bot / Chat 组合。该能力运行在现有 API 进程中，不代表通用 Harness 任务队列已经可用。
+
+## 配置通知渠道
+
+1. 打开 **Configuration → Notifications**，路径为 `/projects/:projectKey/configuration/notifications`。
+2. 添加渠道，填写名称、选择平台，并输入下表中的凭据。
+3. 保存渠道并发送测试消息，在目标会话中确认收到消息。
+4. 启用渠道，以接收之后发生的事故通知。
+
+| 平台                   | 必填凭据                                      | 可选凭据                    |
+| ---------------------- | --------------------------------------------- | --------------------------- |
+| Telegram（`telegram`） | Bot token（`botToken`）和 Chat ID（`chatId`） | 无                          |
+| 飞书（`feishu`）       | 自定义机器人 Webhook URL（`webhookUrl`）      | 签名密钥（`signingSecret`） |
+| 企业微信（`wecom`）    | 群机器人 Webhook URL（`webhookUrl`）          | 无                          |
+
+仅支持 `api.telegram.org`、`open.feishu.cn` 和 `qyapi.weixin.qq.com` 上的 HTTPS 端点。飞书和企业微信 URL 必须使用对应平台的机器人接口路径，不支持自定义主机、显式端口、重定向或代理。
+
+创建后不能更换渠道平台。编辑渠道时可以保留已保存凭据，也可以勾选 **Replace credentials** 替换凭据；API 更新时省略 `credentials` 即表示保留。凭据以加密形式存储，读取渠道的响应不会返回秘密值。
+
+测试消息会立即发送，即使渠道处于禁用状态也可以测试。测试不会创建业务投递记录，也不代表后续事故一定满足通知条件。
+
+## 何时发送通知
+
+| 事件                                 | 通知行为                                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| 新事故                               | 每个事故的每一生命周期代次发送一次 `trigger` 事件                                   |
+| 将 Recovered 事故显式重新打开为 Open | 进入新代次，可以再次发送 `trigger`                                                  |
+| 当前代次首次停止的 AI 处理结果       | 发送一次 `result`，包括需要审阅、非代码诊断完成、失败或预算耗尽等结果               |
+| 自动 Hotfix                          | 跳过中间的诊断待审阅状态，除非运行被限制为仅分析；Hotfix 等待人工审阅时可以发送结果 |
+| 同一代次后续 AI 尝试                 | 不再发送第二条结果，即使之后重试成功                                                |
+| 人工恢复或关闭事故                   | 不发送通知                                                                          |
+
+结果通知不代表服务已恢复，也不代表补丁已经合并或部署。请打开事故，审查证据与实际处理结果。
+
+事件发生时没有已启用渠道，就不会存储通知事件或投递任务。之后添加或启用渠道不会补发历史事故触发或 AI 处理结果。
+
+## 查看与重试投递
+
+通知页面的 **Delivery history** 页签展示项目最近 100 条投递任务，打开该页签时每 10 秒刷新。这些记录不是每一次发送尝试的流水。状态包括 `pending`、`sending`、`delivered`、`failed` 和 `cancelled`。
+
+API worker 对失败任务按指数退避自动重试，延迟从 2 秒增长到 1024 秒。当一次发送失败且记录的尝试次数达到 12 时，投递进入 `failed`。这不是终身发送次数的硬上限：worker 在记录结果前中断时，任务仍可在租约过期后被重新领取。手动重试会清零尝试次数，且只允许重试渠道仍存在并已启用的失败投递；应先修复渠道配置或网络问题，其他状态不能手动重试。
+
+同一渠道、同一事故、同一代次中，较早的 `pending` 或 `sending` 投递会阻止后续消息发送，避免 AI 结果越过触发通知。已经失败或取消的投递不再阻塞后续结果；其他渠道与事故可以独立继续。
+
+禁用或删除渠道会取消其待发送和发送中的投递。重新启用不会恢复这些任务，`cancelled` 记录也不能手动重试。已经发出的网络请求仍可能到达平台。替换凭据会作用于尚未领取的投递尝试；正在发送的尝试仍可能使用旧凭据。
+
+投递采用**至少一次**语义：平台已经接受消息、但响应丢失时，重试可能产生重复消息。事件去重不保证外部平台恰好收到一次消息。
+
+## 部署与排查
+
+部署包含通知功能的 API 二进制前，先应用数据库迁移 `000025_notifications`。Worker 随 API 进程运行，使用 PostgreSQL 持久保存投递记录；不需要额外消息代理或通知专用环境变量。
+
+- 保持 `MENDRY_ENCRYPTION_KEY` 在重启前后稳定。如果更换密钥但未重新加密已保存的渠道凭据与投递快照，它们将无法解密。
+- 将 `MENDRY_PUBLIC_URL` 设置为控制台公开 origin，让消息中的链接指向正确事故。
+- 没有投递记录时，检查事件发生时是否存在已启用渠道，以及当前代次是否已经发送过结果。测试消息不会出现在投递列表中。
+- 投递长期停在待发送状态时，检查 API worker 是否运行、PostgreSQL 是否可访问，以及同一渠道/事故/代次的更早消息是否仍在阻塞。
+- 发送失败时，检查平台凭据、机器人访问目标会话的权限和出站 HTTPS 连通性。查看安全的错误分类，不要把 Bot token 或 Webhook URL 粘贴到日志或 issue 中。
+
+共享设置见[配置参考](/zh-cn/docs/reference/configuration/)，事故审阅流程见[日常操作流程](/zh-cn/docs/guides/operator-workflow/)。
+
+## API 参考
+
+以下路径均相对于 `/api/v1/projects/{projectKey}/notifications`，需要已有的登录 Session。
+
+| 方法   | 路径                             | 操作                                                                               |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------- |
+| GET    | `/channels`                      | 列出渠道，不暴露凭据                                                               |
+| POST   | `/channels`                      | 使用 `name`、`platform`、`enabled` 和 `credentials` 创建渠道                       |
+| PUT    | `/channels/{channelId}`          | 更新渠道；省略 `credentials` 保留原凭据                                            |
+| DELETE | `/channels/{channelId}`          | 删除渠道并取消未完成投递                                                           |
+| POST   | `/channels/{channelId}/test`     | 发送测试消息，返回 `{ "sent": true }`                                              |
+| GET    | `/deliveries`                    | 列出最近 100 条投递记录                                                            |
+| POST   | `/deliveries/{deliveryId}/retry` | 将符合条件的失败投递重新入队，返回 `{ "queued": true }`；不符合条件时返回 HTTP 409 |
+
+响应使用应用统一的成功/列表封装。

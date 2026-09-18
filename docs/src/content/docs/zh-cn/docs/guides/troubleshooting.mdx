@@ -6,6 +6,7 @@ translationKey: troubleshooting
 sources:
   - backend/README.md
   - backend/.env.example
+  - backend/internal/modules/notifications/README.md
 ---
 
 **可用性：available**
@@ -35,6 +36,12 @@ sources:
 ## 修复停止或报告证据不足
 
 这是策略结果，不是绕过门禁的理由。检查不可用来源、精确 Git 基线、工具 budget、已存证据 provenance，以及必需的腾讯 CLS direct detail。只有修复缺失 capability 或 evidence 后才重试。
+
+## 未收到通知或投递失败
+
+打开 **Configuration → Notifications** 检查最近投递。没有记录可能是事件发生时渠道未启用，或当前代次已经发送过首次 AI 结果。测试消息没有业务投递记录，人工恢复或关闭事故也不会发送通知。
+
+投递失败时，检查凭据与到平台的出站 HTTPS 连通性，修复原因后再手动重试；对应渠道必须仍存在且已启用。已取消投递不能重试。迁移要求、消息顺序、凭据轮换和重试限制见[项目通知](/zh-cn/docs/guides/notifications/)。
 
 ## 安全诊断
 

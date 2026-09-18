@@ -163,6 +163,11 @@ export default defineConfig({
               translations: { "zh-CN": "签名 Webhook" },
             },
             {
+              slug: "docs/guides/notifications",
+              label: "Project notifications",
+              translations: { "zh-CN": "项目通知" },
+            },
+            {
               slug: "docs/guides/git-baseline",
               label: "Git and baseline",
               translations: { "zh-CN": "Git 与基线" },

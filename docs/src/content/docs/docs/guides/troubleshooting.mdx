@@ -7,6 +7,7 @@ translationKey: troubleshooting
 sources:
   - backend/README.md
   - backend/.env.example
+  - backend/internal/modules/notifications/README.md
 ---
 
 **Availability: available**
@@ -54,6 +55,19 @@ Treat this as a policy result, not a reason to bypass the gate. Review unavailab
 sources, exact Git baseline, tool budget, persisted evidence provenance, and any
 required Tencent CLS direct detail. Retry only after correcting the missing
 capability or evidence.
+
+## Notifications are missing or fail
+
+Open **Configuration → Notifications** and inspect recent deliveries. No record
+may mean the channel was disabled when the event occurred, or the generation
+already emitted its first AI result. Test messages have no business delivery
+record, and manual recovery or closure sends no notification.
+
+For failed deliveries, check credentials and outbound HTTPS access to the
+platform, then retry only after correcting the cause. The channel must still
+exist and be enabled. Cancelled deliveries cannot be retried. See
+[project notifications](/docs/guides/notifications/) for migration requirements,
+ordering, credential rotation, and retry limits.
 
 ## Safe diagnostics
 

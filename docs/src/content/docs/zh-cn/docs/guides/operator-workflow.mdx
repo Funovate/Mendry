@@ -11,6 +11,8 @@ sources:
   - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
+  - frontend/src/features/notifications/NotificationsPage.tsx
+  - backend/internal/modules/notifications/README.md
   - backend/docs/automatic-hotfix.md
   - backend/internal/modules/remediation/adapter/http/handler.go
 ---
@@ -31,6 +33,12 @@ sources:
 6. 在 Review 中检查配置，并确认每个配置步骤都已保存。
 
 各配置步骤独立保存。切换步骤或选择 Done 不能代替保存修改。保存或连接测试失败时，应先处理问题，再将新配置用于事故调查。
+
+## 准备通知渠道
+
+打开 **Configuration → Notifications**，添加 Telegram、飞书或企业微信渠道。保存凭据、发送测试消息，并在下一次事故前启用目标渠道。配置与投递排查见[项目通知](/zh-cn/docs/guides/notifications/)。
+
+通知覆盖事故触发与每个生命周期代次首次停止的 AI 处理结果，不补发历史事件，也不发送恢复或关闭消息。后续尝试与当前状态应以事故详情为准。
 
 ## 查看输入信号
 

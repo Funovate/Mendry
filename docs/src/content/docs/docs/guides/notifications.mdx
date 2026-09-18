@@ -1,0 +1,127 @@
+---
+title: Project notifications
+description: Configure Telegram, Feishu, and WeCom channels for incident triggers and AI results, and inspect delivery failures.
+availability: available
+translationKey: notifications
+sources:
+  - backend/internal/modules/notifications/README.md
+  - backend/internal/modules/notifications/application/service.go
+  - backend/internal/modules/notifications/adapter/postgres/store.go
+  - backend/internal/modules/notifications/adapter/platform/sender.go
+  - backend/internal/modules/notifications/adapter/http/handler.go
+  - backend/internal/bootstrap/notifications.go
+  - frontend/src/features/notifications/NotificationsPage.tsx
+---
+
+**Availability: available**
+
+The incident application sends project-scoped notifications to Telegram bots,
+Feishu custom bots, and WeCom group bots. A project can have multiple channels,
+including multiple Telegram bot/chat pairs. This capability runs in the existing
+API process and does not establish a general-purpose Harness task queue.
+
+## Configure a channel
+
+1. Open **Configuration → Notifications** at `/projects/:projectKey/configuration/notifications`.
+2. Add a channel, give it a name, choose its platform, and enter the credentials below.
+3. Save the channel and send a test message. Confirm receipt in the intended conversation.
+4. Enable the channel to receive future incident notifications.
+
+| Platform              | Required credentials                          | Optional credentials             |
+| --------------------- | --------------------------------------------- | -------------------------------- |
+| Telegram (`telegram`) | Bot token (`botToken`) and chat ID (`chatId`) | None                             |
+| Feishu (`feishu`)     | Custom bot webhook URL (`webhookUrl`)         | Signing secret (`signingSecret`) |
+| WeCom (`wecom`)       | Group bot webhook URL (`webhookUrl`)          | None                             |
+
+Only HTTPS endpoints on `api.telegram.org`, `open.feishu.cn`, and
+`qyapi.weixin.qq.com` are supported. Feishu and WeCom URLs must use the platform's
+bot endpoint. Custom hosts, explicit ports, redirects, and proxies are unsupported.
+
+The platform cannot be changed after creation. Editing a channel can retain its
+saved credentials or replace them by selecting **Replace credentials**; the API retains credentials when the update
+omits `credentials`. Stored secrets are encrypted and are never returned in
+channel read responses.
+
+A test message is sent immediately, even if the channel is disabled. It does not
+create a business delivery record or prove that a later incident will qualify
+for a notification.
+
+## When messages are sent
+
+| Event                                          | Notification behavior                                                                                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New incident                                   | One `trigger` event per incident and lifecycle generation                                                                                         |
+| Recovered incident explicitly reopened to Open | A new generation can emit a new `trigger`                                                                                                         |
+| First stopped AI outcome in a generation       | One `result`, including review-required outcomes, completed non-code diagnosis, failure, or exhausted budget                                      |
+| Automatic hotfix                               | The intermediate diagnosis awaiting review is skipped unless execution is limited to analysis; a hotfix awaiting human review can emit the result |
+| Further AI attempts in the same generation     | No second result, even if a later retry succeeds                                                                                                  |
+| Manual recovery or closure                     | No notification                                                                                                                                   |
+
+A result does not mean the service has recovered or that a patch was merged or
+deployed. Open the incident and review the evidence and actual outcome.
+
+Without enabled channels, no notification event or delivery is stored. Adding or
+enabling a channel does not backfill earlier incident triggers or AI outcomes.
+
+## Inspect and retry deliveries
+
+The notification page's **Delivery history** tab shows the most recent 100
+deliveries for the project and refreshes every 10 seconds while open.
+These are delivery tasks, not a log of every send attempt.
+States are `pending`, `sending`, `delivered`, `failed`, and `cancelled`.
+
+The API worker retries failures with exponential delays from 2 to 1024 seconds.
+When a send fails and the recorded attempt count has reached 12, the delivery
+becomes `failed`. This is not a strict lifetime send limit: a worker interrupted
+before recording its outcome can reclaim the delivery after its lease expires.
+Manual retry resets the attempt count and is allowed only for
+a failed delivery whose channel still exists and is enabled. Fix the channel or
+connectivity issue before retrying; other states cannot be manually retried.
+
+An older `pending` or `sending` delivery blocks later messages for the same
+channel, incident, and generation. This keeps the AI result behind its trigger.
+Failed or cancelled deliveries do not block later results; other channels and
+incidents progress independently.
+
+Disabling or deleting a channel cancels its pending and sending deliveries.
+Re-enabling it does not restore those deliveries, and cancelled deliveries cannot
+be retried. A request already being sent may still reach the platform.
+Credential replacement applies to attempts not yet claimed; an in-flight attempt
+may still use the previous credentials.
+
+Delivery is **at least once**: if a platform accepts a message but its response is
+lost, a retry can send a duplicate. Event deduplication does not guarantee exactly
+one external message.
+
+## Deployment and troubleshooting
+
+Apply database migration `000025_notifications` before deploying the API binary
+that includes notifications. The worker runs inside the API process, using
+PostgreSQL for durable delivery records; no extra broker or notification-specific
+environment variables are required.
+
+- Keep `MENDRY_ENCRYPTION_KEY` stable across restarts. Replacing it without re-encrypting stored channel credentials and delivery snapshots makes them unreadable.
+- Set `MENDRY_PUBLIC_URL` to the console's public origin so messages link to the correct incident.
+- If no record appears, check whether a channel was enabled when the event happened and whether that generation already emitted its result. Test messages do not appear in the delivery list.
+- If a delivery remains pending, check that the API worker is running, PostgreSQL is reachable, and an earlier message is not blocking the same channel/incident/generation.
+- If sending fails, verify platform credentials, bot access to the destination, and outbound HTTPS connectivity. Inspect the safe error classification; do not paste bot tokens or webhook URLs into logs or issues.
+
+See [configuration](/docs/reference/configuration/) for shared settings and
+[operator workflow](/docs/guides/operator-workflow/) for incident review.
+
+## API reference
+
+All paths below are relative to `/api/v1/projects/{projectKey}/notifications`
+and require the existing authenticated session.
+
+| Method | Path                             | Operation                                                                                      |
+| ------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| GET    | `/channels`                      | List channels without exposing credentials                                                     |
+| POST   | `/channels`                      | Create a channel with `name`, `platform`, `enabled`, and `credentials`                         |
+| PUT    | `/channels/{channelId}`          | Update a channel; omit `credentials` to retain them                                            |
+| DELETE | `/channels/{channelId}`          | Delete a channel and cancel outstanding deliveries                                             |
+| POST   | `/channels/{channelId}/test`     | Send a test; returns `{ "sent": true }`                                                        |
+| GET    | `/deliveries`                    | List the most recent 100 deliveries                                                            |
+| POST   | `/deliveries/{deliveryId}/retry` | Requeue an eligible failed delivery; returns `{ "queued": true }`, or HTTP 409 when ineligible |
+
+Responses use the application's standard success/list envelopes.

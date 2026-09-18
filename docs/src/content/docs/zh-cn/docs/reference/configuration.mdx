@@ -10,6 +10,8 @@ sources:
   - backend/docs/remediation-recovery.md
   - backend/internal/modules/auth/adapter/http/handler.go
   - backend/internal/platform/observability/telemetry.go
+  - backend/internal/modules/notifications/README.md
+  - frontend/src/features/notifications/NotificationsPage.tsx
   - frontend/src/features/configuration/configuration.ts
 ---
 
@@ -23,15 +25,15 @@ sources:
 
 ## 进程环境
 
-| 范围        | Key 示例                                                                                                                             | 说明                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| Runtime     | `MENDRY_ENVIRONMENT`、`MENDRY_HTTP_ADDR`、`MENDRY_PUBLIC_URL`                                                                        | Public URL 用于生成 Webhook URL；只使用一个绝对 origin     |
-| Data        | `MENDRY_POSTGRES_URL`、`MENDRY_REDIS_URL`                                                                                            | PostgreSQL 持久保存；Redis 只保存 Session                  |
-| Encryption  | `MENDRY_ENCRYPTION_KEY`                                                                                                              | 32 字节的 base64；每个数据库保持稳定                       |
-| Auth        | `MENDRY_AUTH_SESSION_TTL`                                                                                                            | 默认 24 小时                                               |
-| HTTP        | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit                                                                                   | CORS 只接受一个精确 console origin                         |
-| Logging     | `MENDRY_LOG_FORMAT`、`MENDRY_LOG_LEVEL`、`MENDRY_LOG_FILE`                                                                           | production 默认 JSON；本地文件需由外部轮换                 |
-| Remediation | `MENDRY_REMEDIATION_CONCURRENCY`、`MENDRY_REMEDIATION_RECOVERY_INTERVAL`、`MENDRY_REMEDIATION_MODEL_TIMEOUT`、存储目录、构建镜像摘要 | 控制修复任务并发上限、崩溃自动恢复、超时时限与隔离构建镜像 |
+| 范围        | Key 示例                                                                                                                             | 说明                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| Runtime     | `MENDRY_ENVIRONMENT`、`MENDRY_HTTP_ADDR`、`MENDRY_PUBLIC_URL`                                                                        | Public URL 用于生成 Webhook URL 与通知中的控制台链接；只使用一个绝对 origin |
+| Data        | `MENDRY_POSTGRES_URL`、`MENDRY_REDIS_URL`                                                                                            | PostgreSQL 持久保存；Redis 只保存 Session                                   |
+| Encryption  | `MENDRY_ENCRYPTION_KEY`                                                                                                              | 32 字节的 base64；每个数据库保持稳定                                        |
+| Auth        | `MENDRY_AUTH_SESSION_TTL`                                                                                                            | 默认 24 小时                                                                |
+| HTTP        | `MENDRY_HTTP_CORS_ALLOWED_ORIGIN`、body/time limit                                                                                   | CORS 只接受一个精确 console origin                                          |
+| Logging     | `MENDRY_LOG_FORMAT`、`MENDRY_LOG_LEVEL`、`MENDRY_LOG_FILE`                                                                           | production 默认 JSON；本地文件需由外部轮换                                  |
+| Remediation | `MENDRY_REMEDIATION_CONCURRENCY`、`MENDRY_REMEDIATION_RECOVERY_INTERVAL`、`MENDRY_REMEDIATION_MODEL_TIMEOUT`、存储目录、构建镜像摘要 | 控制修复任务并发上限、崩溃自动恢复、超时时限与隔离构建镜像                  |
 
 `backend/.env.example` 是当前完整 key/default 参考。`MENDRY_*` 是首选命名；迁移期间每个运行时 key 都接受对应的 `FIXTHE_*` 旧名，二者同时存在时优先使用 `MENDRY_*`，即使其值显式为空。Shell 中已导出的任一命名空间环境变量优先于 `.env`。
 
@@ -89,11 +91,17 @@ AWS CloudWatch 会额外显示 **SNS Topic ARN** 字段。界面通过校验后�
 
 Provider 限制、发送端设置、轮换与投递行为见[签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)。
 
+### 项目通知
+
+每个项目还可以保存多个通知渠道，在 **Configuration → Notifications** 中独立配置。支持的平台为 `telegram`、`feishu` 和 `wecom`。渠道包含名称、启用状态与加密的平台凭据，不使用共享 Secret ID 配置表单。
+
+部署包含通知功能的 API 前，需要应用迁移 `000025_notifications`。通知复用 `MENDRY_ENCRYPTION_KEY` 加密凭据，并使用 `MENDRY_PUBLIC_URL` 生成事故链接，无需新增消息代理或环境变量。凭据填写、事件条件、投递状态与重试行为见[项目通知](/zh-cn/docs/guides/notifications/)。
+
 ### 兼容性与 Telemetry
 
 新 Session 使用 `mendry_session` Cookie。命名迁移期间，API 仍接受旧的 `fixthe_session`，并在登录或退出设置当前 Cookie 时清除旧 Cookie。OpenTelemetry instrumentation 与数据库连接池指标使用 `mendry` namespace，包括 `mendry/backend`、`mendry.postgres.*` 和 `mendry.redis.*`。
 
-Credential 是独立项目记录，通过 ID 引用。读取响应从不返回明文 value。
+上述配置组件的 Credential 是独立项目记录，通过 ID 引用；通知凭据随渠道保存。读取响应从不返回明文 value。
 
 ## 核验依据
 

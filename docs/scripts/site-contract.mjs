@@ -61,6 +61,11 @@ const pages = [
     "src/content/docs/docs/guides/signed-webhooks.mdx",
     "available",
   ],
+  [
+    "notifications",
+    "src/content/docs/docs/guides/notifications.mdx",
+    "available",
+  ],
   ["git-baseline", "src/content/docs/docs/guides/git-baseline.mdx", "preview"],
   [
     "llm-providers",

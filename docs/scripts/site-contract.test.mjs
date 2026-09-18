@@ -16,12 +16,12 @@ test("every route has a reciprocal locale counterpart", () => {
 });
 
 test("the expected route count includes introductions and operator pages", () => {
-  assert.equal(routeEntries.length, 50);
-  assert.equal(expectedRoutes.length, 52);
+  assert.equal(routeEntries.length, 52);
+  assert.equal(expectedRoutes.length, 54);
 });
 
 test("operator entries have matching locale metadata", () => {
-  assert.equal(routeEntries.length, 50);
+  assert.equal(routeEntries.length, 52);
   for (const entry of routeEntries) {
     const pair = routeEntries.find(
       (candidate) => candidate.route === counterpart(entry.route),

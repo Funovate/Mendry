@@ -9,6 +9,7 @@ sources:
   - backend/internal/modules/agentcore/domain/types.go
   - backend/internal/modules/agentcore/application/runner.go
   - backend/docs/automatic-hotfix.md
+  - backend/internal/modules/notifications/README.md
   - backend/README.md
 ---
 
@@ -36,19 +37,20 @@ Foundation 与 Local 的 `preview` 都是有边界的正向实现状态：共享
 
 下表描述当前事故应用。其数据库、Session、项目与账号依赖不适用于中立核心；人工审阅限制属于兼容行为，不表示 Harness 扩展永久禁止写能力。
 
-| 能力                                       | 状态      | 边界                                                            |
-| ------------------------------------------ | --------- | --------------------------------------------------------------- |
-| 显式迁移与单用户 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                              |
-| 单用户登录 Session                         | available | Redis Session 与 PostgreSQL 唯一登录账号；仅事故应用            |
-| 组件化项目配置与加密凭据                   | available | 项目范围的应用行为                                              |
-| 公开签名 Webhook 摄取                      | available | 事故信号路径；基于 token 并异步处理                             |
-| 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 事故路径，不是通用 Harness 输入               |
-| 事故生命周期与基于证据的修复审阅           | preview   | Domain-specific coordinator；必须人工审阅                       |
-| Git/SSH/MCP/OpenAI-compatible 修复 adapter | preview   | 受项目、事故、policy、budget 与 evidence scope 约束             |
-| 自动 Hotfix Draft PR 交付与本地预验证      | preview   | 受限补丁生成、容器沙箱测试验证，在受支持 SCM 上创建 Draft PR/MR |
-| 受支持客户安装、升级与回滚                 | planned   | 等待经过验证的 release artifact                                 |
-| 自动合并、部署、回滚或恢复                 | planned   | 人工控制动作；设计上必须人工审阅，不直接自动合并或部署          |
-| 出站通知与通用持久 worker queue            | planned   | 不属于当前 API runtime                                          |
+| 能力                                       | 状态      | 边界                                                                                                                            |
+| ------------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 显式迁移与单用户 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                                                                                              |
+| 单用户登录 Session                         | available | Redis Session 与 PostgreSQL 唯一登录账号；仅事故应用                                                                            |
+| 组件化项目配置与加密凭据                   | available | 项目范围的应用行为                                                                                                              |
+| 公开签名 Webhook 摄取                      | available | 事故信号路径；基于 token 并异步处理                                                                                             |
+| 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 事故路径，不是通用 Harness 输入                                                                               |
+| 事故生命周期与基于证据的修复审阅           | preview   | Domain-specific coordinator；必须人工审阅                                                                                       |
+| Git/SSH/MCP/OpenAI-compatible 修复 adapter | preview   | 受项目、事故、policy、budget 与 evidence scope 约束                                                                             |
+| 自动 Hotfix Draft PR 交付与本地预验证      | preview   | 受限补丁生成、容器沙箱测试验证，在受支持 SCM 上创建 Draft PR/MR                                                                 |
+| 受支持客户安装、升级与回滚                 | planned   | 等待经过验证的 release artifact                                                                                                 |
+| 自动合并、部署、回滚或恢复                 | planned   | 人工控制动作；设计上必须人工审阅，不直接自动合并或部署                                                                          |
+| 项目通知                                   | available | Telegram、飞书、企业微信渠道；事故触发与首次 AI 结果，API 进程内持久投递和重试；见[项目通知](/zh-cn/docs/guides/notifications/) |
+| 通用持久 worker queue                      | planned   | 尚未发布通用任务队列契约                                                                                                        |
 
 ## 发布阻塞项
 

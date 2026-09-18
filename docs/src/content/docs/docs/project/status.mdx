@@ -9,6 +9,7 @@ sources:
   - backend/internal/modules/agentcore/domain/types.go
   - backend/internal/modules/agentcore/application/runner.go
   - backend/docs/automatic-hotfix.md
+  - backend/internal/modules/notifications/README.md
   - backend/README.md
 ---
 
@@ -43,19 +44,20 @@ session, project, and account dependencies do not apply to the neutral core. Its
 human-review restrictions are compatibility behavior, not a permanent
 prohibition on write-capable Harness extensions.
 
-| Capability                                                | Status    | Boundary                                                                                                |
-| --------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
-| Explicit migrations and single-user bootstrap             | available | Source command; supported production package still absent                                               |
-| Single-user login sessions                                | available | Redis sessions and one PostgreSQL login identity; incident app only                                     |
-| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                                                     |
-| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed                                          |
-| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input                                              |
-| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory                                             |
-| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped                                                  |
-| Automatic hotfix draft PR delivery & local pre-validation | preview   | Bounded patch generation, container test verification, and draft PR/MR creation on supported SCMs       |
-| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                                                                    |
-| Automatic merge, deployment, rollback, or recovery        | planned   | Human-controlled action; by design, changes require review and are not automatically merged or deployed |
-| Outbound notifications and general durable worker queue   | planned   | Not part of the current API runtime                                                                     |
+| Capability                                                | Status    | Boundary                                                                                                                                                                        |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Explicit migrations and single-user bootstrap             | available | Source command; supported production package still absent                                                                                                                       |
+| Single-user login sessions                                | available | Redis sessions and one PostgreSQL login identity; incident app only                                                                                                             |
+| Component project configuration and encrypted credentials | available | Project-scoped application behavior                                                                                                                                             |
+| Public signed webhook ingress                             | available | Incident signal path; token-based and asynchronously processed                                                                                                                  |
+| Tencent CLS callback and trusted detail evidence          | preview   | Provider-specific incident path, not generic Harness input                                                                                                                      |
+| Incident lifecycle and evidence-backed remediation review | preview   | Domain-specific coordinator; human review remains mandatory                                                                                                                     |
+| Git/SSH/MCP/OpenAI-compatible remediation adapters        | preview   | Project, incident, policy, budget, and evidence scoped                                                                                                                          |
+| Automatic hotfix draft PR delivery & local pre-validation | preview   | Bounded patch generation, container test verification, and draft PR/MR creation on supported SCMs                                                                               |
+| Supported customer installation, upgrade, and rollback    | planned   | Blocked on a tested release artifact                                                                                                                                            |
+| Automatic merge, deployment, rollback, or recovery        | planned   | Human-controlled action; by design, changes require review and are not automatically merged or deployed                                                                         |
+| Project notifications                                     | available | Telegram, Feishu, and WeCom channels; incident triggers and first AI results, durable delivery and retries in the API process; see [notifications](/docs/guides/notifications/) |
+| General durable worker queue                              | planned   | No general-purpose task queue contract is published                                                                                                                             |
 
 ## Publication blockers
 
