@@ -21,6 +21,10 @@ import (
 	incidenthttp "mendry/backend/internal/modules/incidents/adapter/http"
 	incidentpostgres "mendry/backend/internal/modules/incidents/adapter/postgres"
 	incidentapplication "mendry/backend/internal/modules/incidents/application"
+	notificationhttp "mendry/backend/internal/modules/notifications/adapter/http"
+	notificationplatform "mendry/backend/internal/modules/notifications/adapter/platform"
+	notificationpostgres "mendry/backend/internal/modules/notifications/adapter/postgres"
+	notificationapplication "mendry/backend/internal/modules/notifications/application"
 	observationhttp "mendry/backend/internal/modules/observations/adapter/http"
 	observationpostgres "mendry/backend/internal/modules/observations/adapter/postgres"
 	observationapplication "mendry/backend/internal/modules/observations/application"
@@ -141,6 +145,8 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create project credential cipher: %w", err),
 		)
 	}
+	notificationStore := notificationpostgres.NewStore(postgresPool, apiConfig.PublicURL)
+	notificationService := notificationapplication.NewService(notificationStore, projectCipher, notificationplatform.NewSender(), notificationplatform.Validate)
 	containerProbe, err := remediationsshlog.NewContainerProbe(remediationsshlog.ContainerProbeOptions{
 		Secrets: projectRepository, Cipher: projectCipher, Logger: logger,
 	})
@@ -158,6 +164,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create project service: %w", err),
 		)
 	}
+	notificationHandler := notificationhttp.NewHandler(notificationService, projectService, authHandler)
 	projectHandler, err := projecthttp.NewHandler(projecthttp.HandlerOptions{Service: projectService, Authentication: authHandler})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -205,6 +212,8 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create remediation store: %w", err),
 		)
 	}
+	incidentRepository.SetNotificationEnqueuer(notificationStore)
+	remediationStore.SetNotificationEnqueuer(notificationStore)
 	incidentLookup, err := incidentpostgres.NewIncidentLookup(incidentRepository)
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
@@ -466,6 +475,7 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 	systemHandler.Register(mux)
 	authHandler.Register(mux)
 	projectHandler.Register(mux)
+	notificationHandler.Register(mux)
 	projectHandler.RegisterHotfixSetup(mux, hotfixSetup)
 	observationHandler.Register(mux)
 	incidentHandler.Register(mux)
@@ -532,7 +542,8 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
 			fmt.Errorf("create remediation recovery worker: %w", err))
 	}
-	if err := runWithRecovery(ctx, server, recoveryWorker, executor, apiConfig.Common.ShutdownTimeout); err != nil {
+	backgroundWorkers := &notificationRecoveryWorkers{recovery: recoveryWorker, notifications: notificationService, logger: logger}
+	if err := runWithRecovery(ctx, server, backgroundWorkers, executor, apiConfig.Common.ShutdownTimeout); err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout, err)
 	}
 

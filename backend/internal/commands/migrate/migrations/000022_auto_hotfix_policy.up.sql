@@ -36,7 +36,7 @@ COMMENT ON COLUMN remediation_run.publication_target_branch IS
 
 ALTER TABLE projects
     ADD COLUMN remediation_execution_mode text NOT NULL DEFAULT 'analysis_only',
-    ADD COLUMN remediation_validation_profile jsonb NOT NULL DEFAULT '{"enabled":false,"imageDigest":"","workingDirectory":"","preparation":[],"requiredCommands":[],"cpuLimit":2,"memoryLimitMiB":4096,"workspaceLimitMiB":10240}'::jsonb,
+    ADD COLUMN remediation_validation_profile jsonb NOT NULL DEFAULT '{"imageDigest":"","workingDirectory":"","preparation":[],"requiredCommands":[],"cpuLimit":2,"memoryLimitMiB":4096,"workspaceLimitMiB":10240}'::jsonb,
     ADD COLUMN remediation_publication jsonb NOT NULL DEFAULT '{"branchPrefix":"hotfix/remediation","gitCredentialSecretId":"","apiCredentialSecretId":"","apiBaseUrl":""}'::jsonb,
     ADD COLUMN remediation_change_policy jsonb NOT NULL DEFAULT '{"allowedPaths":["**"],"deniedPaths":[],"maxChangedFiles":10,"maxChangedLines":400}'::jsonb,
     ADD CONSTRAINT projects_remediation_execution_mode_known
@@ -53,7 +53,7 @@ ALTER TABLE projects
 COMMENT ON COLUMN projects.remediation_execution_mode IS
     'Project remediation execution policy. Existing projects default to analysis_only.';
 COMMENT ON COLUMN projects.remediation_validation_profile IS
-    'Optional local validation configuration. enabled=false publishes a constrained draft change for repository CI; enabled=true freezes immutable runner configuration.';
+    'Versioned immutable-image validation command configuration copied into new run checkpoints.';
 COMMENT ON COLUMN projects.remediation_publication IS
     'Branch naming and project-owned Git/provider credential references; never plaintext credentials.';
 COMMENT ON COLUMN projects.remediation_change_policy IS

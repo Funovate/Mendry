@@ -628,6 +628,31 @@ export const api = {
   continueRemediation: retryRemediation,
 };
 
+const notificationChannelSchema = z.object({
+  id: z.string(), name: z.string(), platform: z.enum(["telegram", "feishu", "wecom"]),
+  enabled: z.boolean(), hasCredentials: z.boolean(), createdAt: z.string(), updatedAt: z.string(),
+});
+const notificationDeliverySchema = z.object({
+  id: z.string(), channelId: z.string(), channelName: z.string(), platform: z.string(),
+  kind: z.enum(["trigger", "result"]), incidentNumber: z.number(), generation: z.number(),
+  state: z.enum(["pending", "sending", "delivered", "failed", "cancelled"]), attempts: z.number(),
+  lastError: z.string(), createdAt: z.string(), nextAttemptAt: z.string(), deliveredAt: z.string().nullable(),
+});
+export type NotificationChannel = z.infer<typeof notificationChannelSchema>;
+export type NotificationDelivery = z.infer<typeof notificationDeliverySchema>;
+export type NotificationChannelInput = {
+  name: string; platform: NotificationChannel["platform"]; enabled: boolean;
+  credentials?: { botToken?: string; chatId?: string; webhookUrl?: string; signingSecret?: string };
+};
+export const notificationApi = {
+  listChannels: (key: string, signal?: AbortSignal) => requestList(projectPath(key, "/notifications/channels"), notificationChannelSchema, { signal }),
+  saveChannel: (key: string, input: NotificationChannelInput, id?: string) => requestData(projectPath(key, `/notifications/channels${id ? `/${encodeURIComponent(id)}` : ""}`), notificationChannelSchema, { method: id ? "PUT" : "POST", body: JSON.stringify(input) }),
+  deleteChannel: (key: string, id: string) => requestEmpty(projectPath(key, `/notifications/channels/${encodeURIComponent(id)}`), { method: "DELETE" }),
+  testChannel: (key: string, id: string) => requestData(projectPath(key, `/notifications/channels/${encodeURIComponent(id)}/test`), z.object({ sent: z.boolean() }), { method: "POST" }),
+  listDeliveries: (key: string, signal?: AbortSignal) => requestList(projectPath(key, "/notifications/deliveries"), notificationDeliverySchema, { signal }),
+  retryDelivery: (key: string, id: string) => requestData(projectPath(key, `/notifications/deliveries/${encodeURIComponent(id)}/retry`), z.object({ queued: z.boolean() }), { method: "POST" }),
+};
+
 export function messageFromError(error: unknown): string {
   if (error instanceof ApiError || error instanceof ApiContractError) return error.message;
   if (error instanceof Error) return error.message;

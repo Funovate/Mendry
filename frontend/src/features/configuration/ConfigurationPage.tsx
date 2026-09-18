@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Bell,
   Check,
   Copy,
   Cpu,
@@ -49,10 +50,13 @@ export function ConfigurationPage() {
             <h1>Configuration</h1>
             <p className="view-header-subtitle">Set up baseline repositories, collection sources, and alert triggers for your project.</p>
           </div>
-          <button className="primary-button" type="button" onClick={edit}>
-            <Plus size={16} />
-            Configure project
-          </button>
+          <div className="config-header-actions">
+            <button className="secondary-button" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/configuration/notifications`)}><Bell size={16} />Notifications</button>
+            <button className="primary-button" type="button" onClick={edit}>
+              <Plus size={16} />
+              Configure project
+            </button>
+          </div>
         </div>
         <section className="empty-projects compact">
           <Settings2 size={24} />
@@ -77,6 +81,7 @@ export function ConfigurationPage() {
           </p>
         </div>
         <div className="config-header-actions">
+          <button className="secondary-button" type="button" onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/configuration/notifications`)}><Bell size={16} />Notifications</button>
           <div className="view-mode-toggle" role="group" aria-label="View layout">
             <button
               type="button"

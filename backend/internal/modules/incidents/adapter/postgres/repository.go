@@ -9,6 +9,8 @@ import (
 	"mendry/backend/internal/modules/incidents/adapter/postgres/incidentdb"
 	"mendry/backend/internal/modules/incidents/application"
 	"mendry/backend/internal/modules/incidents/domain"
+	notificationpostgres "mendry/backend/internal/modules/notifications/adapter/postgres"
+	notificationdomain "mendry/backend/internal/modules/notifications/domain"
 	remediationpostgres "mendry/backend/internal/modules/remediation/adapter/postgres"
 	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 	"mendry/backend/internal/platform/errtrace"
@@ -38,8 +40,9 @@ type transactor interface {
 }
 
 type Repository struct {
-	queries  querier
-	database transactor
+	queries       querier
+	database      transactor
+	notifications notificationpostgres.Enqueuer
 }
 
 func NewRepository(database transactor) (*Repository, error) {
@@ -47,6 +50,10 @@ func NewRepository(database transactor) (*Repository, error) {
 		return nil, fmt.Errorf("incident PostgreSQL database is required")
 	}
 	return &Repository{queries: incidentdb.New(database), database: database}, nil
+}
+
+func (r *Repository) SetNotificationEnqueuer(enqueuer notificationpostgres.Enqueuer) {
+	r.notifications = enqueuer
 }
 
 func (r *Repository) Create(ctx context.Context, incident domain.Incident, remediation *application.RemediationRequest) (domain.Incident, error) {
@@ -62,7 +69,7 @@ func (r *Repository) Create(ctx context.Context, incident domain.Incident, remed
 	if err != nil {
 		return domain.Incident{}, application.ErrInvalidInput
 	}
-	if remediation != nil {
+	if remediation != nil || r.notifications != nil {
 		if r.database == nil {
 			return domain.Incident{}, fmt.Errorf("incident PostgreSQL transaction database is required")
 		}
@@ -85,6 +92,11 @@ func (r *Repository) Create(ctx context.Context, incident domain.Incident, remed
 		}
 		if err := createRemediationRoot(ctx, tx, remediation); err != nil {
 			return domain.Incident{}, err
+		}
+		if r.notifications != nil {
+			if err := r.notifications.Enqueue(ctx, tx, notificationdomain.Event{IncidentID: created.InternalID, Generation: created.LifecycleGeneration, Kind: "trigger"}); err != nil {
+				return domain.Incident{}, fmt.Errorf("enqueue incident notification: %w", err)
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return domain.Incident{}, newRepositoryError("commit incident remediation transaction", err)
@@ -242,7 +254,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, projectID string, number 
 		Status: string(status), LifecycleGeneration: generation, DeployedCommit: deployedCommit,
 		ProjectID: projectUUID, IncidentNumber: number,
 	}
-	if remediation != nil {
+	if remediation != nil || r.notifications != nil {
 		if r.database == nil {
 			return domain.Incident{}, fmt.Errorf("incident PostgreSQL transaction database is required")
 		}
@@ -252,12 +264,26 @@ func (r *Repository) UpdateStatus(ctx context.Context, projectID string, number 
 		}
 		defer tx.Rollback(ctx)
 
+		var previousStatus string
+		if r.notifications != nil {
+			if err := tx.QueryRow(ctx, `SELECT status FROM incidents WHERE project_id=$1 AND incident_number=$2 FOR UPDATE`, projectID, number).Scan(&previousStatus); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return domain.Incident{}, application.ErrNotFound
+				}
+				return domain.Incident{}, newRepositoryError("lock incident notification lifecycle", err)
+			}
+		}
 		updated, err := r.updateStatus(ctx, incidentdb.New(tx), params)
 		if err != nil {
 			return domain.Incident{}, err
 		}
 		if err := createRemediationRoot(ctx, tx, remediation); err != nil {
 			return domain.Incident{}, err
+		}
+		if r.notifications != nil && previousStatus == "Recovered" && status == domain.StatusOpen {
+			if err := r.notifications.Enqueue(ctx, tx, notificationdomain.Event{IncidentID: updated.InternalID, Generation: updated.LifecycleGeneration, Kind: "trigger"}); err != nil {
+				return domain.Incident{}, fmt.Errorf("enqueue reopened incident notification: %w", err)
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return domain.Incident{}, newRepositoryError("commit incident remediation transaction", err)

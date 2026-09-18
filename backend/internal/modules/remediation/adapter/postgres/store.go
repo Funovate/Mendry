@@ -17,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	notificationpostgres "mendry/backend/internal/modules/notifications/adapter/postgres"
+	notificationdomain "mendry/backend/internal/modules/notifications/domain"
 	projectdomain "mendry/backend/internal/modules/projects/domain"
 	"mendry/backend/internal/modules/remediation/adapter/postgres/remediationdb"
 	"mendry/backend/internal/modules/remediation/application"
@@ -34,7 +36,12 @@ type transactor interface {
 // series identifiers cross the port as opaque strings (UUIDs internally); rows
 // are mapped to feature-owned domain types.
 type RunStore struct {
-	db transactor
+	db            transactor
+	notifications notificationpostgres.Enqueuer
+}
+
+func (s *RunStore) SetNotificationEnqueuer(enqueuer notificationpostgres.Enqueuer) {
+	s.notifications = enqueuer
 }
 
 const (
@@ -1088,6 +1095,11 @@ func (s *RunStore) Transition(ctx context.Context, runID string, fromState, toSt
 		}
 	}
 
+	if s.notifications != nil && notificationdomain.IsStoppingResult(string(toState), run.ExecutionMode, run.AnalysisOnly) {
+		if err := s.notifications.Enqueue(ctx, tx, notificationdomain.Event{Kind: "result", RunID: runID, State: string(toState)}); err != nil {
+			return fmt.Errorf("enqueue remediation result notification: %w", err)
+		}
+	}
 	return tx.Commit(ctx)
 }
 

@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 24 {
-		t.Fatalf("migration count = %d, want 24", len(migrations))
+	if len(migrations) != 26 {
+		t.Fatalf("migration count = %d, want 26", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {
@@ -387,6 +387,17 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 		if !strings.Contains(migrations[13].SQL, fragment) {
 			t.Errorf("migration 000014 does not contain %q", fragment)
 		}
+	}
+	if migrations[21].Checksum != "cb806dba112d3f0be41284320eb4695f31993430cff058d46dba18b18595bf7b" {
+		t.Fatal("migration 000022 must retain its originally applied checksum")
+	}
+	forward := migrations[25]
+	if forward.Name != "optional_validation_default" ||
+		!strings.Contains(forward.SQL, `"enabled":false`) ||
+		!strings.Contains(forward.SQL, "ALTER COLUMN remediation_validation_profile") ||
+		!strings.Contains(forward.SQL, "SET DEFAULT") ||
+		strings.Contains(forward.SQL, "UPDATE projects") {
+		t.Fatal("migration 000026 must change the default without rewriting existing project policies")
 	}
 	requiredAutoHotfixPolicy := []string{
 		"remediation_execution_mode",

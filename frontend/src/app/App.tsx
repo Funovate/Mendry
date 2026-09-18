@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthenticatedRoute } from "../features/auth/AuthenticatedRoute";
 import { LoginPage } from "../features/auth/LoginPage";
 import { ConfigurationEditorPage } from "../features/configuration/ConfigurationEditorPage";
+import { NotificationsPage } from "../features/notifications/NotificationsPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { IncidentsPage } from "../features/incidents/IncidentsPage";
 import { ObservationsPage } from "../features/observations/ObservationsPage";
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="board" element={<Navigate to="../pipeline" replace />} />
           <Route path="observations" element={<ObservationsPage />} />
           <Route path="configuration" element={<ConfigurationPage />} />
+          <Route path="configuration/notifications" element={<NotificationsPage />} />
           <Route path="configuration/edit" element={<ConfigurationEditorPage />} />
         </Route>
       </Route>
