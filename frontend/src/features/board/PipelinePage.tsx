@@ -2,7 +2,6 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRight,
-  Check,
   CheckCircle2,
   Clock,
   Filter,
@@ -834,9 +833,7 @@ export function PipelinePage() {
 
                   {/* Visual Task Cards */}
                   <div className="station-cards-container">
-                    {visibleItems.map(({ incident, status, actionInfo }) => {
-                      const meta = status ? STATE_METADATA[status] : null;
-
+                    {visibleItems.map(({ incident, actionInfo }) => {
                       return (
                         <Link
                           key={incident.id}
@@ -846,50 +843,23 @@ export function PipelinePage() {
                           className={`graphic-task-card card-tone-${actionInfo.badgeTone}`}
                           title={`Open ${incident.id}`}
                         >
-                          {/* Card ID, Priority, & Kinetic Status Badges */}
+                          {/* Incident identity and compact date */}
                           <div className="task-top-row">
                             <span className="task-id-badge">{incident.id}</span>
                             <StatusPill value={incident.priority} />
-                            <span className={`task-kinetic-badge tone-${actionInfo.badgeTone}`}>
-                              {actionInfo.category === "running" && (
-                                <LoaderCircle size={10} className="spin" />
-                              )}
-                              {actionInfo.category === "needs_action" && (
-                                <Hand size={10} className="alert-shake" />
-                              )}
-                              {actionInfo.category === "blocked" && (
-                                <ShieldAlert size={10} />
-                              )}
-                              {actionInfo.category === "recoverable" && (
-                                <RefreshCw size={10} />
-                              )}
-                              {actionInfo.category === "terminal" && (
-                                <CheckCircle2 size={10} />
-                              )}
-                              {actionInfo.category === "unstarted" && (
-                                <Radio size={10} />
-                              )}
-                              <span>{actionInfo.badgeText}</span>
-                            </span>
-                            <span className="task-time-badge">
+                            <span className="task-time-badge" title={formatDate(incident.lastSeen)}>
                               <Clock size={10} aria-hidden="true" />
-                              {formatDate(incident.lastSeen)}
+                              {new Date(incident.lastSeen).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                             </span>
                           </div>
 
-                          {/* 1-Line Compact Title */}
-                          <h3 className="task-title-line">{incident.title}</h3>
+                          <h3 className="task-title-line" title={incident.title}>{incident.title}</h3>
 
                           {/* Advancement Status Banner: Tells user what can/cannot proceed */}
                           <div className={`task-advancement-banner is-${actionInfo.badgeTone}`}>
+                            <strong className="advancement-heading">{actionInfo.badgeText}</strong>
                             <div className="advancement-desc">
                               {actionInfo.statusDescription}
-                            </div>
-                            <div className="advancement-next-condition">
-                              <span className="advancement-next-arrow">➔</span>
-                              <span className="advancement-next-text">
-                                {actionInfo.nextStepText}
-                              </span>
                             </div>
                           </div>
 
@@ -913,36 +883,6 @@ export function PipelinePage() {
                                 );
                               })}
                             </div>
-                          </div>
-
-                          {/* Graphical Stepper Tokens: [Prev] -> [Current Driver] -> [Next Gate] */}
-                          <div className="task-flow-tokens">
-                            <span className="token token-prev" title={`Previous: ${meta?.prev || stage.prevName}`}>
-                              <Check size={9} aria-hidden="true" />
-                              <span>{meta?.prev || stage.prevName}</span>
-                            </span>
-
-                            <ArrowRight size={10} className="token-arrow" />
-
-                            <span
-                              className={`token token-current is-${actionInfo.badgeTone}`}
-                              title={`Current: ${meta?.label || stage.title}`}
-                            >
-                              {actionInfo.category === "running" && <span className="token-pulse-dot" />}
-                              {actionInfo.category === "needs_action" && <Hand size={9} className="token-icon" />}
-                              {actionInfo.category === "blocked" && <ShieldAlert size={9} className="token-icon" />}
-                              {actionInfo.category === "recoverable" && <RefreshCw size={9} className="token-icon" />}
-                              <strong>{meta?.label || stage.title}</strong>
-                            </span>
-
-                            <ArrowRight size={10} className="token-arrow" />
-
-                            <span
-                              className={`token token-next is-${actionInfo.badgeTone}`}
-                              title={`Next: ${actionInfo.nextStepText}`}
-                            >
-                              <span>{meta?.next || stage.nextName}</span>
-                            </span>
                           </div>
 
                           {/* Micro Device Indicators & Quick Action Cue */}
@@ -1012,25 +952,16 @@ export function PipelinePage() {
                       <div className="task-top-row">
                         <span className="task-id-badge">{incident.id}</span>
                         <StatusPill value={incident.priority} />
-                        <span className="task-kinetic-badge tone-unstarted">
-                          <Radio size={10} />
-                          <span>Unstarted</span>
-                        </span>
-                        <span className="task-time-badge">
+                        <span className="task-time-badge" title={formatDate(incident.lastSeen)}>
                           <Clock size={10} aria-hidden="true" />
-                          {formatDate(incident.lastSeen)}
+                          {new Date(incident.lastSeen).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                         </span>
                       </div>
-                      <h3 className="task-title-line">{incident.title}</h3>
+                      <h3 className="task-title-line" title={incident.title}>{incident.title}</h3>
                       <div className="task-advancement-banner is-unstarted">
+                        <strong className="advancement-heading">{actionInfo.badgeText}</strong>
                         <div className="advancement-desc">
                           {actionInfo.statusDescription}
-                        </div>
-                        <div className="advancement-next-condition">
-                          <span className="advancement-next-arrow">➔</span>
-                          <span className="advancement-next-text">
-                            {actionInfo.nextStepText}
-                          </span>
                         </div>
                       </div>
                       <div className="task-bottom-row">
