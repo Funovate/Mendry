@@ -13,6 +13,8 @@ const pages = [
     hotfix: "AUTOMATIC HOTFIX · OPT-IN",
     handoff: "Your team takes it from here",
     optionalValidation: "Prevalidate locally · optional",
+    notification: "Result notification",
+    notificationHref: "/docs/guides/notifications/",
     boundary:
       "Mendry does not automatically merge, deploy, roll back, or confirm production recovery.",
   },
@@ -27,6 +29,8 @@ const pages = [
     hotfix: "自动 HOTFIX · 按项目启用",
     handoff: "由你的团队接续",
     optionalValidation: "本地预验证 · 可选",
+    notification: "结果通知",
+    notificationHref: "/zh-cn/docs/guides/notifications/",
     boundary: "Mendry 不自动合并、部署、回滚或确认生产恢复。",
   },
 ];
@@ -71,10 +75,16 @@ for (const pageCase of pages) {
       await expect(page.locator(".home-handoff")).toContainText(
         pageCase.boundary,
       );
-      await expect(page.locator(".home-delivery-strip li")).toHaveCount(3);
+      await expect(page.locator(".home-delivery-strip li")).toHaveCount(4);
+      await expect(page.locator(".home-delivery-strip")).toContainText(
+        pageCase.notification,
+      );
       await expect(page.locator(".home-workspace-paths a")).toHaveCount(3);
       await expect(page.locator(".home-stack")).toBeVisible();
       await expect(page.locator(".home-paths a")).toHaveCount(3);
+      await expect(
+        page.locator(`.home-paths a[href="${pageCase.notificationHref}"]`),
+      ).toBeVisible();
       await expect(page.locator(".home-footer")).toBeVisible();
 
       const layout = await page.evaluate(() => {
