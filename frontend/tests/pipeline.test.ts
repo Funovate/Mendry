@@ -1,3 +1,4 @@
+import type { RemediationReview } from "../src/api";
 import { describe, expect, it } from "vitest";
 import {
   resolveActionability,
@@ -49,14 +50,51 @@ describe("Pipeline Actionability & Stage Mapping", () => {
     expect(result.quickActionLabel).toBe("Review Plan ➔");
   });
 
-  it("classifies awaiting_human_review as needs_action requiring PR merge", () => {
-    const result = resolveActionability("awaiting_human_review", null);
+  it("classifies awaiting_human_review as an explicit Git handoff", () => {
+    const review = {
+      checkpoint: {
+        validations: [{ commandId: "test", commandVersion: 1, treeHash: "tree", passed: true }],
+        publication: {
+          branchRef: "hotfix/incident-1",
+          targetBranch: "main",
+          commitHash: "abc123",
+          changeRef: "PR #42",
+          compareUrl: "https://git.example/pull/42",
+        },
+      },
+    } as unknown as RemediationReview;
+
+    const result = resolveActionability("awaiting_human_review", review);
     expect(result.category).toBe("needs_action");
     expect(result.badgeTone).toBe("action");
-    expect(result.badgeText).toBe("PR Review Needed");
+    expect(result.badgeText).toBe("Operator Action Required");
+    expect(result.completedText).toContain("validation passed");
+    expect(result.actor).toBe("Operator");
     expect(result.isAutoAdvancing).toBe(false);
     expect(result.canAdvance).toBe(true);
-    expect(result.quickActionLabel).toBe("Review PR ➔");
+    expect(result.quickActionLabel).toBe("Open Git review");
+    expect(result.actionUrl).toBe("https://git.example/pull/42");
+    expect(result.nextStepText).toContain("mark the incident Recovered or Closed");
+  });
+
+  it("does not claim validation or a PR when delivery only has a branch", () => {
+    const review = {
+      checkpoint: {
+        validations: [],
+        publication: {
+          branchRef: "hotfix/incident-1",
+          targetBranch: "release",
+          commitHash: "abc123",
+        },
+      },
+    } as unknown as RemediationReview;
+
+    const result = resolveActionability("awaiting_human_review", review);
+    expect(result.completedText).toContain("no passing local validation record");
+    expect(result.nextStepText).toContain("hotfix/incident-1");
+    expect(result.nextStepText).toContain("release");
+    expect(result.quickActionLabel).toBe("View Git instructions");
+    expect(result.actionUrl).toBeUndefined();
   });
 
   it("classifies blocked_manual_review as blocked requiring operator takeover", () => {
@@ -114,6 +152,9 @@ describe("Pipeline Actionability & Stage Mapping", () => {
     expect(result.category).toBe("terminal");
     expect(result.badgeTone).toBe("terminal");
     expect(result.badgeText).toBe("Resolved");
+    expect(result.actor).toBe("Operator");
+    expect(result.statusDescription).not.toContain("successfully closed");
+    expect(result.nextStepText).toContain("mark the incident Recovered or Closed");
     expect(result.canAdvance).toBe(false);
   });
 

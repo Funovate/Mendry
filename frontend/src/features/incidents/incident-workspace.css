@@ -1875,6 +1875,70 @@
   color: #10543f;
 }
 
+.remediation-handoff {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 0 18px;
+  padding: 16px 18px;
+  background: #fffaf1;
+  border: 1px solid #ebc98e;
+  border-left: 4px solid #c1893e;
+  border-radius: 8px;
+}
+
+.remediation-handoff.is-running {
+  background: #f1f8f4;
+  border-color: #bcdcc9;
+  border-left-color: #176d52;
+}
+
+.remediation-handoff.is-blocked,
+.remediation-handoff.is-terminal {
+  background: #fff7f7;
+  border-color: #efc5c5;
+  border-left-color: #b91c1c;
+}
+
+.remediation-handoff-copy {
+  min-width: 0;
+}
+
+.remediation-handoff-owner {
+  display: block;
+  margin-bottom: 3px;
+  color: #7b541d;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.remediation-handoff h3 {
+  margin: 0 0 8px;
+  color: #17281f;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.remediation-handoff p {
+  margin: 3px 0;
+  color: #3f5147;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remediation-handoff-action {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .remediation-handoff {
+    flex-direction: column;
+  }
+}
+
 /* --------------------------------------------------------------------------
    Refined Remediation Action Success Notification
    -------------------------------------------------------------------------- */

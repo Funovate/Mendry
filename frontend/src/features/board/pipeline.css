@@ -836,6 +836,16 @@
   overflow-wrap: anywhere;
 }
 
+.advancement-next {
+  color: var(--color-ink, #17281f);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.advancement-next strong {
+  font-weight: 650;
+}
+
 .advancement-next-condition {
   display: flex;
   align-items: center;
@@ -1070,6 +1080,15 @@
   font-weight: 650;
   white-space: nowrap;
   transition: all 0.15s ease;
+}
+
+.card-action-cue[role="link"] {
+  cursor: pointer;
+}
+
+.card-action-cue[role="link"]:focus-visible {
+  outline: 2px solid #176d52;
+  outline-offset: 2px;
 }
 
 .card-action-cue.is-action {

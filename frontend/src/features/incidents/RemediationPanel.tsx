@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, ChevronRight, ChevronsUpDown, Copy, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, PanelRightClose, PanelRightOpen, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench, X } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, ChevronRight, ChevronsUpDown, Copy, ExternalLink, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, PanelRightClose, PanelRightOpen, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, messageFromError, type RemediationContinuationInput, type RemediationRepairInput } from "../../api";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
 import { ErrorNotice } from "../../shared/ui";
-import { STAGE_ICONS, STATE_METADATA, WORKFLOW_STAGES } from "../board/PipelinePage";
+import { STAGE_ICONS, STATE_METADATA, WORKFLOW_STAGES, resolveActionability } from "../board/PipelinePage";
 import { parseUnifiedDiff, type DiffFile, type DiffLine } from "./remediationDiff";
 
 type RemediationPanelProps = {
@@ -254,6 +254,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
     (continueRemediation.error.status === 403 || continuationBlockingCodes.has(continueRemediation.error.code));
   const repairPolicyUnavailable = repairWithCurrentPolicy.error instanceof ApiError && repairWithCurrentPolicy.error.code === "remediation_policy_unavailable";
   const review = remediation.data;
+  const guidance = review ? resolveActionability(review.status, review) : null;
   const repairEligible = review != null && ["diagnosis_ready_for_review", "failed", "budget_exhausted", "blocked_manual_review"].includes(review.status);
   const commitCopied = Boolean(review?.deployedCommit && copiedCommit === review.deployedCommit);
 
@@ -373,8 +374,12 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
               {WORKFLOW_STAGES.map((stg, sIdx) => {
                 const Icon = STAGE_ICONS[stg.id] || Waypoints;
                 const currentIdx = WORKFLOW_STAGES.findIndex((s) => s.states.includes(review.status));
-                const isCurrent = stg.states.includes(review.status);
-                const isPassed = currentIdx > sIdx;
+                const awaitingGitReview = review.status === "awaiting_human_review";
+                const isCurrent = stg.states.includes(review.status) && !awaitingGitReview;
+                const isPassed = currentIdx > sIdx || (awaitingGitReview && stg.id === "validation");
+                const stageState = awaitingGitReview && stg.id === "resolution"
+                  ? "After Git review"
+                  : isCurrent ? "Active" : isPassed ? "Done" : "Pending";
 
                 return (
                   <div key={stg.id} className="stepper-item-wrap">
@@ -385,7 +390,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                       </span>
                       <div className="stepper-node-text">
                         <strong>{stg.title}</strong>
-                        <small>{isCurrent ? "Active" : isPassed ? "Done" : "Pending"}</small>
+                        <small>{stageState}</small>
                       </div>
                     </div>
                     {sIdx < WORKFLOW_STAGES.length - 1 && (
@@ -420,6 +425,23 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
               </Link>
             </div>
           </div>
+          {guidance && (
+            <section className={`remediation-handoff is-${guidance.badgeTone}`} aria-labelledby="remediation-handoff-heading">
+              <div className="remediation-handoff-copy">
+                <span className="remediation-handoff-owner">Now: {guidance.actor}</span>
+                <h3 id="remediation-handoff-heading">{guidance.badgeText}</h3>
+                <p><strong>Completed:</strong> {guidance.completedText}</p>
+                <p><strong>Current state:</strong> {guidance.statusDescription}</p>
+                <p><strong>Your next step:</strong> {guidance.nextStepText}</p>
+              </div>
+              {guidance.actionUrl && (
+                <a className="primary-button remediation-handoff-action" href={guidance.actionUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink size={15} aria-hidden="true" />
+                  Open Git review
+                </a>
+              )}
+            </section>
+          )}
           <div className={`remediation-columns ${contextExpanded ? "with-context" : "context-collapsed"}`}>
           <div className="remediation-main">
 
@@ -628,7 +650,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
 
             {!canWrite && <p className="readonly-note">Viewer access is read-only.</p>}
             {activeStates.has(review.status) && <p className="run-context-note">An analysis attempt is currently active.</p>}
-            {!review.continuationAvailable && !activeStates.has(review.status) && <p className="run-context-note">This remediation result cannot be continued.</p>}
+            {!review.continuationAvailable && !activeStates.has(review.status) && review.status !== "awaiting_human_review" && <p className="run-context-note">This automation run has ended. Follow the next-step guidance in the incident.</p>}
           </section>
           {review.checkpoint && (review.checkpoint.validations.length > 0 || review.checkpoint.publication) && (
             <section className="remediation-attempts" aria-labelledby="delivery-heading">
