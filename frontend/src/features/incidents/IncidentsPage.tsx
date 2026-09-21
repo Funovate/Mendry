@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Check, ChevronDown, ChevronLeft, Clock3, Copy, LoaderCircle, Radio, Server, Terminal, Waypoints } from "lucide-react";
+import { Activity, Check, ChevronDown, ChevronLeft, Clock3, Copy, LoaderCircle, Radio, Server, Terminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import brandMark from "../../assets/mendry-mark-reversed.svg";
@@ -158,16 +158,6 @@ export function IncidentsPage() {
           <div>
             <h1>Incidents <span className="incident-count-pill">{totalCount}</span></h1>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            style={{ padding: "0 10px", fontSize: "11px", height: "28px" }}
-            onClick={() => navigate(`/projects/${encodeURIComponent(project.key)}/pipeline`)}
-            title="Open remediation workflow pipeline"
-          >
-            <Waypoints size={13} aria-hidden="true" />
-            <span>Pipeline View</span>
-          </button>
         </div>
         <div className="filter-row">
           <select aria-label="Filter incident status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>

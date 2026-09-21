@@ -188,8 +188,8 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/docs/guides/operator-workflow/",
         },
         {
-          title: "Pipeline",
-          text: "Find open incidents by stage, priority, and the next available action.",
+          title: "Incidents",
+          text: "Browse incidents by status, then open one to see its remediation stage and next step.",
           href: "/docs/guides/operator-workflow/",
         },
         {
@@ -351,8 +351,8 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/zh-cn/docs/guides/operator-workflow/",
         },
         {
-          title: "Pipeline 看板",
-          text: "按阶段、优先级和可操作性查找 Open 事故，进入下一步处理。",
+          title: "事故列表",
+          text: "按状态浏览事故，进入事故查看修复阶段与下一步操作。",
           href: "/zh-cn/docs/guides/operator-workflow/",
         },
         {

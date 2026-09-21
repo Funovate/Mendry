@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ListFilter, LogOut, Menu, Settings2, Waypoints, X } from "lucide-react";
+import { Activity, ListFilter, LogOut, Menu, Settings2, X } from "lucide-react";
 import brandLogo from "../assets/mendry-logo-horizontal.svg";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
@@ -11,7 +11,6 @@ import { IconButton } from "../shared/ui";
 
 const navItems = [
   { path: "incidents", label: "Incidents", icon: Activity },
-  { path: "pipeline", label: "Pipeline", icon: Waypoints },
   { path: "observations", label: "Event stream", icon: ListFilter },
   { path: "configuration", label: "Configuration", icon: Settings2 },
 ] as const;
