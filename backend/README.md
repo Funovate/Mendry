@@ -4,8 +4,9 @@ This directory contains the Go Agent Harness foundation and the existing inciden
 application backend. `internal/modules/agentcore` defines and implements neutral
 Run, model/tool, policy, completion, artifact, history, and persistence contracts
 without importing incidents, projects, accounts, PostgreSQL, or Redis. The
-account-free Local composition and adapters are still being validated; their
-source presence is not a supported walkthrough or release claim.
+account-free Local composition is available for source evaluation with a documented
+offline fixture walkthrough. Its CLI and adapters remain preview interfaces,
+without a supported binary release or compatibility guarantee.
 
 The existing incident API remains a separate compatibility application.
 PostgreSQL is its source of truth for the single login identity, projects, collection
@@ -20,7 +21,7 @@ remote telemetry export remain deferred until a product use case requires them.
 ## Layout
 
 ```text
-cmd/                         thin process entry points; agentcore-local remains in validation
+cmd/                         thin process entry points, including the preview agentcore-local CLI
 internal/bootstrap/          existing incident API composition and process lifecycle
 internal/commands/migrate/   explicit incident-service schema migration runtime
 internal/platform/           shared incident-service infrastructure: PostgreSQL, Redis, local telemetry
@@ -29,6 +30,9 @@ internal/modules/auth/       local users, bcrypt passwords, Redis sessions, auth
 internal/modules/projects/   project lookup, configuration, credentials
 internal/modules/observations/ project-owned Event Stream
 internal/modules/incidents/  project-owned incident lifecycle
+internal/modules/hooks/      public signal ingestion and provider-specific callbacks
+internal/modules/remediation/ incident investigation, bounded hotfix execution, and SSH log probes
+internal/modules/notifications/ project channels and durable notification delivery
 internal/modules/system/     liveness and readiness vertical slice
 tests/integration/           opt-in tests for caller-supplied dependency endpoints
 tools/                       developer-only tool dependency module
@@ -64,13 +68,23 @@ append the same records to a private local file while retaining stdout. The
 parent directory is created automatically; rotate or remove the file through
 the local process supervisor when needed.
 
+For first-time API setup, configure `MENDRY_POSTGRES_URL`, `MENDRY_REDIS_URL`,
+and a private, persistent `MENDRY_ENCRYPTION_KEY` in `.env`. The sample key is a
+placeholder; generate a key once as described in the [root setup guide](../README.md#start-the-api)
+and reuse it for the same database. Run migrations before starting the API:
+
 ```bash
 cp .env.example .env
-make run-api
+# Edit .env with your service endpoints and generated encryption key first.
 make run-migrate
-make bootstrap-admin USERNAME=admin
-make seed
+MENDRY_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-random-password' \
+  make bootstrap-admin USERNAME=admin
+make run-api
 ```
+
+On later starts, reuse `.env` and run `make run-api`; apply pending migrations
+before running an updated backend. `make seed` is optional demo data, not a
+startup prerequisite.
 
 The API listens on `127.0.0.1:8080` by default:
 
@@ -256,11 +270,11 @@ sessions are written only under the `mendry:session:v1:` namespace.
 
 Authentication endpoints are:
 
-| Method | Path | Behavior |
-|---|---|---|
-| `POST` | `/api/v1/auth/login` | Verify local credentials, rotate Session, set cookie |
-| `GET` | `/api/v1/auth/me` | Return `id` and `username` for the current Session |
-| `POST` | `/api/v1/auth/logout` | Revoke the Session and clear the cookie |
+| Method | Path                  | Behavior                                             |
+| ------ | --------------------- | ---------------------------------------------------- |
+| `POST` | `/api/v1/auth/login`  | Verify local credentials, rotate Session, set cookie |
+| `GET`  | `/api/v1/auth/me`     | Return `id` and `username` for the current Session   |
+| `POST` | `/api/v1/auth/logout` | Revoke the Session and clear the cookie              |
 
 The application supports one login identity and no roles or memberships. The
 logged-in user can create and manage every project. A database unique index
@@ -294,15 +308,15 @@ request can access every project; an unknown project returns 404.
 
 The current MVP stores at most one row for each configuration component per project. The editor saves environment, Git repository, source, trigger, optional LLM provider, and remediation policy independently; the complete configuration read is available once the required environment, repository, source, and trigger rows exist:
 
-| Resource | Persisted fields |
-|---|---|
-| Environment | stable key, name, optional service |
-| Git repository | remote URL, SCM provider, `https`/`ssh` transport, credential reference, production branch, deployed commit |
-| Source | `ssh`, `cloud`, or `mcp`; typed config, credential reference, capabilities, enabled state |
-| Trigger | `signed_webhook` or `custom_rule`; typed config, optional signing-secret reference, enabled state; signed webhook also stores a hashed inbound token |
-| LLM provider | OpenAI-compatible base URL, credential reference, and selected model |
-| Remediation policy | mode (`conservative`/`enhanced`), change request target (`pr_draft`/`mr_draft`), write credential reference, path allow/deny lists, max changed lines/files, timeout, and pre-validation profile |
-| Credential | stable ID/name/kind and AES-256-GCM ciphertext/nonce; reads expose metadata only |
+| Resource           | Persisted fields                                                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environment        | stable key, name, optional service                                                                                                                                               |
+| Git repository     | remote URL, SCM provider, `https`/`ssh` transport, credential reference, production branch, deployed commit                                                                      |
+| Source             | `ssh`, `cloud`, or `mcp`; typed config, credential reference, capabilities, enabled state                                                                                        |
+| Trigger            | `signed_webhook` or `custom_rule`; typed config, optional signing-secret reference, enabled state; signed webhook also stores a hashed inbound token                             |
+| LLM provider       | OpenAI-compatible base URL, credential reference, and selected model                                                                                                             |
+| Remediation policy | execution mode (`analysis_only`/`auto_hotfix`), publication credentials and branch prefix, path allow/deny lists, max changed lines/files, and optional local validation profile |
+| Credential         | stable ID/name/kind and AES-256-GCM ciphertext/nonce; reads expose metadata only                                                                                                 |
 
 The editor reads partial state from `GET /configuration/draft`. Each component write uses `PUT /configuration/{component}` and sends only that component's fields. The legacy complete `PUT /configuration` remains available for clients that already submit a full snapshot.
 SSH configuration stores host, port, user, project folder, log path, and
@@ -328,12 +342,15 @@ Main project routes are:
 
 ```text
 GET|POST /api/v1/projects
-GET      /api/v1/projects/{projectKey}
+GET|PATCH /api/v1/projects/{projectKey}
 GET|POST /api/v1/projects/{projectKey}/secrets
+PATCH    /api/v1/projects/{projectKey}/secrets/{secretId}
 GET      /api/v1/projects/{projectKey}/configuration
 GET      /api/v1/projects/{projectKey}/configuration/draft
 PUT      /api/v1/projects/{projectKey}/configuration
 PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm|remediation}
+POST     /api/v1/projects/{projectKey}/configuration/source/ssh/log-files
+POST     /api/v1/projects/{projectKey}/configuration/source/ssh/containers
 POST     /api/v1/projects/{projectKey}/configuration/log-rule/generate
 GET      /api/v1/projects/{projectKey}/configuration/log-probe
 POST     /api/v1/projects/{projectKey}/configuration/log-probe
@@ -342,12 +359,22 @@ POST     /api/v1/projects/{projectKey}/configuration/webhook-token
 POST     /api/v1/projects/{projectKey}/configuration/auto-hotfix/check
 GET      /api/v1/projects/{projectKey}/configuration/auto-hotfix/check
 POST     /api/v1/projects/{projectKey}/configuration/auto-hotfix/enable
+POST     /api/v1/projects/{projectKey}/repository/refs
+POST     /api/v1/projects/{projectKey}/llm/models
+POST     /api/v1/projects/{projectKey}/llm/chat
 GET|POST /api/v1/projects/{projectKey}/observations
 GET|POST /api/v1/projects/{projectKey}/incidents
 GET      /api/v1/projects/{projectKey}/incidents/{incidentId}
 PATCH    /api/v1/projects/{projectKey}/incidents/{incidentId}/status
+GET      /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation
+POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/start
+POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/retry
 POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/repair
-POST     /api/v1/projects/{projectKey}/incidents/{incidentId}/remediation/continue
+GET|POST /api/v1/projects/{projectKey}/notifications/channels
+PUT|DELETE /api/v1/projects/{projectKey}/notifications/channels/{channelId}
+POST     /api/v1/projects/{projectKey}/notifications/channels/{channelId}/test
+GET      /api/v1/projects/{projectKey}/notifications/deliveries
+POST     /api/v1/projects/{projectKey}/notifications/deliveries/{deliveryId}/retry
 POST     /hooks/{token}
 ```
 
@@ -369,7 +396,7 @@ Persist each configuration component independently. For example, saving a signed
 ```bash
 curl -X PUT -b /tmp/mendry-cookie.txt \
   -H 'Content-Type: application/json' \
-  -d '{"kind":"signed_webhook","signingSecretId":null,"config":{"schemaVersion":1,"eventTypes":["alarm"],"deduplicationKey":"title"},"enabled":true}' \
+  -d '{"kind":"signed_webhook","signingSecretId":null,"config":{"schemaVersion":2,"provider":"generic","eventTypes":["alarm"],"deduplicationKey":"title"},"enabled":true}' \
   http://127.0.0.1:8080/api/v1/projects/checkout-api/configuration/trigger
 ```
 
@@ -409,12 +436,18 @@ development with authenticated cookies.
 
 ## Automatic remediation and restart recovery
 
-The incident application supports bounded automatic hotfix patch generation and publication:
+Project repair policy has two execution modes:
 
-- **Conservative mode**: Generates a constrained source patch against the deployed commit and publishes a Draft PR (GitHub) or Draft MR (GitLab) for human review. Repository CI acts as the engineering gate.
-- **Enhanced mode**: Optionally runs pre-validation in an isolated, network-disabled container (Docker) using immutable Go or Node builder images before publishing.
+- **`analysis_only` (default)**: Produces diagnosis, citations, a plan, and a candidate diff for console review. It does not write a branch or publish a change request.
+- **`auto_hotfix`**: Generates a policy-bounded patch, publishes a review branch or Draft PR/MR when supported, and requires Git write credentials. Its optional local validation profile runs approved tests in an isolated, network-disabled Docker container before publication.
+
+"Enhanced mode" in the console refers to enabling this local pre-validation
+inside `auto_hotfix`; it is not a separate execution mode. Repository CI and
+human review remain the final merge gates. Mendry does not merge, deploy, roll
+back, or confirm recovery automatically.
 
 Key environment variables:
+
 - `MENDRY_REMEDIATION_CONCURRENCY`: max concurrent normal and recovered runs (default: `4`, range: `1`–`32`).
 - `MENDRY_REMEDIATION_RECOVERY_INTERVAL`: scan interval for interrupted or orphaned runs (default: `15s`, range: `1s`–`5m`).
 - `MENDRY_REMEDIATION_MODEL_TIMEOUT`: timeout per model turn (default: `5m`).
@@ -422,6 +455,26 @@ Key environment variables:
 - `MENDRY_REMEDIATION_GO_BUILDER_IMAGE` & `MENDRY_REMEDIATION_NODE_BUILDER_IMAGE`: pinned builder images with sha256 digests for enhanced pre-validation.
 
 See [Automatic repair](./docs/automatic-hotfix.md) and [Remediation restart recovery](./docs/remediation-recovery.md) for full architectural contracts and operational runbooks.
+
+## Project notifications
+
+The API process delivers project notifications to Telegram, Feishu, and WeCom.
+Each project can configure multiple channels, send an immediate test, inspect
+the most recent 100 delivery records, and manually retry eligible failures.
+Business notifications cover a new incident trigger and the first stopped AI
+result for an incident generation; manual recovery and closure do not emit one.
+
+Apply migration `000025_notifications` before running a notification-enabled API
+binary. Notifications reuse `MENDRY_ENCRYPTION_KEY` for encrypted channel
+credentials and `MENDRY_PUBLIC_URL` for console links; no additional broker or
+environment variables are required. The in-process worker uses PostgreSQL-backed
+claims and retries, starts alongside remediation recovery, and drains before the
+database pool closes. Delivery is at least once, so a provider may receive a
+duplicate when its successful response is lost.
+
+See the [notification module guide](./internal/modules/notifications/README.md)
+for event semantics, security restrictions, API routes, retry behavior, and
+focused validation commands.
 
 ## PostgreSQL and sqlc
 

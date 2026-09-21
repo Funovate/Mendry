@@ -9,19 +9,43 @@ The documentation source lives in the repository's `docs/` directory.
 ## Development and verification
 
 The package pins Node.js `22.19.0` in [`.node-version`](./.node-version). From
-this directory, install the lockfile and run the same platform-neutral gate that
-a future CI provider can invoke:
+this directory, install the locked dependencies and the Chromium browser used by
+the desktop and mobile tests:
 
 ```bash
 npm ci
+npx playwright install chromium
+```
+
+On Linux machines missing browser system libraries, use
+`npx playwright install --with-deps chromium` instead. Then run the verification gate:
+
+```bash
 npm run verify
 ```
 
 The gate runs formatting, Astro/content and route checks, Node contract tests,
 the production dependency audit, a non-indexable preview build, Playwright
-browser checks, and the public static-output contract. The focused commands are
-available separately as `npm run lint`, `npm run check`, `npm run test`,
-`npm run build`, and `npm run test:e2e`.
+browser checks, and the public static-output contract. The dependency audit
+requires network access. The gate restores a non-indexable preview build after
+the public contract check, including when an earlier check fails. The focused
+commands are available separately as `npm run lint`, `npm run check`,
+`npm run test`, `npm run build`, and `npm run test:e2e`.
+
+For local editing, run `npm run dev` and open the URL printed by Astro
+(normally `http://localhost:4321`). English documentation is under `/docs/`;
+Chinese documentation is under `/zh-cn/docs/`.
+
+## Updating documentation
+
+- Edit English pages in `src/content/docs/docs/` and their Chinese counterparts in `src/content/docs/zh-cn/docs/`. Keep `translationKey`, `availability`, and cited `sources` aligned with the implemented behavior.
+- For a new page, add both language files, a sidebar entry in `astro.config.mjs`, and a route entry in `scripts/site-contract.mjs`. Update the expected route counts in `scripts/site-contract.test.mjs`.
+- Add relevant links from the documentation overview, feature map, configuration reference, or product status so readers can discover a new feature.
+- Run `npm run check`, `npm test`, and `npm run build` to check content metadata, locale parity, generated pages, and internal links. Run `npm run verify` for the full formatting, browser, and publication checks.
+
+The incident-application setup lives in the [root README](../README.md) and
+[backend README](../backend/README.md); the commands in this package only build
+and serve documentation.
 
 ## Brand assets
 
