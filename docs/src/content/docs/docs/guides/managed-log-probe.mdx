@@ -1,10 +1,13 @@
 ---
-title: Managed log probe
+title: SSH log monitoring with a managed probe
 description: Install and run Mendry file-log monitoring over SSH on Linux hosts without a logging or alerting platform.
 availability: available
 translationKey: managed-log-probe
 sources:
   - backend/README.md
+  - backend/internal/modules/remediation/adapter/sshlog/log_probe_manager.go
+  - backend/internal/modules/projects/domain/project.go
+  - frontend/src/features/configuration/wizard/TriggerStep.tsx
 ---
 
 **Availability: available**
@@ -14,7 +17,7 @@ The managed log probe monitors regular Linux log files. Mendry installs a fixed 
 ## Requirements
 
 - An SSH source using `host` deployment and `tail` mode.
-- A Linux SSH user that can read the configured absolute log path.
+- A Linux SSH user that can read the configured absolute log path. The path must not contain spaces, tabs, or line breaks.
 - Python 3.6 or newer, a running systemd instance, and non-interactive `sudo -n` on the host.
 - Outbound HTTPS access to `MENDRY_PUBLIC_URL`.
 - A saved custom-rule trigger. AI generation additionally requires a configured LLM provider.
@@ -31,10 +34,28 @@ File browsing uses the current SSH form values before the source is saved. It li
 
 The first run starts at the end of the file. The probe persists its inode and offset, starts a rotated file at its beginning, spools events before delivery, and only sends strict events for the active trigger version and rule IDs.
 
+## Trigger semantics
+
+- `threshold`: the number of matching lines required within the detection window.
+- `windowSeconds`: the rolling window used to count matches.
+- `cooldownSeconds`: the quiet period after the same rule fires.
+- `groupingWindowSeconds`: retained as incident grouping configuration; it does not replace the detection window.
+- `excludePattern`: a regular expression that excludes lines even when they match the main rule.
+
+Configure 1–20 rules with unique IDs matching `^[a-z][a-z0-9_-]{0,63}$`. Thresholds range from 1–10,000 lines, detection windows from 1–86,400 seconds, and cooldowns from 0–86,400 seconds. For example, a `contains` rule for `ERROR` with threshold `3`, window `60`, and cooldown `300` fires after three matching lines within 60 seconds, then suppresses the same rule for five minutes.
+
+A stable event ID becomes the incident fingerprint. Retrying the same event updates the same incident instead of creating another; a lost delivery response can still result in a duplicate observation.
+
+## Verify monitoring
+
+Wait for a fresh `monitoring` status after installation. Then have the application write new matching lines to the selected file until the rule's threshold is reached within its detection window. Historical lines from before the first start are not replayed. Inspect the project's event stream and incident list for the resulting signal and incident.
+
+If nothing appears, check the exclusion pattern, cooldown, and delivery status before changing the rule. See [troubleshooting](/docs/guides/troubleshooting/).
+
 ## Operations
 
 Status is read over SSH from systemd and the probe status file. Uninstall stops the service and removes its program, token-bearing configuration, cursor, and spool.
 
 After rotating the trigger token or changing the trigger configuration, run **Install or update** immediately. Old tokens and stale configuration versions are rejected.
 
-The current release supports one regular Linux file. Docker stdout, journald, multiline aggregation, and missing-log rules are out of scope.
+The current release supports one regular Linux file. Docker stdout, journald, multiline aggregation, and missing-log rules are out of scope. The service and configuration paths are shared on each host, so installing a probe for another project on the same host replaces the existing probe configuration.

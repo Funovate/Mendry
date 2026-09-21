@@ -57,6 +57,11 @@ const pages = [
   ],
   ["tencent-cls", "src/content/docs/docs/guides/tencent-cls.mdx", "preview"],
   [
+    "managed-log-probe",
+    "src/content/docs/docs/guides/managed-log-probe.mdx",
+    "available",
+  ],
+  [
     "signed-webhooks",
     "src/content/docs/docs/guides/signed-webhooks.mdx",
     "available",

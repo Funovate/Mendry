@@ -33,6 +33,16 @@ sources:
 
 `202` 早于后台处理完成。使用项目/来源 scope 和 request correlation 搜索结构化日志中的 `webhook.ingest.failed`，不要搜索原始 token。检查 provider shape、模型连接、PostgreSQL 写入和事故配置。模型失败应使用确定性 fallback；持久化或证据失败仍需操作员处理。
 
+## SSH 日志探针安装失败或停留在 starting
+
+确认已保存的采集源使用 SSH、`host` deployment 和 `tail` mode，且 trigger 已保存并启用。检查 SSH 凭据、日志文件绝对路径及读取权限，以及目标主机的 Python 3.6 或更新版本、运行中的 systemd 和无交互 `sudo -n`。主机还需能够通过 HTTPS 访问 `MENDRY_PUBLIC_URL`。
+
+安装返回 `starting` 只表示远端命令已完成，还需等待本次探针上报新的 `monitoring` 状态。重新安装前先查看状态及错误提示。编辑 trigger 或轮换 token 后，使用 **Install or update** 替换远端的旧配置。
+
+## SSH 日志探针正在监控，但没有事故
+
+探针首次启动只处理新增行。确认应用正在写入所选文件，并在 `windowSeconds` 内产生足够多的匹配行以达到 `threshold`。检查 `excludePattern` 和 `cooldownSeconds`，再查看投递错误以及到 Mendry 的连通性。当前探针不支持 Docker stdout、journald、多行堆栈聚合和“长时间无日志”规则。详见 [SSH 日志监控](/zh-cn/docs/guides/managed-log-probe/)。
+
 ## 修复停止或报告证据不足
 
 这是策略结果，不是绕过门禁的理由。检查不可用来源、精确 Git 基线、工具 budget、已存证据 provenance，以及必需的腾讯 CLS direct detail。只有修复缺失 capability 或 evidence 后才重试。

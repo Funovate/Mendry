@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="./logo/mendry-logo-horizontal.svg" alt="Mendry" width="280" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./logo/mendry-logo-horizontal-reversed.svg" />
+    <img src="./logo/mendry-logo-horizontal.svg" alt="Mendry" width="280" />
+  </picture>
 </p>
 
 <p align="center">
@@ -29,10 +32,10 @@ and artifact provenance. People retain control of merge, deployment, rollback,
 and recovery decisions.
 
 <p align="center">
-  <img src="./docs/public/media/execution-model.png" alt="An illustrative Mendry workflow from production signal to evidence and a repair proposal" width="100%" />
+  <img src="./docs/public/media/remediation-review.webp" alt="The Mendry console showing an incident with its remediation workflow, operator handoff, diagnosis, and run details" width="100%" />
 </p>
 
-<p align="center"><sub>Illustrative workflow. No patch, test, or deployment is executed by this example.</sub></p>
+<p align="center"><sub>Incident detail in the Mendry console, rendered with synthetic project and incident data.</sub></p>
 
 ## Why Mendry
 

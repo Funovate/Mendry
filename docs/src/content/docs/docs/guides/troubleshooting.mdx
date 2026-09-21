@@ -49,6 +49,16 @@ the raw token. Check provider shape, model connectivity, PostgreSQL writes, and
 incident configuration. Model failures should use deterministic fallback;
 persistence or evidence failures still require operator action.
 
+## SSH log probe fails to install or stays at starting
+
+Confirm the saved source uses SSH, `host` deployment, and `tail` mode, and that the trigger is saved and enabled. Check SSH credentials, the absolute log path and its read permissions, Python 3.6 or newer, running systemd, and non-interactive `sudo -n` on the target host. The host also needs outbound HTTPS access to `MENDRY_PUBLIC_URL`.
+
+An install response of `starting` confirms the remote command completed; wait for a fresh `monitoring` status from the current probe. Inspect the status and reported error before reinstalling. After editing the trigger or rotating its token, use **Install or update** to replace stale remote configuration.
+
+## SSH log probe is monitoring but no incident appears
+
+The first start follows new lines only. Confirm the application is writing to the selected file and produces enough matching lines within `windowSeconds` to reach `threshold`. Check `excludePattern` and `cooldownSeconds`, then inspect delivery errors and connectivity to Mendry. Docker stdout, journald, multiline aggregation, and missing-log rules are not supported by this probe. See [SSH log monitoring](/docs/guides/managed-log-probe/).
+
 ## Remediation stops or reports insufficient evidence
 
 Treat this as a policy result, not a reason to bypass the gate. Review unavailable

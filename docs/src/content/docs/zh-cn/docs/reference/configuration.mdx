@@ -43,6 +43,14 @@ sources:
 
 Source kind 为 `ssh`、`cloud` 或 `mcp`；trigger kind 为 `signed_webhook` 或 `custom_rule`。保存某种配置并不等于其 runtime connector 已可用，请查看[产品状态](/zh-cn/docs/project/status/)。
 
+### SSH 日志监控
+
+选择 `ssh` source，使用 `host` deployment 和 `tail` mode，再选择 **Managed log probe** trigger（`custom_rule`）。该路径监控单个 Linux 普通日志文件，无需已有告警平台即可触发事故。在采集源表单中浏览远端文件，或填写可读文件的绝对路径。
+
+先保存采集源和规则，再安装探针。主机需要 Python 3.6 或更新版本、运行中的 systemd、无交互 `sudo -n`，并能通过 HTTPS 访问 `MENDRY_PUBLIC_URL`。手工规则不依赖 LLM，AI 生成规则需要已保存的提供方配置。修改 trigger 或轮换 token 后，点击 **Install or update** 下发当前配置。
+
+配置步骤、规则语义、验证方法与日志类型边界见 [SSH 日志监控](/zh-cn/docs/guides/managed-log-probe/)。
+
 ### 修复策略配置
 
 项目修复策略（`/configuration/remediation`）定义了自动化修复的执行边界、预验证容器与代码交付方式：

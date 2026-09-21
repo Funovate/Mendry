@@ -42,6 +42,7 @@ Foundation 与 Local 的 `preview` 都是有边界的正向实现状态：共享
 | 显式迁移与单用户 bootstrap                 | available | 源码命令；仍缺受支持的生产 package                                                                                              |
 | 单用户登录 Session                         | available | Redis Session 与 PostgreSQL 唯一登录账号；仅事故应用                                                                            |
 | 组件化项目配置与加密凭据                   | available | 项目范围的应用行为                                                                                                              |
+| SSH 托管日志探针 | available | 单个 Linux 普通文件；通过 SSH 安装，使用 contains/regex 规则并投递事故信号；要求 Python 3.6+、systemd 与 `sudo -n`。见 [SSH 日志监控](/zh-cn/docs/guides/managed-log-probe/)。 |
 | 公开签名 Webhook 摄取                      | available | 事故信号路径；基于 token 并异步处理                                                                                             |
 | 腾讯云 CLS callback 与可信详情证据         | preview   | Provider-specific 事故路径，不是通用 Harness 输入                                                                               |
 | 事故生命周期与基于证据的修复审阅           | preview   | Domain-specific coordinator；必须人工审阅                                                                                       |

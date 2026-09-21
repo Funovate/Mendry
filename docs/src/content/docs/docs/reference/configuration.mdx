@@ -52,6 +52,14 @@ Source kinds are `ssh`, `cloud`, or `mcp`; trigger kinds are
 `signed_webhook` or `custom_rule`. Persisting a configuration kind does not by
 itself prove its runtime connector is available. Check [product status](/docs/project/status/).
 
+### SSH log monitoring
+
+Choose an `ssh` source with `host` deployment and `tail` mode, then select **Managed log probe** as the trigger (`custom_rule`). This path monitors one regular Linux log file and can create incidents without an existing alerting platform. Browse remote files from the source form or enter an absolute readable file path.
+
+Save the source and rules before installing the probe. The host needs Python 3.6 or newer, running systemd, non-interactive `sudo -n`, and outbound HTTPS access to `MENDRY_PUBLIC_URL`. Manual rules do not require an LLM; AI rule generation requires a saved provider. After changing the trigger or rotating its token, select **Install or update** to deploy the current configuration.
+
+See [SSH log monitoring](/docs/guides/managed-log-probe/) for setup, rule semantics, verification, and supported log types.
+
 ### Remediation policy
 
 Project remediation policy (`/configuration/remediation`) configures automatic repair boundaries, validation, and change request delivery:

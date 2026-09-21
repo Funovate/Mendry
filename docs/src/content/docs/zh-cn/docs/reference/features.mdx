@@ -22,6 +22,7 @@ sources:
 | 模块       | 操作入口                                     | 当前行为                                                                                                          |
 | ---------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | 项目与配置 | `/projects/:key/configuration/edit`          | 配置 Git、Source、Trigger、LLM、Automatic hotfix 和 Review。各配置步骤独立保存。                                  |
+| SSH 日志监控 | Collection source → SSH / Host process；Trigger → Managed log probe | 浏览远端日志文件，配置手工或 AI 生成的规则，安装或更新探针、查询状态及卸载。 |
 | 项目通知   | `/projects/:key/configuration/notifications` | 配置多个 Telegram、飞书或企业微信渠道，发送测试消息，查看最近 100 条投递记录并重试符合条件的失败任务。            |
 | 事件流     | `/projects/:key/observations`                | 查看 Observation，按等级或 message/service/source 筛选当前页，并手动刷新。                                        |
 | 事故列表   | 项目导航中的 Incidents                       | 增量加载事故、检查证据，人工设置 Open、Recovered 或 Closed。                                                      |
@@ -36,6 +37,7 @@ sources:
 | -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | Git 与部署基线 | 仓库凭据及可读取的部署基线                             | [Git 与基线](/zh-cn/docs/guides/git-baseline/)                                                    |
 | 运行时证据     | 项目 Source，包括受支持的腾讯云 CLS 或 SSH Docker 配置 | [腾讯云 CLS](/zh-cn/docs/guides/tencent-cls/)与[首个项目](/zh-cn/docs/get-started/first-project/) |
+| SSH 文件日志信号 | SSH 主机、可读日志文件路径与托管 custom rule trigger | [SSH 日志监控](/zh-cn/docs/guides/managed-log-probe/) |
 | 输入信号       | 项目 Trigger 与签名 Webhook 凭据                       | [签名 Webhook](/zh-cn/docs/guides/signed-webhooks/)                                               |
 | 出站通知       | 项目通知渠道与投递历史                                 | [项目通知](/zh-cn/docs/guides/notifications/)                                                     |
 | 模型提供方     | 提供方凭据、模型选择与聊天测试                         | [LLM 提供方](/zh-cn/docs/guides/llm-providers/)                                                   |
