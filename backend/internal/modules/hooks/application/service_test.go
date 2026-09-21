@@ -11,6 +11,7 @@ import (
 	incidentdomain "mendry/backend/internal/modules/incidents/domain"
 	observationdomain "mendry/backend/internal/modules/observations/domain"
 	projectapplication "mendry/backend/internal/modules/projects/application"
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 	remediationdomain "mendry/backend/internal/modules/remediation/domain"
 )
 
@@ -606,6 +607,46 @@ func TestTencentIngressPersistsOnlyNormalizedAlert(t *testing.T) {
 	encoded := string(evidence.records[0].Payload)
 	if strings.Contains(encoded, "DetailUrl") || strings.Contains(encoded, "connector_observation") || strings.Contains(encoded, "provider_detail") {
 		t.Fatalf("ingress evidence leaked detail material: %s", encoded)
+	}
+}
+
+func TestIngestCustomRulePersistsSynchronously(t *testing.T) {
+	observations := &fakeObservations{}
+	incidents := &fakeIncidents{}
+	service, err := application.NewService(application.Options{
+		Tokens: &fakeTokens{ingress: projectapplication.WebhookIngress{
+			ProjectID: "project", SourceID: "source", TriggerKind: "custom_rule", TriggerVersion: 7,
+			CustomRules: projectdomain.CustomRuleConfig{Rules: []projectdomain.CustomRule{{ID: "errors", Name: "Application errors"}}},
+		}},
+		Observations: observations, Incidents: incidents, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	raw := `{"schemaVersion":1,"eventId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ruleId":"errors","configVersion":7,"matchCount":3,"windowStartedAt":"2026-08-10T10:00:00Z","triggeredAt":"2026-08-10T10:01:00Z","host":"api-1","samples":["ERROR payment failed"]}`
+	if err := service.Ingest(context.Background(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", raw); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	if observations.fingerprint != "probe:"+strings.Repeat("a", 64) || incidents.fingerprint != observations.fingerprint ||
+		incidents.title != "Log rule: Application errors" || !strings.Contains(observations.message, `"matchCount":3`) {
+		t.Fatalf("probe persistence observation=%#v incident=%#v", observations, incidents)
+	}
+}
+
+func TestIngestCustomRuleRejectsStaleOrUnknownRule(t *testing.T) {
+	service, err := application.NewService(application.Options{
+		Tokens: &fakeTokens{ingress: projectapplication.WebhookIngress{
+			ProjectID: "project", SourceID: "source", TriggerKind: "custom_rule", TriggerVersion: 7,
+			CustomRules: projectdomain.CustomRuleConfig{Rules: []projectdomain.CustomRule{{ID: "errors", Name: "Errors"}}},
+		}},
+		Observations: &fakeObservations{}, Incidents: &fakeIncidents{}, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	raw := `{"schemaVersion":1,"eventId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ruleId":"unknown","configVersion":6,"matchCount":1,"windowStartedAt":"2026-08-10T10:00:00Z","triggeredAt":"2026-08-10T10:01:00Z","host":"api-1","samples":["ERROR"]}`
+	if err := service.Ingest(context.Background(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", raw); !errors.Is(err, application.ErrInvalidProbeEvent) {
+		t.Fatalf("Ingest() error = %v", err)
 	}
 }
 

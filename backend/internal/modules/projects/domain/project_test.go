@@ -85,6 +85,30 @@ func TestValidateConfigurationAcceptsWebhookWithoutSigningSecret(t *testing.T) {
 	}
 }
 
+func TestParseCustomRuleConfigSupportsLegacyAndStructuredRules(t *testing.T) {
+	legacy, err := ParseCustomRuleConfig(json.RawMessage(`{"schemaVersion":1,"groupingWindowSeconds":60,"matchExpression":"level=ERROR"}`))
+	if err != nil || len(legacy.Rules) != 1 || legacy.Rules[0].ID != "legacy" {
+		t.Fatalf("legacy custom rule = %#v error=%v", legacy, err)
+	}
+	structured := json.RawMessage(`{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[{"id":"payment-errors","name":"Payment errors","matchType":"regex","pattern":"ERROR.*payment","excludePattern":"healthcheck","threshold":5,"windowSeconds":60,"cooldownSeconds":300}]}`)
+	parsed, err := ParseCustomRuleConfig(structured)
+	if err != nil || len(parsed.Rules) != 1 || parsed.Rules[0].Threshold != 5 {
+		t.Fatalf("structured custom rule = %#v error=%v", parsed, err)
+	}
+}
+
+func TestParseCustomRuleConfigRejectsInvalidRules(t *testing.T) {
+	for _, raw := range []string{
+		`{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[]}`,
+		`{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[{"id":"errors","name":"Errors","matchType":"regex","pattern":"(","threshold":1,"windowSeconds":60,"cooldownSeconds":0}]}`,
+		`{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[{"id":"same","name":"One","matchType":"contains","pattern":"ERROR","threshold":1,"windowSeconds":60,"cooldownSeconds":0},{"id":"same","name":"Two","matchType":"contains","pattern":"WARN","threshold":1,"windowSeconds":60,"cooldownSeconds":0}]}`,
+	} {
+		if _, err := ParseCustomRuleConfig(json.RawMessage(raw)); err == nil {
+			t.Fatalf("ParseCustomRuleConfig(%s) accepted invalid rule", raw)
+		}
+	}
+}
+
 func TestParseSSHSourceConfigNormalizesV1ToHostDeployment(t *testing.T) {
 	legacy := json.RawMessage(`{
 		"schemaVersion": 1,

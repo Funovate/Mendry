@@ -135,6 +135,10 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: nethttp.StatusBadRequest, Code: "invalid_tencent_cls_callback", Message: "Tencent CLS callback is invalid.",
 		})
+	case errors.Is(err, application.ErrInvalidProbeEvent):
+		httpserver.WriteError(writer, request, httpserver.Error{
+			Status: nethttp.StatusBadRequest, Code: "invalid_probe_event", Message: "Log probe event is invalid or stale.",
+		})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{
 			Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Webhook request is invalid.",

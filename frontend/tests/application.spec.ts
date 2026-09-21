@@ -130,6 +130,7 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     source: currentConfiguration?.source ?? null,
     trigger: currentConfiguration?.trigger ?? null,
     llm: currentConfiguration?.llm ?? null,
+    remediation: null,
   });
 
   const remediationReview = () => {
@@ -277,6 +278,34 @@ async function mockApi(page: Page, options: MockOptions = {}) {
         { name: "checkout-api", id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", image: "registry.example/checkout:v1", state: "running", status: "Up 2 minutes" },
         { name: "checkout-api-old", id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", image: "registry.example/checkout:v0", state: "stopped", status: "Exited (0)" },
       ] });
+    }
+    if (path === "/api/v1/projects/real-estate/configuration/source/ssh/log-files" && method === "POST") {
+      writes.push({ method, path, body });
+      const requestedPath = (body as { path: string }).path;
+      if (requestedPath === "/var/log/app-unreadable") {
+        return error(422, "ssh_log_path_unreadable", "The SSH user cannot read this directory.");
+      }
+      if (requestedPath === "/srv/app" || requestedPath === "/srv/app/current.log") {
+        return json({
+          directory: "/srv/app",
+          entries: [
+            { name: "releases", path: "/srv/app/releases", kind: "directory", readable: true },
+            { name: "current.log", path: "/srv/app/current.log", kind: "file", readable: true },
+            { name: "secure.log", path: "/srv/app/secure.log", kind: "file", readable: false },
+          ],
+          truncated: false,
+        });
+      }
+      if (requestedPath === "/srv/app/releases") {
+        return json({
+          directory: "/srv/app/releases",
+          entries: [
+            { name: "app-2026-09-20.log", path: "/srv/app/releases/app-2026-09-20.log", kind: "file", readable: true },
+          ],
+          truncated: false,
+        });
+      }
+      return json({ directory: requestedPath, entries: [], truncated: false });
     }
     if (path.startsWith("/api/v1/projects/real-estate/configuration/") && method === "PUT") {
       const component = path.split("/").at(-1);
@@ -613,7 +642,7 @@ test("persists credentials, configuration, and incident lifecycle", async ({ pag
 
   await page.getByRole("tab", { name: "Trigger" }).click();
   await expect(page.getByLabel("Git remote URL")).toHaveCount(0);
-  await page.getByLabel("Trigger type").selectOption("signed_webhook");
+  await page.getByRole("radio", { name: "Signed webhook" }).click();
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
   await expect(page.getByText("Save the signed webhook configuration first. The first save creates the inbound URL.", { exact: true })).toBeVisible();
@@ -699,7 +728,7 @@ test("round-trips an existing AWS CloudWatch trigger through edit and save", asy
   await page.goto("/projects/real-estate/configuration/edit");
   await page.getByRole("tab", { name: "Trigger" }).click();
 
-  await expect(page.getByLabel("Trigger type")).toHaveValue("signed_webhook");
+  await expect(page.getByRole("radio", { name: "Signed webhook" })).toBeChecked();
   await expect(page.getByLabel("Webhook provider")).toHaveValue("aws_cloudwatch");
   await expect(page.getByLabel("SNS Topic ARN")).toHaveValue("arn:aws:sns:us-east-1:123456789012:mendry-alarms");
   await page.getByRole("button", { name: "Save trigger" }).click();
@@ -802,7 +831,7 @@ test("imports an SSH PEM file on Git and source credentials and rejects non-key 
   await expect(page.getByText("collector.pem", { exact: true })).toHaveCount(0);
 
   await page.getByRole("tab", { name: "Trigger" }).click();
-  await page.getByLabel("Trigger type").selectOption("signed_webhook");
+  await page.getByRole("radio", { name: "Signed webhook" }).click();
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
   await expect(page.getByLabel("Webhook credential value")).toHaveCount(0);
@@ -888,7 +917,7 @@ test("the user edits Git, source, and webhook credentials without disclosing sec
   await expect(page.getByText("rotated-source-token", { exact: true })).toHaveCount(0);
 
   await page.getByRole("tab", { name: "Trigger" }).click();
-  await page.getByLabel("Trigger type").selectOption("signed_webhook");
+  await page.getByRole("radio", { name: "Signed webhook" }).click();
   await expect(page.getByLabel("Inbound webhook URL")).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate URL" })).toBeDisabled();
   await expect(page.getByText("Save the signed webhook configuration first. The first save creates the inbound URL.", { exact: true })).toBeVisible();
@@ -932,6 +961,82 @@ test("the user discovers a Docker container through the bounded source probe", a
     config: expect.objectContaining({ deployment: { kind: "docker", containerName: "checkout-api" } }),
   }));
   await expect(page.locator("body")).not.toContainText("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+});
+
+
+test("the user browses and selects a remote log file for an SSH host source", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/projects/real-estate/configuration/edit");
+  await page.getByRole("tab", { name: "Collection source" }).click();
+  await page.getByLabel("Source type").selectOption("ssh");
+  await expect(page.getByRole("button", { name: "Browse remote files" })).toBeDisabled();
+
+  await page.getByLabel("Source credential reference").selectOption("secret-ssh");
+  await expect(page.getByRole("button", { name: "Browse remote files" })).toBeEnabled();
+  await page.getByLabel("Log path").fill("");
+
+  await page.getByRole("button", { name: "Browse remote files" }).click();
+  await expect(page.getByLabel("Remote directory path")).toHaveValue("/srv/app");
+  await expect(page.getByRole("list", { name: "Remote log files" }).getByRole("button", { name: /current\.log/ })).toBeVisible();
+  const unreadable = page.getByRole("list", { name: "Remote log files" }).getByRole("button", { name: /secure\.log/ });
+  await expect(unreadable).toBeDisabled();
+
+  await page.getByRole("list", { name: "Remote log files" }).getByRole("button", { name: /releases/ }).click();
+  await expect(page.getByLabel("Remote directory path")).toHaveValue("/srv/app/releases");
+  await page.getByRole("list", { name: "Remote log files" }).getByRole("button", { name: /app-2026-09-20\.log/ }).click();
+  await expect(page.getByLabel("Log path")).toHaveValue("/srv/app/releases/app-2026-09-20.log");
+  await expect(page.getByRole("list", { name: "Remote log files" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Save collection source" }).click();
+  const sourceWrite = state.writes.find((write) => write.method === "PUT" && write.path.endsWith("/configuration/source"));
+  expect(sourceWrite?.body).toEqual(expect.objectContaining({
+    kind: "ssh",
+    config: expect.objectContaining({ logPath: "/srv/app/releases/app-2026-09-20.log" }),
+  }));
+
+  await page.getByRole("button", { name: "Browse remote files" }).click();
+  await page.getByLabel("Remote directory path").fill("/var/log/app-unreadable");
+  await page.getByRole("button", { name: "Go", exact: true }).click();
+  await expect(page.getByText("The SSH user cannot read this directory.", { exact: true })).toBeVisible();
+
+  await page.getByLabel("SSH host").fill("new-host.example.internal");
+  await expect(page.getByText("The SSH user cannot read this directory.", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Remote log files" })).toHaveCount(0);
+});
+
+
+test("remote file browsing ignores an old host response and shows bounded empty results", async ({ page }) => {
+  await mockApi(page);
+  let releaseOldRequest!: () => void;
+  const oldRequestGate = new Promise<void>((resolve) => { releaseOldRequest = resolve; });
+  await page.route("**/configuration/source/ssh/log-files", async (route) => {
+    const body = route.request().postDataJSON() as { host: string; path: string };
+    const oldHost = body.host !== "new-host.example.internal";
+    if (oldHost) await oldRequestGate;
+    await route.fulfill({ json: { code: "ok", message: "OK", meta: { requestId: "browse-test", durationMs: 0 }, data: {
+      directory: body.path,
+      entries: oldHost ? [{ name: "old-host.log", path: `${body.path}/old-host.log`, kind: "file", readable: true }] : [],
+      truncated: !oldHost,
+    } } });
+  });
+  await page.goto("/projects/real-estate/configuration/edit");
+  await page.getByRole("tab", { name: "Collection source" }).click();
+  await page.getByLabel("Source type").selectOption("ssh");
+  await page.getByLabel("Source credential reference").selectOption("secret-ssh");
+  await page.getByLabel("Log path").fill("/app/run/real-estate/backend/api/logs");
+  const oldRequest = page.waitForRequest((request) => request.url().endsWith("/ssh/log-files"));
+  await page.getByRole("button", { name: "Browse remote files" }).click();
+  expect((await oldRequest).postDataJSON().path).toBe("/app/run/real-estate/backend/api/logs");
+  await page.getByLabel("SSH host").fill("new-host.example.internal");
+  await expect(page.getByLabel("Remote directory path")).toHaveCount(0);
+  await page.getByRole("button", { name: "Browse remote files" }).click();
+  await expect(page.getByText("This directory has no entries.")).toBeVisible();
+  await expect(page.getByText(/This list is incomplete/)).toBeVisible();
+  const oldResponse = page.waitForResponse((response) => response.url().endsWith("/ssh/log-files") && response.request().postDataJSON().host !== "new-host.example.internal");
+  releaseOldRequest();
+  await oldResponse;
+  await expect(page.getByText("This directory has no entries.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /old-host\.log/ })).toHaveCount(0);
 });
 
 

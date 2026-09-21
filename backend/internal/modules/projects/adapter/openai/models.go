@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"mendry/backend/internal/modules/projects/domain"
 	"mendry/backend/internal/platform/observability"
 )
 
@@ -22,6 +23,7 @@ const (
 	maxResponseBytes = 1 << 20
 	opModelsList     = "models.list"
 	opChatProbe      = "chat.completions"
+	opRuleGenerate   = "log_rule.generate"
 	// 推理模型会从同一输出预算中消费 reasoning tokens，探测上限需给最终短回复留出空间。
 	chatProbeMaxTokens = 128
 )
@@ -137,6 +139,53 @@ func (l *Lister) ProbeChat(ctx context.Context, baseURL string, apiKey []byte, m
 	}
 	l.logRequest(ctx, opChatProbe, endpoint, model, payload, status, time.Since(started), body, nil)
 	return nil
+}
+
+func (l *Lister) GenerateLogRule(ctx context.Context, baseURL string, apiKey []byte, model, intent, sample string) (domain.CustomRule, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/v1/chat/completions"
+	prompt := `Return exactly one compact JSON object for a deterministic log monitoring rule. ` +
+		`Fields: id (lowercase letter followed by lowercase letters, digits, _ or -; max 64), name, matchType (contains or regex), pattern, excludePattern, threshold, windowSeconds, cooldownSeconds. ` +
+		`Do not include markdown. Prefer contains unless regex is necessary. Never place secrets or complete sample lines in pattern. ` +
+		"Monitoring intent:\n" + intent + "\nRedacted log sample:\n" + sample
+	payload, err := json.Marshal(chatProbeRequest{
+		Model: strings.TrimSpace(model), MaxTokens: 700, Temperature: 0,
+		Messages: []map[string]string{{"role": "system", "content": "You design bounded deterministic production log rules."}, {"role": "user", "content": prompt}},
+	})
+	if err != nil {
+		return domain.CustomRule{}, fmt.Errorf("encode log rule request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return domain.CustomRule{}, fmt.Errorf("create log rule request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+string(apiKey))
+	request.Header.Set("Content-Type", "application/json")
+	started := time.Now()
+	status, body, err := l.roundTrip(request)
+	if err != nil {
+		l.logRequest(ctx, opRuleGenerate, endpoint, model, nil, status, time.Since(started), nil, err)
+		return domain.CustomRule{}, err
+	}
+	var response chatProbeResponse
+	if err := json.Unmarshal(body, &response); err != nil || len(response.Choices) == 0 {
+		wrapped := fmt.Errorf("decode log rule response")
+		l.logRequest(ctx, opRuleGenerate, endpoint, model, nil, status, time.Since(started), nil, wrapped)
+		return domain.CustomRule{}, wrapped
+	}
+	content := strings.TrimSpace(response.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(strings.TrimSpace(content), "```")
+	var rule domain.CustomRule
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(content)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&rule); err != nil {
+		wrapped := fmt.Errorf("decode generated log rule: %w", err)
+		l.logRequest(ctx, opRuleGenerate, endpoint, model, nil, status, time.Since(started), nil, wrapped)
+		return domain.CustomRule{}, wrapped
+	}
+	l.logRequest(ctx, opRuleGenerate, endpoint, model, nil, status, time.Since(started), nil, nil)
+	return rule, nil
 }
 
 func (l *Lister) roundTrip(request *http.Request) (int, []byte, error) {

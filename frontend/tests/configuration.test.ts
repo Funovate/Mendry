@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildSourceConfig, buildTriggerConfig, compatibleGitSecretId, composeGitSecretReplacement, composeHttpsGitCredentialValue, composeSshPrivateKeyValue, filterGitSecrets, inspectSshPrivateKeyDraft, inspectSshPrivateKeyFile, SSH_PRIVATE_KEY_MAX_BYTES, sshPrivateKeyInspectionMessage } from "../src/features/configuration/configuration";
+import { buildSourceConfig, buildTriggerConfig, compatibleGitSecretId, composeGitSecretReplacement, composeHttpsGitCredentialValue, composeSshPrivateKeyValue, filterGitSecrets, inspectSshPrivateKeyDraft, inspectSshPrivateKeyFile, isLogProbeMonitoring, SSH_PRIVATE_KEY_MAX_BYTES, sshPrivateKeyInspectionMessage } from "../src/features/configuration/configuration";
+
+describe("managed log probe health", () => {
+  const install = { state: "starting", version: "1", configVersion: 7, checkedAt: "2026-09-20T23:17:00Z", message: "" };
+  const healthy = { ...install, state: "active", message: "monitoring", checkedAt: "2026-09-20T23:17:04Z" };
+
+  it("requires fresh monitoring status for the requested configuration", () => {
+    expect(isLogProbeMonitoring(install, install)).toBe(false);
+    expect(isLogProbeMonitoring({ ...healthy, checkedAt: "2026-09-20T23:16:59Z" }, install)).toBe(false);
+    expect(isLogProbeMonitoring({ ...healthy, configVersion: 6 }, install)).toBe(false);
+    expect(isLogProbeMonitoring({ ...healthy, message: "read failed: PermissionError" }, install)).toBe(false);
+    expect(isLogProbeMonitoring(healthy, install)).toBe(true);
+    expect(isLogProbeMonitoring(healthy)).toBe(true);
+  });
+});
 
 const input = {
   endpoint: " https://mcp.internal/mcp ",

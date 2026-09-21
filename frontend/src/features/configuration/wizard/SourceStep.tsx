@@ -1,6 +1,7 @@
 import { Check, FileSearch, LoaderCircle, RefreshCw } from "lucide-react";
 import { messageFromError, type DockerContainer, type ProjectSecret, type SourceKind } from "../../../api";
 import { CredentialField } from "./CredentialField";
+import { RemoteLogFilePicker } from "./RemoteLogFilePicker";
 
 const SOURCE_CREDENTIAL_KINDS: Record<SourceKind, { value: ProjectSecret["kind"]; label: string }[]> = {
   ssh: [
@@ -150,6 +151,10 @@ export function SourceStep({
       </div>}
       <label>Project folder<input aria-label="Project folder" value={projectFolder} onChange={(event) => setProjectFolder(event.target.value)} /></label>
       <label>Log path<input aria-label="Log path" value={logPath} onChange={(event) => setLogPath(event.target.value)} /></label>
+      {sshDeploymentKind === "host" && <RemoteLogFilePicker
+        sourceHost={sourceHost} sshPort={sshPort} sshUser={sshUser} sourceCredentialId={sourceCredentialId}
+        projectFolder={projectFolder} logPath={logPath} setLogPath={setLogPath}
+      />}
     </>}
     {sourceKind === "cloud" && <>
       <div className="source-form">

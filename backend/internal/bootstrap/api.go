@@ -155,9 +155,17 @@ func RunAPI(ctx context.Context, options Options) (result error) {
 			fmt.Errorf("create Docker container probe: %w", err),
 		)
 	}
+	logProbeManager, err := remediationsshlog.NewLogProbeManager(remediationsshlog.LogProbeManagerOptions{
+		Secrets: projectRepository, Cipher: projectCipher, Logger: logger,
+	})
+	if err != nil {
+		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,
+			fmt.Errorf("create managed log probe: %w", err),
+		)
+	}
 	projectService, err := projectapplication.NewService(projectapplication.Options{
 		Repository: projectRepository, Cipher: projectCipher, Git: projectgit.NewLister(logger), LLM: projectopenai.NewLister(nil, logger), Containers: containerProbe,
-		NewID: newUUIDv7, PublicURL: apiConfig.PublicURL,
+		LogFiles: containerProbe, LogProbes: logProbeManager, NewID: newUUIDv7, PublicURL: apiConfig.PublicURL,
 	})
 	if err != nil {
 		return finishWithDataClients(processSpan, telemetryRuntime, redisClient, postgresPool, apiConfig.Common.ShutdownTimeout,

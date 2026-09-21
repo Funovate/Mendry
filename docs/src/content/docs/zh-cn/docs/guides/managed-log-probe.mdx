@@ -1,0 +1,50 @@
+---
+title: 托管日志探针
+description: 在没有日志平台和告警系统的 Linux 主机上，通过 SSH 安装并运行 Mendry 文件日志监控。
+availability: available
+translationKey: managed-log-probe
+sources:
+  - backend/README.md
+---
+
+**可用性：available**
+
+托管日志探针用于 Linux 普通文件日志。Mendry 通过项目中已保存的 SSH 私钥安装固定版本的探针；AI 只生成受约束的匹配规则，不生成或执行任意脚本。
+
+## 前置条件
+
+- SSH source 使用 `host` deployment 和 `tail` mode。
+- SSH 用户名符合 Linux 用户名格式，并能读取配置的绝对日志路径。
+- 主机提供 Python 3.6 或更新版本、正在运行的 systemd 和无交互 `sudo -n`。
+- 主机可以通过 HTTPS 访问 `MENDRY_PUBLIC_URL`。
+- 项目已保存 custom rule trigger 和可用的 LLM provider；手工规则不依赖 LLM。
+
+## 配置与安装
+
+1. 在 Collection source 中填写 SSH host、用户和私钥凭据。选择 Host process 后，点击 **Browse remote files** 浏览宿主机目录，选择可读的具体日志文件，再保存采集源。也可以直接填写文件的绝对路径。
+2. 在 Trigger 中选择 **Managed log probe**。
+3. 手工添加 contains/regex 规则，或提供监控意图和脱敏日志样本生成规则。
+4. 检查规则 ID、模式、阈值、检测窗口、排除正则和冷却时间，然后保存 trigger。
+5. 点击 **Install or update**。写入文件前会检查服务管理器、探针用户及 Python 版本，并在 systemd 单元中使用检测到的 Python 路径。远端安装命令完成后请求返回 `starting`，页面随后独立查询状态；仅当本次探针上报新的 `monitoring` 状态后才显示监控已启用。
+
+文件浏览使用当前表单中的 SSH 配置，无需先保存采集源。它以 SSH 用户身份列出单层目录，不读取日志内容；每次最多显示 100 个文件或目录，结果被截断时页面会提示。目录只能用于导航，日志路径需要选择具体文件。
+
+探针首次启动从文件末尾开始，不回放历史内容。后续会保存 inode 和 offset；文件轮转后从新文件开头继续。命中事件先写入远端有界 spool，再投递到 Mendry。只有配置版本与当前 trigger 一致、且 rule ID 存在的事件会被接受。
+
+## 触发语义
+
+- `threshold`：检测窗口中需要出现的匹配行数。
+- `windowSeconds`：计算阈值的滚动时间窗口。
+- `cooldownSeconds`：同一规则触发后的静默时间。
+- `groupingWindowSeconds`：保留为事故分组配置，不代替检测窗口。
+- `excludePattern`：命中主规则后仍需排除的正则表达式。
+
+事件使用稳定 event ID 作为事故 fingerprint。相同事件重试只会更新同一个事故，不会创建第二个事故；投递响应丢失时可能出现重复 observation。
+
+## 运维
+
+状态操作通过 SSH 读取 systemd 和远端状态文件，显示实际运行状态、探针版本、配置版本、最后检查时间和安全的错误分类。卸载会停止服务，并清理程序、配置、游标和 spool。
+
+轮换 trigger token 后，旧探针会停止投递；立即执行 **Install or update** 下发新配置。修改 trigger 后配置版本会变化，旧探针事件会被拒绝，同样需要更新探针。
+
+当前版本仅支持单个 Linux 文件，不支持 Docker stdout、journald、多行堆栈聚合和“长时间无日志”规则。

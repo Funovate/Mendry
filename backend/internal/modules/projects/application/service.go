@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	authdomain "mendry/backend/internal/modules/auth/domain"
 	"mendry/backend/internal/modules/projects/domain"
@@ -22,6 +24,7 @@ var (
 	ErrGitUnreachable        = errors.New("git remote is unreachable")
 	ErrLLMUnreachable        = errors.New("LLM provider is unreachable")
 	ErrDockerUnavailable     = errors.New("Docker inventory is unavailable")
+	ErrLogProbeUnavailable   = errors.New("managed log probe is unavailable")
 )
 
 const (
@@ -63,11 +66,14 @@ type RepositoryChangeObserver interface {
 
 // WebhookIngress 是路径 token 验通后定位到的项目与已启用 source。
 type WebhookIngress struct {
-	ProjectID string
-	SourceID  string
-	TriggerID string
-	Provider  domain.WebhookProvider
-	TopicARN  string
+	ProjectID      string
+	SourceID       string
+	TriggerID      string
+	TriggerKind    string
+	TriggerVersion int64
+	Provider       domain.WebhookProvider
+	TopicARN       string
+	CustomRules    domain.CustomRuleConfig
 }
 
 type Cipher interface {
@@ -104,6 +110,38 @@ type ContainerProbePort interface {
 	ListContainers(context.Context, ContainerProbeRequest) ([]domain.DockerContainer, error)
 }
 
+type LogProbeRequest struct {
+	ProjectID          string
+	Source             domain.SSHSourceConfig
+	CredentialSecretID string
+	InboundURL         string
+	TriggerVersion     int64
+	Rules              domain.CustomRuleConfig
+}
+
+type LogProbeStatus struct {
+	State         string    `json:"state"`
+	Version       string    `json:"version"`
+	ConfigVersion int64     `json:"configVersion"`
+	CheckedAt     time.Time `json:"checkedAt"`
+	Message       string    `json:"message"`
+}
+
+type LogProbeManagerPort interface {
+	Install(context.Context, LogProbeRequest) (LogProbeStatus, error)
+	Status(context.Context, LogProbeRequest) (LogProbeStatus, error)
+	Uninstall(context.Context, LogProbeRequest) (LogProbeStatus, error)
+}
+
+type LogRuleGenerator interface {
+	GenerateLogRule(context.Context, string, []byte, string, string, string) (domain.CustomRule, error)
+}
+
+type LogRuleGenerationInput struct {
+	Intent string
+	Sample string
+}
+
 type LLMModels struct {
 	Models []string
 }
@@ -114,6 +152,8 @@ type Options struct {
 	Git        GitRefLister
 	LLM        LLMModelLister
 	Containers ContainerProbePort
+	LogFiles   LogFileBrowserPort
+	LogProbes  LogProbeManagerPort
 	NewID      func() (string, error)
 	// PublicURL 是派生完整入站地址的部署级基址；空值不得静默拼接。
 	PublicURL       string
@@ -126,6 +166,8 @@ type Service struct {
 	git                      GitRefLister
 	llm                      LLMModelLister
 	containers               ContainerProbePort
+	logFiles                 LogFileBrowserPort
+	logProbes                LogProbeManagerPort
 	idGenerator              func() (string, error)
 	publicURL                string
 	newWebhookToken          func() (string, error)
@@ -146,7 +188,7 @@ func NewService(options Options) (*Service, error) {
 	}
 	return &Service{
 		repository: options.Repository, cipher: options.Cipher, git: options.Git, llm: options.LLM, containers: options.Containers,
-		idGenerator: options.NewID, publicURL: options.PublicURL, newWebhookToken: tokenGenerator,
+		logFiles: options.LogFiles, logProbes: options.LogProbes, idGenerator: options.NewID, publicURL: options.PublicURL, newWebhookToken: tokenGenerator,
 	}, nil
 }
 
@@ -383,7 +425,7 @@ func (s *Service) PutConfigurationSource(ctx context.Context, principal authdoma
 	return s.repository.UpsertSource(ctx, project.ID, environment.ID, source)
 }
 
-// PutConfigurationTrigger 独立保存 trigger 配置，并在首次保存 signed_webhook 时签发 token。
+// PutConfigurationTrigger 独立保存 trigger 配置，并在首次保存 webhook 或 custom rule 时签发 token。
 func (s *Service) PutConfigurationTrigger(ctx context.Context, principal authdomain.User, projectKey string, trigger domain.Trigger) (domain.Trigger, error) {
 	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
@@ -522,7 +564,7 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 	return saved, nil
 }
 
-// RotateWebhookToken 在 signed_webhook 上创建或轮换入站 token，并返回完整公开地址。
+// RotateWebhookToken 在公开入站 trigger 上创建或轮换 token，并返回完整公开地址。
 func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.User, projectKey string) (string, error) {
 	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
@@ -532,8 +574,8 @@ func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.U
 	if err != nil {
 		return "", err
 	}
-	// 只认已落库的 trigger kind。向导草稿切到 signed_webhook 并不等于可以签发 token。
-	if configuration.Trigger.Kind != "signed_webhook" {
+	// 只认已落库的公开入站 trigger kind。向导草稿切换并不等于可以签发 token。
+	if configuration.Trigger.Kind != "signed_webhook" && configuration.Trigger.Kind != "custom_rule" {
 		return "", ErrInvalidInput
 	}
 	plaintext, hash, ciphertext, nonce, err := s.issueWebhookToken(project.ID, configuration.Trigger.ID)
@@ -547,7 +589,7 @@ func (s *Service) RotateWebhookToken(ctx context.Context, principal authdomain.U
 	return domain.InboundWebhookURL(s.publicURL, string(plaintext))
 }
 
-// LookupWebhookToken 用路径 token 定位已启用的 signed_webhook 与同项目 source。
+// LookupWebhookToken 用路径 token 定位已启用的公开入站 trigger 与同项目 source。
 func (s *Service) LookupWebhookToken(ctx context.Context, token string) (WebhookIngress, error) {
 	normalized, err := domain.ParseWebhookToken(token)
 	if err != nil {
@@ -696,6 +738,116 @@ func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, p
 	return nil
 }
 
+func (s *Service) GenerateLogRule(ctx context.Context, principal authdomain.User, projectKey string, input LogRuleGenerationInput) (domain.CustomRule, error) {
+	generator, ok := s.llm.(LogRuleGenerator)
+	if !ok {
+		return domain.CustomRule{}, ErrLLMUnreachable
+	}
+	intent, sample := strings.TrimSpace(input.Intent), strings.TrimSpace(input.Sample)
+	if len(intent) < 3 || len(intent) > 2000 || len(sample) < 1 || len(sample) > 16000 {
+		return domain.CustomRule{}, ErrInvalidInput
+	}
+	project, err := s.resolveProject(ctx, principal, projectKey)
+	if err != nil {
+		return domain.CustomRule{}, err
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil || draft.LLM == nil {
+		return domain.CustomRule{}, ErrInvalidInput
+	}
+	encrypted, err := s.repository.GetEncryptedSecret(ctx, project.ID, draft.LLM.CredentialSecretID)
+	if err != nil || encrypted.Kind != domain.SecretHTTPBearer {
+		return domain.CustomRule{}, ErrInvalidInput
+	}
+	plaintext, err := s.cipher.Decrypt(project.ID, encrypted.ID, encrypted.Kind, encrypted.Ciphertext, encrypted.Nonce)
+	if err != nil {
+		return domain.CustomRule{}, fmt.Errorf("decrypt project credential: %w", err)
+	}
+	defer clearBytes(plaintext)
+	rule, err := generator.GenerateLogRule(ctx, draft.LLM.BaseURL, plaintext, draft.LLM.Model, intent, sample)
+	if err != nil {
+		return domain.CustomRule{}, ErrLLMUnreachable
+	}
+	encoded, err := json.Marshal(domain.CustomRuleConfig{SchemaVersion: 2, GroupingWindowSeconds: 300, Rules: []domain.CustomRule{rule}})
+	if err != nil {
+		return domain.CustomRule{}, ErrLLMUnreachable
+	}
+	validated, err := domain.ParseCustomRuleConfig(encoded)
+	if err != nil || len(validated.Rules) != 1 {
+		return domain.CustomRule{}, ErrLLMUnreachable
+	}
+	return validated.Rules[0], nil
+}
+
+func (s *Service) InstallLogProbe(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeStatus, error) {
+	request, err := s.logProbeRequest(ctx, principal, projectKey)
+	if err != nil {
+		return LogProbeStatus{}, err
+	}
+	status, err := s.logProbes.Install(ctx, request)
+	if err != nil {
+		return LogProbeStatus{}, fmt.Errorf("%w: %w", ErrLogProbeUnavailable, err)
+	}
+	return status, nil
+}
+
+func (s *Service) GetLogProbeStatus(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeStatus, error) {
+	request, err := s.logProbeRequest(ctx, principal, projectKey)
+	if err != nil {
+		return LogProbeStatus{}, err
+	}
+	status, err := s.logProbes.Status(ctx, request)
+	if err != nil {
+		return LogProbeStatus{}, fmt.Errorf("%w: %v", ErrLogProbeUnavailable, err)
+	}
+	return status, nil
+}
+
+func (s *Service) UninstallLogProbe(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeStatus, error) {
+	request, err := s.logProbeRequest(ctx, principal, projectKey)
+	if err != nil {
+		return LogProbeStatus{}, err
+	}
+	status, err := s.logProbes.Uninstall(ctx, request)
+	if err != nil {
+		return LogProbeStatus{}, fmt.Errorf("%w: %v", ErrLogProbeUnavailable, err)
+	}
+	return status, nil
+}
+
+func (s *Service) logProbeRequest(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeRequest, error) {
+	if s.logProbes == nil {
+		return LogProbeRequest{}, ErrLogProbeUnavailable
+	}
+	project, err := s.resolveProject(ctx, principal, projectKey)
+	if err != nil {
+		return LogProbeRequest{}, err
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return LogProbeRequest{}, err
+	}
+	if draft.Source == nil || draft.Trigger == nil || !draft.Source.Enabled || !draft.Trigger.Enabled ||
+		draft.Source.Kind != "ssh" || draft.Source.CredentialSecretID == nil || draft.Trigger.Kind != "custom_rule" {
+		return LogProbeRequest{}, ErrInvalidInput
+	}
+	source, err := domain.ParseSSHSourceConfig(draft.Source.Config)
+	if err != nil || source.Deployment.Kind != domain.SSHDeploymentHost || source.Mode != "tail" {
+		return LogProbeRequest{}, ErrInvalidInput
+	}
+	rules, err := domain.ParseCustomRuleConfig(draft.Trigger.Config)
+	if err != nil {
+		return LogProbeRequest{}, ErrInvalidInput
+	}
+	if err := s.attachInboundURLToTrigger(project, draft.Trigger); err != nil || draft.Trigger.InboundURL == "" {
+		return LogProbeRequest{}, ErrLogProbeUnavailable
+	}
+	return LogProbeRequest{
+		ProjectID: project.ID, Source: source, CredentialSecretID: *draft.Source.CredentialSecretID,
+		InboundURL: draft.Trigger.InboundURL, TriggerVersion: draft.Trigger.Version, Rules: rules,
+	}, nil
+}
+
 func clearBytes(value []byte) {
 	for index := range value {
 		value[index] = 0
@@ -712,14 +864,14 @@ func defaultWebhookToken() (string, error) {
 
 func (s *Service) applyWebhookToken(projectID string, configuration *domain.Configuration, current domain.Trigger) error {
 	configuration.Trigger.InboundURL = ""
-	if configuration.Trigger.Kind != "signed_webhook" {
-		// 离开 signed_webhook 必须清掉三列，旧 URL 立刻失效且不得残留可解密密文。
+	if configuration.Trigger.Kind != "signed_webhook" && configuration.Trigger.Kind != "custom_rule" {
+		// 离开公开入站 trigger 必须清掉三列，旧 URL 立刻失效且不得残留可解密密文。
 		configuration.Trigger.IngressTokenHash = nil
 		configuration.Trigger.IngressTokenCiphertext = nil
 		configuration.Trigger.IngressTokenNonce = nil
 		return nil
 	}
-	if len(current.IngressTokenHash) > 0 {
+	if current.Kind == configuration.Trigger.Kind && len(current.IngressTokenHash) > 0 {
 		configuration.Trigger.IngressTokenHash = current.IngressTokenHash
 		configuration.Trigger.IngressTokenCiphertext = current.IngressTokenCiphertext
 		configuration.Trigger.IngressTokenNonce = current.IngressTokenNonce
@@ -760,7 +912,7 @@ func (s *Service) attachInboundURL(project domain.Project, configuration *domain
 
 func (s *Service) attachInboundURLToTrigger(project domain.Project, trigger *domain.Trigger) error {
 	trigger.InboundURL = ""
-	if trigger.Kind != "signed_webhook" {
+	if trigger.Kind != "signed_webhook" && trigger.Kind != "custom_rule" {
 		return nil
 	}
 	if len(trigger.IngressTokenCiphertext) == 0 || len(trigger.IngressTokenNonce) == 0 {

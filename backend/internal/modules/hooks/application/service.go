@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -20,9 +21,10 @@ import (
 )
 
 var (
-	ErrInvalidInput    = errors.New("invalid webhook input")
-	ErrWebhookNotFound = errors.New("webhook not found")
-	ErrAWSSNSTooLarge  = errors.New("AWS SNS message is too large")
+	ErrInvalidInput      = errors.New("invalid webhook input")
+	ErrWebhookNotFound   = errors.New("webhook not found")
+	ErrAWSSNSTooLarge    = errors.New("AWS SNS message is too large")
+	ErrInvalidProbeEvent = errors.New("invalid log probe event")
 )
 
 // TokenLookup 用路径 token 定位已启用的 signed_webhook 与同项目 source。
@@ -133,6 +135,18 @@ func NewService(options Options) (*Service, error) {
 	}, nil
 }
 
+type ProbeEvent struct {
+	SchemaVersion int       `json:"schemaVersion"`
+	EventID       string    `json:"eventId"`
+	RuleID        string    `json:"ruleId"`
+	ConfigVersion int64     `json:"configVersion"`
+	MatchCount    int       `json:"matchCount"`
+	WindowStarted time.Time `json:"windowStartedAt"`
+	TriggeredAt   time.Time `json:"triggeredAt"`
+	Host          string    `json:"host"`
+	Samples       []string  `json:"samples"`
+}
+
 // Ingest 保持 generic webhook 的兼容入口。HTTP 适配器使用
 // IngestWithContentType 为 provider-specific callback 提供 Content-Type。
 func (s *Service) Ingest(ctx context.Context, token, raw string) error {
@@ -148,6 +162,13 @@ func (s *Service) IngestWithContentType(ctx context.Context, token, raw, content
 	ingress, err := s.tokens.LookupWebhookToken(ctx, token)
 	if err != nil {
 		return mapLookupError(err)
+	}
+	if ingress.TriggerKind == "custom_rule" {
+		event, err := parseProbeEvent(raw, ingress)
+		if err != nil {
+			return err
+		}
+		return s.processProbeEvent(ctx, ingress, event)
 	}
 	switch ingress.Provider {
 	case projectdomain.WebhookProviderAWSCloudWatch, projectdomain.WebhookProviderTencentCLS, projectdomain.WebhookProviderGeneric:
@@ -204,6 +225,73 @@ func (s *Service) IngestWithContentType(ctx context.Context, token, raw, content
 			s.failures.Report(background, failure, err)
 		}
 	}()
+	return nil
+}
+
+func parseProbeEvent(raw string, ingress projectapplication.WebhookIngress) (ProbeEvent, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var event ProbeEvent
+	if err := decoder.Decode(&event); err != nil {
+		return ProbeEvent{}, ErrInvalidProbeEvent
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || event.SchemaVersion != 1 ||
+		len(event.EventID) != 64 || event.ConfigVersion != ingress.TriggerVersion || event.MatchCount < 1 ||
+		event.MatchCount > 100000 || event.TriggeredAt.IsZero() || event.WindowStarted.IsZero() ||
+		event.WindowStarted.After(event.TriggeredAt) || len(strings.TrimSpace(event.Host)) > 255 ||
+		len(event.Samples) < 1 || len(event.Samples) > 20 {
+		return ProbeEvent{}, ErrInvalidProbeEvent
+	}
+	for _, char := range event.EventID {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return ProbeEvent{}, ErrInvalidProbeEvent
+		}
+	}
+	knownRule := false
+	for _, rule := range ingress.CustomRules.Rules {
+		if rule.ID == event.RuleID {
+			knownRule = true
+			break
+		}
+	}
+	if !knownRule {
+		return ProbeEvent{}, ErrInvalidProbeEvent
+	}
+	for _, sample := range event.Samples {
+		if len(strings.TrimSpace(sample)) == 0 || len(sample) > 4096 {
+			return ProbeEvent{}, ErrInvalidProbeEvent
+		}
+	}
+	return event, nil
+}
+
+func (s *Service) processProbeEvent(ctx context.Context, ingress projectapplication.WebhookIngress, event ProbeEvent) error {
+	var rule projectdomain.CustomRule
+	for _, candidate := range ingress.CustomRules.Rules {
+		if candidate.ID == event.RuleID {
+			rule = candidate
+			break
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schemaVersion": 1, "provider": "mendry_log_probe", "eventId": event.EventID,
+		"ruleId": event.RuleID, "ruleName": rule.Name, "matchCount": event.MatchCount,
+		"windowStartedAt": event.WindowStarted.UTC().Format(time.RFC3339Nano),
+		"triggeredAt":     event.TriggeredAt.UTC().Format(time.RFC3339Nano), "host": event.Host,
+		"samples": event.Samples,
+	})
+	if err != nil || len(payload) > maxObservationMessage {
+		return ErrInvalidProbeEvent
+	}
+	fingerprint := "probe:" + event.EventID
+	occurredAt := event.TriggeredAt.UTC()
+	if _, err := s.observations.CreateInbound(ctx, ingress.ProjectID, ingress.SourceID, string(payload), fingerprint, occurredAt); err != nil {
+		return fmt.Errorf("create probe observation: %w", err)
+	}
+	title := limitText("Log rule: "+rule.Name, maxTitleRunes, maxTitleRunes*4)
+	if _, _, err := s.incidents.IngestInbound(ctx, ingress.ProjectID, ingress.SourceID, title, fingerprint, occurredAt); err != nil {
+		return fmt.Errorf("ingest probe incident: %w", err)
+	}
 	return nil
 }
 

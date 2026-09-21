@@ -42,6 +42,16 @@ type service interface {
 	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
 }
 
+type logRuleGeneratorService interface {
+	GenerateLogRule(context.Context, authdomain.User, string, application.LogRuleGenerationInput) (domain.CustomRule, error)
+}
+
+type logProbeService interface {
+	InstallLogProbe(context.Context, authdomain.User, string) (application.LogProbeStatus, error)
+	GetLogProbeStatus(context.Context, authdomain.User, string) (application.LogProbeStatus, error)
+	UninstallLogProbe(context.Context, authdomain.User, string) (application.LogProbeStatus, error)
+}
+
 type HandlerOptions struct {
 	Service        service
 	Authentication *authhttp.Handler
@@ -72,7 +82,12 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfiguration)))
 	mux.Handle("PUT /api/v1/projects/{projectKey}/configuration/{component}", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.putConfigurationComponent)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/webhook-token", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.rotateWebhookToken)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/log-files", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHLogFiles)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/containers", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHContainers)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-rule/generate", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.generateLogRule)))
+	mux.Handle("GET /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getLogProbe)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.installLogProbe)))
+	mux.Handle("DELETE /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.uninstallLogProbe)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/repository/refs", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeRepositoryRefs)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/models", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMModels)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/llm/chat", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeLLMChat)))
@@ -103,6 +118,11 @@ type repositoryRefsRequest struct {
 	RemoteURL          string `json:"remoteUrl"`
 	Transport          string `json:"transport"`
 	CredentialSecretID string `json:"credentialSecretId"`
+}
+
+type logRuleGenerationRequest struct {
+	Intent string `json:"intent"`
+	Sample string `json:"sample"`
 }
 
 type sshContainersRequest struct {
@@ -482,6 +502,67 @@ func (h *Handler) probeSSHContainers(writer nethttp.ResponseWriter, request *net
 	writeJSON(writer, request, nethttp.StatusOK, response)
 }
 
+func (h *Handler) generateLogRule(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	generator, ok := h.service.(logRuleGeneratorService)
+	if !ok {
+		writeApplicationError(writer, request, application.ErrLLMUnreachable)
+		return
+	}
+	var payload logRuleGenerationRequest
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	rule, err := generator.GenerateLogRule(request.Context(), principal, request.PathValue("projectKey"), application.LogRuleGenerationInput{Intent: payload.Intent, Sample: payload.Sample})
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, rule)
+}
+
+func (h *Handler) getLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	h.handleLogProbe(writer, request, "status")
+}
+
+func (h *Handler) installLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	h.handleLogProbe(writer, request, "install")
+}
+
+func (h *Handler) uninstallLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	h.handleLogProbe(writer, request, "uninstall")
+}
+
+func (h *Handler) handleLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request, operation string) {
+	manager, ok := h.service.(logProbeService)
+	if !ok {
+		writeApplicationError(writer, request, application.ErrLogProbeUnavailable)
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	var status application.LogProbeStatus
+	var err error
+	switch operation {
+	case "install":
+		status, err = manager.InstallLogProbe(request.Context(), principal, request.PathValue("projectKey"))
+	case "uninstall":
+		status, err = manager.UninstallLogProbe(request.Context(), principal, request.PathValue("projectKey"))
+	default:
+		status, err = manager.GetLogProbeStatus(request.Context(), principal, request.PathValue("projectKey"))
+	}
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, status)
+}
+
 func (h *Handler) probeLLMModels(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	var payload llmModelsRequest
 	if !decodeJSON(writer, request, &payload) {
@@ -792,7 +873,13 @@ func listLimit(request *nethttp.Request) (int32, error) {
 }
 
 func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Request, err error) {
+	var pathError *application.LogProbePathError
+	var setupError *application.LogProbeSetupError
 	switch {
+	case errors.As(err, &pathError):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: pathError.Reason, Message: pathError.Message()})
+	case errors.As(err, &setupError):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: setupError.Reason, Message: setupError.Message()})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Project request is invalid."})
 	case errors.Is(err, application.ErrNotFound):
@@ -805,6 +892,8 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusConflict, Code: "project_conflict", Message: "Project resource already exists."})
 	case errors.Is(err, application.ErrGitUnreachable):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "git_unreachable", Message: "The Git remote could not be read."})
+	case errors.Is(err, application.ErrLogProbeUnavailable):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "log_probe_unavailable", Message: "The managed log probe could not be reached or configured."})
 	case errors.Is(err, application.ErrLLMUnreachable):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadGateway, Code: "llm_unreachable", Message: "The LLM provider could not be reached."})
 	case errors.Is(err, application.ErrDockerUnavailable):
