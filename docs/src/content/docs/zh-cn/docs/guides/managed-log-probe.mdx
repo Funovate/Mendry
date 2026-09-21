@@ -1,10 +1,13 @@
 ---
-title: 托管日志探针
+title: SSH 日志监控与托管探针
 description: 在没有日志平台和告警系统的 Linux 主机上，通过 SSH 安装并运行 Mendry 文件日志监控。
 availability: available
 translationKey: managed-log-probe
 sources:
   - backend/README.md
+  - backend/internal/modules/remediation/adapter/sshlog/log_probe_manager.go
+  - backend/internal/modules/projects/domain/project.go
+  - frontend/src/features/configuration/wizard/TriggerStep.tsx
 ---
 
 **可用性：available**
@@ -14,10 +17,10 @@ sources:
 ## 前置条件
 
 - SSH source 使用 `host` deployment 和 `tail` mode。
-- SSH 用户名符合 Linux 用户名格式，并能读取配置的绝对日志路径。
+- SSH 用户名符合 Linux 用户名格式，并能读取配置的绝对日志路径；路径不能包含空格、制表符或换行符。
 - 主机提供 Python 3.6 或更新版本、正在运行的 systemd 和无交互 `sudo -n`。
 - 主机可以通过 HTTPS 访问 `MENDRY_PUBLIC_URL`。
-- 项目已保存 custom rule trigger 和可用的 LLM provider；手工规则不依赖 LLM。
+- 项目已保存 custom rule trigger；使用 AI 生成规则还需要可用的 LLM provider，手工规则不依赖 LLM。
 
 ## 配置与安装
 
@@ -39,7 +42,15 @@ sources:
 - `groupingWindowSeconds`：保留为事故分组配置，不代替检测窗口。
 - `excludePattern`：命中主规则后仍需排除的正则表达式。
 
+可配置 1–20 条规则，ID 必须唯一且符合 `^[a-z][a-z0-9_-]{0,63}$`。阈值范围为 1–10,000 行，检测窗口为 1–86,400 秒，冷却时间为 0–86,400 秒。例如，使用 `contains` 匹配 `ERROR`，阈值为 `3`、窗口为 `60`、冷却时间为 `300`，表示 60 秒内出现三条匹配日志后触发，随后同一规则静默五分钟。
+
 事件使用稳定 event ID 作为事故 fingerprint。相同事件重试只会更新同一个事故，不会创建第二个事故；投递响应丢失时可能出现重复 observation。
+
+## 验证监控
+
+安装后先等待本次探针上报新的 `monitoring` 状态，再让应用向所选文件写入新的匹配日志，在检测窗口内达到规则阈值。首次启动前的历史日志不会被回放。随后在项目事件流与事故列表中检查对应信号和事故。
+
+若没有出现事件，先检查排除正则、冷却时间和投递状态，再调整规则。具体步骤见[故障排查](/zh-cn/docs/guides/troubleshooting/)。
 
 ## 运维
 
@@ -47,4 +58,4 @@ sources:
 
 轮换 trigger token 后，旧探针会停止投递；立即执行 **Install or update** 下发新配置。修改 trigger 后配置版本会变化，旧探针事件会被拒绝，同样需要更新探针。
 
-当前版本仅支持单个 Linux 文件，不支持 Docker stdout、journald、多行堆栈聚合和“长时间无日志”规则。
+当前版本仅支持单个 Linux 文件，不支持 Docker stdout、journald、多行堆栈聚合和“长时间无日志”规则。同一主机上的服务与配置路径固定，为另一个项目安装探针会替换该主机已有的探针配置。

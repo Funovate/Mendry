@@ -158,6 +158,11 @@ export default defineConfig({
               translations: { "zh-CN": "腾讯云 CLS" },
             },
             {
+              slug: "docs/guides/managed-log-probe",
+              label: "SSH log monitoring",
+              translations: { "zh-CN": "SSH 日志监控" },
+            },
+            {
               slug: "docs/guides/signed-webhooks",
               label: "Signed webhooks",
               translations: { "zh-CN": "签名 Webhook" },
