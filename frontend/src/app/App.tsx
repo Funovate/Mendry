@@ -12,7 +12,6 @@ import { ProjectRoute } from "../features/projects/ProjectRoute";
 import { AppShell } from "../layouts/AppShell";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { createAppQueryClient } from "./query";
-import { PipelinePage } from "../features/board/PipelinePage";
 
 const queryClient = createAppQueryClient();
 
@@ -28,8 +27,8 @@ export default function App() {
           <Route index element={<Navigate to="incidents" replace />} />
           <Route path="incidents" element={<IncidentsPage />} />
           <Route path="incidents/:incidentId" element={<IncidentsPage />} />
-          <Route path="pipeline" element={<PipelinePage />} />
-          <Route path="board" element={<Navigate to="../pipeline" replace />} />
+          <Route path="pipeline" element={<Navigate to="../incidents" replace />} />
+          <Route path="board" element={<Navigate to="../incidents" replace />} />
           <Route path="observations" element={<ObservationsPage />} />
           <Route path="configuration" element={<ConfigurationPage />} />
           <Route path="configuration/notifications" element={<NotificationsPage />} />

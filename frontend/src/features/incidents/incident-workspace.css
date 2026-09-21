@@ -797,7 +797,8 @@
 }
 
 .app-shell .remediation-focused .remediation-diagnosis > .remediation-prose {
-  max-width: none;
+  max-width: 96ch;
+  overflow-wrap: anywhere;
   margin: 16px 0 0;
   font-size: 13.5px;
   line-height: 1.75;
@@ -924,7 +925,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .app-shell .remediation-focused .remediation-plan-title {
@@ -935,26 +936,18 @@
 }
 
 .app-shell .remediation-focused .remediation-plan-title strong {
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.45;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.55;
   color: #17281f;
   letter-spacing: -0.01em;
 }
 
-.app-shell .remediation-focused .remediation-plan-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* Recommended badge: positive green semantic */
-.app-shell .remediation-plan-meta .recommended {
+.plan-recommended-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
+  gap: 4px;
+  padding: 2px 8px;
   font-size: 11px;
   font-weight: 650;
   color: #15803d;
@@ -963,7 +956,7 @@
   border-radius: 999px;
 }
 
-.app-shell .remediation-plan-meta .recommended svg {
+.plan-recommended-tag svg {
   color: #16a34a;
 }
 
@@ -1338,6 +1331,7 @@
 }
 
 .app-shell .remediation-context :is(.remediation-primary-facts, .remediation-technical-facts) dt {
+  flex-shrink: 0;
   font-size: 11.5px;
   font-weight: 550;
   color: #728379;
@@ -1350,6 +1344,23 @@
   color: #17281f;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+.app-shell .remediation-context .remediation-stacked-facts > div {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.app-shell .remediation-context .remediation-stacked-facts dd {
+  text-align: left;
+}
+
+.app-shell .remediation-context .remediation-stacked-facts dd code {
+  display: block;
+  padding: 6px 8px;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 .remediation-context code {
@@ -1697,8 +1708,8 @@
 .remediation-pipeline-stepper {
   background: #ffffff;
   border: 1px solid var(--color-border, #e2e7e3);
-  border-radius: 8px;
-  padding: 14px 18px 12px;
+  border-radius: 10px;
+  padding: 16px 20px 12px;
   margin-bottom: 18px;
   box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
 }
@@ -1709,7 +1720,7 @@
   justify-content: space-between;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 8px;
+  padding-bottom: 12px;
 }
 
 .remediation-pipeline-stepper .stepper-item-wrap {
@@ -1717,6 +1728,11 @@
   align-items: center;
   flex: 1;
   min-width: 140px;
+}
+
+.remediation-pipeline-stepper .stepper-item-wrap:last-child {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .remediation-pipeline-stepper .stepper-node-box {
@@ -1774,7 +1790,7 @@
 }
 
 .remediation-pipeline-stepper .stepper-node-text strong {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   color: #17281f;
   white-space: nowrap;
@@ -1785,9 +1801,9 @@
 }
 
 .remediation-pipeline-stepper .stepper-node-text small {
-  font-size: 9px;
-  color: #687a70;
-  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: #7b8d82;
+  white-space: nowrap;
 }
 
 .remediation-pipeline-stepper .stepper-node-box.current .stepper-node-text small {
@@ -1797,8 +1813,10 @@
 
 .remediation-pipeline-stepper .stepper-line {
   flex: 1;
+  min-width: 24px;
   height: 2px;
-  margin: 0 10px;
+  margin: 0 14px;
+  border-radius: 999px;
   background: #e2e8e4;
 }
 
@@ -1812,7 +1830,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 8px;
+  padding-top: 10px;
   border-top: 1px solid #edf2ee;
 }
 
@@ -1828,7 +1846,7 @@
   gap: 3px;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .flow-token.token-passed {
@@ -1873,6 +1891,178 @@
 .remediation-pipeline-stepper .stepper-pipeline-link:hover {
   text-decoration: underline;
   color: #10543f;
+}
+
+/* Operator handoff: who owns the next move, framed as Done → Now → Next */
+.remediation-handoff {
+  --handoff-accent: #c1893e;
+  --handoff-ink: #7b541d;
+  --handoff-soft: #fdf6ea;
+  --handoff-line: #efdcbc;
+  margin: 0 0 22px;
+  background: #ffffff;
+  border: 1px solid var(--handoff-line);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgb(23 40 31 / 3%);
+  overflow: hidden;
+}
+
+.remediation-handoff.is-running {
+  --handoff-accent: #176d52;
+  --handoff-ink: #12543d;
+  --handoff-soft: #f1f8f4;
+  --handoff-line: #cfe4d7;
+}
+
+.remediation-handoff.is-blocked,
+.remediation-handoff.is-terminal {
+  --handoff-accent: #b42318;
+  --handoff-ink: #8a1c13;
+  --handoff-soft: #fef4f3;
+  --handoff-line: #f1cdc9;
+}
+
+.remediation-handoff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 14px 18px;
+  background: var(--handoff-soft);
+  border-bottom: 1px solid var(--handoff-line);
+  box-shadow: inset 3px 0 0 var(--handoff-accent);
+}
+
+.remediation-handoff-title {
+  min-width: 0;
+}
+
+.remediation-handoff-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--handoff-ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.remediation-handoff-owner::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--handoff-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--handoff-accent) 20%, transparent);
+}
+
+.app-shell .remediation-handoff h3 {
+  margin: 0;
+  color: #17281f;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.remediation-handoff-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.remediation-handoff-action {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
+.app-shell .remediation-handoff-copy-branch.copied {
+  color: #147052;
+  border-color: #b9ddcd;
+  background: #e8f5ef;
+}
+
+.remediation-handoff-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.5fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remediation-handoff-steps > li {
+  min-width: 0;
+  padding: 13px 18px 15px;
+}
+
+.remediation-handoff-steps > li + li {
+  border-left: 1px solid #edf1ed;
+}
+
+.handoff-step-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: #728379;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.remediation-handoff-steps .is-done .handoff-step-label svg {
+  color: #176d52;
+}
+
+.remediation-handoff-steps .is-current .handoff-step-label svg {
+  color: var(--handoff-accent);
+}
+
+.remediation-handoff-steps .is-next {
+  background: color-mix(in srgb, var(--handoff-soft) 55%, #ffffff);
+}
+
+.remediation-handoff-steps .is-next .handoff-step-label {
+  color: var(--handoff-ink);
+}
+
+.remediation-handoff-steps p {
+  margin: 0;
+  color: #3f5147;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.remediation-handoff-steps .is-next p {
+  color: #17281f;
+  font-weight: 550;
+}
+
+.remediation-handoff-steps code {
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: #17281f;
+  background: #ffffff;
+  border: 1px solid #dce2de;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+@container (max-width: 860px) {
+  .remediation-handoff-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .remediation-handoff-steps > li + li {
+    border-left: 0;
+    border-top: 1px solid #edf1ed;
+  }
 }
 
 /* --------------------------------------------------------------------------

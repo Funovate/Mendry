@@ -7,7 +7,6 @@ sources:
   - frontend/src/features/configuration/ConfigurationEditorPage.tsx
   - frontend/src/features/configuration/wizard/RemediationStep.tsx
   - frontend/src/features/observations/ObservationsPage.tsx
-  - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
   - frontend/src/features/notifications/NotificationsPage.tsx
@@ -27,7 +26,6 @@ your own console origin; replace `:key` and `:id` with a project key and inciden
 | Projects and configuration    | `/projects/:key/configuration/edit`          | Configure Git, Source, Trigger, LLM, Automatic hotfix, and Review. Each configuration step saves independently.                                                            |
 | Project notifications         | `/projects/:key/configuration/notifications` | Configure multiple Telegram, Feishu, or WeCom channels, send tests, inspect the latest 100 deliveries, and retry eligible failures.                                        |
 | Event stream                  | `/projects/:key/observations`                | Inspect observations, filter the current page by level or message/service/source, and refresh manually.                                                                    |
-| Pipeline                      | Project navigation: Pipeline                 | Inspect up to 100 Open incidents, filter by stage, priority, or actionability, and open an incident. Refreshes every 25 seconds.                                           |
 | Incidents                     | Project navigation: Incidents                | Browse incidents with incremental loading and inspect evidence. Set Open, Recovered, or Closed manually.                                                                   |
 | Investigation and remediation | `/projects/:key/incidents/:id`               | Review diagnosis, citations, plans, suggested diff, attempts, recovery information, and hotfix delivery when present. Available actions depend on server state and policy. |
 | Authentication                | Login and sidebar Sign out                   | Use the single configured identity and cookie session. No multi-user role model is available.                                                                              |

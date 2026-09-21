@@ -340,6 +340,7 @@ var (
 	environmentKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	commitPattern         = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 	webhookTokenPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+	customRuleIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
 
 func IsCommitSHA(value string) bool {
@@ -847,10 +848,71 @@ func validWebhookFields(eventTypes []string, deduplicationKey string) bool {
 	return true
 }
 
-type ruleConfig struct {
-	SchemaVersion         int    `json:"schemaVersion"`
-	GroupingWindowSeconds int    `json:"groupingWindowSeconds"`
-	MatchExpression       string `json:"matchExpression"`
+// CustomRule defines one deterministic file-log detector executed by the managed probe.
+type CustomRule struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	MatchType       string `json:"matchType"`
+	Pattern         string `json:"pattern"`
+	ExcludePattern  string `json:"excludePattern,omitempty"`
+	Threshold       int    `json:"threshold"`
+	WindowSeconds   int    `json:"windowSeconds"`
+	CooldownSeconds int    `json:"cooldownSeconds"`
+}
+
+// CustomRuleConfig is the managed-probe trigger contract. Version 1 remains
+// readable as a single contains rule so existing projects keep working.
+type CustomRuleConfig struct {
+	SchemaVersion         int          `json:"schemaVersion"`
+	GroupingWindowSeconds int          `json:"groupingWindowSeconds"`
+	MatchExpression       string       `json:"matchExpression,omitempty"`
+	Rules                 []CustomRule `json:"rules,omitempty"`
+}
+
+func ParseCustomRuleConfig(raw []byte) (CustomRuleConfig, error) {
+	var value CustomRuleConfig
+	if err := decodeStrict(raw, &value); err != nil || (value.SchemaVersion != 1 && value.SchemaVersion != 2) ||
+		value.GroupingWindowSeconds < 1 || value.GroupingWindowSeconds > 86400 {
+		return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+	}
+	if value.SchemaVersion == 1 {
+		if !bounded(value.MatchExpression, 1, 4000) || len(value.Rules) != 0 {
+			return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+		}
+		value.Rules = []CustomRule{{
+			ID: "legacy", Name: "Legacy custom rule", MatchType: "contains", Pattern: value.MatchExpression,
+			Threshold: 1, WindowSeconds: 60, CooldownSeconds: value.GroupingWindowSeconds,
+		}}
+		return value, nil
+	}
+	if value.MatchExpression != "" || len(value.Rules) < 1 || len(value.Rules) > 20 {
+		return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+	}
+	seen := make(map[string]struct{}, len(value.Rules))
+	for _, rule := range value.Rules {
+		if !customRuleIDPattern.MatchString(rule.ID) || !bounded(rule.Name, 1, 120) ||
+			!oneOf(rule.MatchType, "contains", "regex") || !bounded(rule.Pattern, 1, 1000) ||
+			(rule.ExcludePattern != "" && !bounded(rule.ExcludePattern, 1, 1000)) ||
+			rule.Threshold < 1 || rule.Threshold > 10000 || rule.WindowSeconds < 1 || rule.WindowSeconds > 86400 ||
+			rule.CooldownSeconds < 0 || rule.CooldownSeconds > 86400 {
+			return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+		}
+		if _, ok := seen[rule.ID]; ok {
+			return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+		}
+		seen[rule.ID] = struct{}{}
+		if rule.MatchType == "regex" {
+			if _, err := regexp.Compile(rule.Pattern); err != nil {
+				return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+			}
+		}
+		if rule.ExcludePattern != "" {
+			if _, err := regexp.Compile(rule.ExcludePattern); err != nil {
+				return CustomRuleConfig{}, fmt.Errorf("custom rule config is invalid")
+			}
+		}
+	}
+	return value, nil
 }
 
 func validateSourceConfig(kind string, raw json.RawMessage) error {
@@ -892,10 +954,8 @@ func validateTriggerConfig(kind string, raw json.RawMessage) error {
 			return fmt.Errorf("signed webhook config is invalid")
 		}
 	case "custom_rule":
-		var value ruleConfig
-		if err := decodeStrict(raw, &value); err != nil || value.SchemaVersion != 1 || value.GroupingWindowSeconds < 1 ||
-			value.GroupingWindowSeconds > 86400 || !bounded(value.MatchExpression, 1, 4000) {
-			return fmt.Errorf("custom rule config is invalid")
+		if _, err := ParseCustomRuleConfig(raw); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unknown trigger kind")

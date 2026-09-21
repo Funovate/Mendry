@@ -190,6 +190,33 @@ func TestListModelsLogsBoundedSuccess(t *testing.T) {
 	}
 }
 
+func TestGenerateLogRuleReturnsStructuredRuleWithoutLoggingSample(t *testing.T) {
+	const sample = "ERROR card declined customer=redacted"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			Messages []map[string]string `json:"messages"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || len(payload.Messages) != 2 || !strings.Contains(payload.Messages[1]["content"], sample) {
+			http.Error(writer, "bad prompt", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": `{"id":"payment-errors","name":"Payment errors","matchType":"contains","pattern":"ERROR card declined","excludePattern":"healthcheck","threshold":3,"windowSeconds":60,"cooldownSeconds":300}`}}}})
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	logger, err := observability.NewLogger(observability.LoggerOptions{Writer: &output, Level: "debug", Format: "json", Service: "test", Environment: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := NewLister(server.Client(), logger).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", "alert on repeated payment failures", sample)
+	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 3 {
+		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
+	}
+	if strings.Contains(output.String(), sample) || strings.Contains(output.String(), "sk-test") {
+		t.Fatalf("generation log leaked prompt or credential: %s", output.String())
+	}
+}
+
 func lastJSONRecord(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))

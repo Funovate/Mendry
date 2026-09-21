@@ -617,18 +617,29 @@ func webhookIngressFromRow(row projectdb.LookupWebhookTokenRow) (application.Web
 	if !row.ProjectID.Valid || !row.SourceID.Valid || !row.TriggerID.Valid {
 		return application.WebhookIngress{}, application.ErrNotFound
 	}
-	config, err := domain.ParseSignedWebhookConfig(row.TriggerConfig)
-	if err != nil {
-		// Treat incomplete or corrupt stored configuration like an unknown token at
-		// the public ingress boundary; do not infer a generic provider.
-		return application.WebhookIngress{}, application.ErrNotFound
-	}
 	ingress := application.WebhookIngress{
 		ProjectID: uuidString(row.ProjectID), SourceID: uuidString(row.SourceID), TriggerID: uuidString(row.TriggerID),
-		Provider: config.Provider,
+		TriggerKind: row.TriggerKind, TriggerVersion: row.TriggerVersion,
 	}
-	if config.AWSCloudWatch != nil {
-		ingress.TopicARN = config.AWSCloudWatch.TopicARN
+	switch row.TriggerKind {
+	case "signed_webhook":
+		config, err := domain.ParseSignedWebhookConfig(row.TriggerConfig)
+		if err != nil {
+			return application.WebhookIngress{}, application.ErrNotFound
+		}
+		ingress.Provider = config.Provider
+		if config.AWSCloudWatch != nil {
+			ingress.TopicARN = config.AWSCloudWatch.TopicARN
+		}
+	case "custom_rule":
+		config, err := domain.ParseCustomRuleConfig(row.TriggerConfig)
+		if err != nil {
+			return application.WebhookIngress{}, application.ErrNotFound
+		}
+		ingress.Provider = domain.WebhookProviderGeneric
+		ingress.CustomRules = config
+	default:
+		return application.WebhookIngress{}, application.ErrNotFound
 	}
 	return ingress, nil
 }

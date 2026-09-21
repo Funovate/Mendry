@@ -70,8 +70,8 @@ flowchart TD
 ```
 
 The current incident application accepts project-scoped observations and signed
-webhooks, groups signals into incidents, tracks incident lifecycle on a
-Pipeline Board, collects trusted evidence, and coordinates repair proposals.
+webhooks, groups signals into incidents, tracks incident lifecycle, collects trusted
+evidence, and coordinates repair proposals.
 
 Remediation can run in **Conservative mode** (creating a constrained patch and
 publishing a Draft PR/MR to GitHub or GitLab for repository CI and human review)

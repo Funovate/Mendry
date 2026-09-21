@@ -1,4 +1,11 @@
-import { ApiError, type ProjectConfiguration, type ProjectSecret, type SourceKind, type TriggerKind } from "../../api";
+import { ApiError, type LogProbeStatus, type ProjectConfiguration, type ProjectSecret, type SourceKind, type TriggerKind } from "../../api";
+
+export function isLogProbeMonitoring(status: LogProbeStatus | undefined, install?: LogProbeStatus): boolean {
+  if (!status || status.state !== "active" || status.message !== "monitoring") return false;
+  if (!install) return true;
+  return status.version === install.version && status.configVersion === install.configVersion &&
+    Date.parse(status.checkedAt) >= Date.parse(install.checkedAt);
+}
 
 export function readConfigString(config: Record<string, unknown> | undefined, key: string, fallback: string): string {
   const value = config?.[key];
@@ -89,7 +96,40 @@ export function buildSourceConfig(kind: SourceKind, input: SourceConfigInput): R
 
 export type WebhookProvider = "generic" | "tencent_cls" | "aws_cloudwatch";
 
-export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string; webhookProvider?: WebhookProvider; awsTopicArn?: string }): Record<string, unknown> {
+export type CustomRuleDraft = {
+  id: string;
+  name: string;
+  matchType: "contains" | "regex";
+  pattern: string;
+  excludePattern: string;
+  threshold: number;
+  windowSeconds: number;
+  cooldownSeconds: number;
+};
+
+export function readCustomRules(config: Record<string, unknown> | undefined): CustomRuleDraft[] {
+  const rules = config?.rules;
+  if (Array.isArray(rules)) {
+    const parsed = rules.flatMap((item): CustomRuleDraft[] => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+      const value = item as Record<string, unknown>;
+      if (typeof value.id !== "string" || typeof value.name !== "string" ||
+          (value.matchType !== "contains" && value.matchType !== "regex") || typeof value.pattern !== "string") return [];
+      return [{
+        id: value.id, name: value.name, matchType: value.matchType, pattern: value.pattern,
+        excludePattern: typeof value.excludePattern === "string" ? value.excludePattern : "",
+        threshold: typeof value.threshold === "number" ? value.threshold : 1,
+        windowSeconds: typeof value.windowSeconds === "number" ? value.windowSeconds : 60,
+        cooldownSeconds: typeof value.cooldownSeconds === "number" ? value.cooldownSeconds : 300,
+      }];
+    });
+    if (parsed.length > 0) return parsed;
+  }
+  const legacy = readConfigString(config, "matchExpression", "level=ERROR");
+  return [{ id: "errors", name: "Application errors", matchType: "contains", pattern: legacy, excludePattern: "", threshold: 1, windowSeconds: 60, cooldownSeconds: 300 }];
+}
+
+export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: string; deduplicationKey: string; groupingWindowSeconds: number; matchExpression: string; customRules?: CustomRuleDraft[]; webhookProvider?: WebhookProvider; awsTopicArn?: string }): Record<string, unknown> {
   if (kind === "signed_webhook") {
     const eventTypes = input.eventTypes.split(",").map((value) => value.trim()).filter(Boolean);
     if (input.webhookProvider === "aws_cloudwatch") {
@@ -109,9 +149,12 @@ export function buildTriggerConfig(kind: TriggerKind, input: { eventTypes: strin
     };
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     groupingWindowSeconds: input.groupingWindowSeconds,
-    matchExpression: input.matchExpression.trim(),
+    rules: (input.customRules ?? []).map((rule) => ({
+      ...rule,
+      id: rule.id.trim(), name: rule.name.trim(), pattern: rule.pattern.trim(), excludePattern: rule.excludePattern.trim(),
+    })),
   };
 }
 

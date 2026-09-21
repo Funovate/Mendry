@@ -43,6 +43,19 @@ const sshContainersSchema = z.object({
 	containers: z.array(dockerContainerSchema).max(100),
 });
 
+const sshLogFileEntrySchema = z.object({
+	name: z.string(),
+	path: z.string(),
+	kind: z.enum(["file", "directory"]),
+	readable: z.boolean(),
+});
+
+const sshLogFilesSchema = z.object({
+	directory: z.string(),
+	entries: z.array(sshLogFileEntrySchema).max(100),
+	truncated: z.boolean(),
+});
+
 const projectSecretSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -185,6 +198,19 @@ const llmChatProbeSchema = z.object({
 
 const webhookTokenSchema = z.object({
   inboundUrl: z.string(),
+});
+
+const customRuleSchema = z.object({
+  id: z.string(), name: z.string(), matchType: z.enum(["contains", "regex"]), pattern: z.string(),
+  excludePattern: z.string().default(""), threshold: z.number().int(), windowSeconds: z.number().int(), cooldownSeconds: z.number().int(),
+});
+
+const logProbeStatusSchema = z.object({
+  state: z.string(),
+  version: z.string(),
+  configVersion: z.number().int(),
+  checkedAt: z.string(),
+  message: z.string(),
 });
 
 const observationSchema = z.object({
@@ -380,12 +406,16 @@ const listSuccessEnvelope = <T extends z.ZodType>(schema: T) => z.object({
 
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 export type TriggerKind = z.infer<typeof triggerKindSchema>;
+export type LogProbeStatus = z.infer<typeof logProbeStatusSchema>;
+export type GeneratedLogRule = z.infer<typeof customRuleSchema>;
 export type IncidentStatus = z.infer<typeof incidentStatusSchema>;
 export type CurrentUser = z.infer<typeof currentUserSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectSecret = z.infer<typeof projectSecretSchema>;
 export type RepositoryRefs = z.infer<typeof repositoryRefsSchema>;
 export type DockerContainer = z.infer<typeof dockerContainerSchema>;
+export type SshLogFileEntry = z.infer<typeof sshLogFileEntrySchema>;
+export type SshLogFiles = z.infer<typeof sshLogFilesSchema>;
 export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 export type ProjectConfigurationDraft = z.infer<typeof projectConfigurationDraftSchema>;
 export type Observation = z.infer<typeof observationSchema>;
@@ -556,6 +586,8 @@ export const api = {
     requestData(projectPath(projectKey, "/repository/refs"), repositoryRefsSchema, { method: "POST", body: JSON.stringify(input) }),
   probeSSHContainers: (projectKey: string, input: { host: string; port: number; user: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/configuration/source/ssh/containers"), sshContainersSchema, { method: "POST", body: JSON.stringify(input) }),
+  browseSSHLogFiles: (projectKey: string, input: { host: string; port: number; user: string; credentialSecretId: string; path: string }) =>
+    requestData(projectPath(projectKey, "/configuration/source/ssh/log-files"), sshLogFilesSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMModels: (projectKey: string, input: { baseUrl: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
@@ -587,6 +619,14 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/auto-hotfix/enable"), remediationPolicySchema, { method: "POST", body: JSON.stringify({ checkId }) }),
   rotateWebhookToken: (projectKey: string) =>
     requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
+  generateLogRule: (projectKey: string, input: { intent: string; sample: string }) =>
+    requestData(projectPath(projectKey, "/configuration/log-rule/generate"), customRuleSchema, { method: "POST", body: JSON.stringify(input) }),
+  getLogProbeStatus: (projectKey: string, signal?: AbortSignal) =>
+    requestData(projectPath(projectKey, "/configuration/log-probe"), logProbeStatusSchema, { signal }),
+  installLogProbe: (projectKey: string) =>
+    requestData(projectPath(projectKey, "/configuration/log-probe"), logProbeStatusSchema, { method: "POST", body: "{}" }),
+  uninstallLogProbe: (projectKey: string) =>
+    requestData(projectPath(projectKey, "/configuration/log-probe"), logProbeStatusSchema, { method: "DELETE" }),
   listObservations: (projectKey: string, params?: ListObservationsParams, signal?: AbortSignal) => {
     const searchParams = new URLSearchParams();
     if (params?.limit !== undefined) searchParams.set("limit", String(params.limit));

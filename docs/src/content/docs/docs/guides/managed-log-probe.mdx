@@ -1,0 +1,40 @@
+---
+title: Managed log probe
+description: Install and run Mendry file-log monitoring over SSH on Linux hosts without a logging or alerting platform.
+availability: available
+translationKey: managed-log-probe
+sources:
+  - backend/README.md
+---
+
+**Availability: available**
+
+The managed log probe monitors regular Linux log files. Mendry installs a fixed probe over the project's saved SSH private key. AI generates schema-constrained rules; it does not generate or execute arbitrary scripts.
+
+## Requirements
+
+- An SSH source using `host` deployment and `tail` mode.
+- A Linux SSH user that can read the configured absolute log path.
+- Python 3.6 or newer, a running systemd instance, and non-interactive `sudo -n` on the host.
+- Outbound HTTPS access to `MENDRY_PUBLIC_URL`.
+- A saved custom-rule trigger. AI generation additionally requires a configured LLM provider.
+
+## Setup
+
+1. Enter the SSH host, user, and private-key credential under Collection source. For Host process deployments, select **Browse remote files**, navigate to a readable log file on the host, select it, and save the source. You can also enter an absolute file path manually.
+2. Select **Managed log probe** under Trigger.
+3. Add contains/regex rules manually, or generate one from an intent and redacted sample.
+4. Review the ID, pattern, threshold, detection window, exclusion regex, and cooldown, then save.
+5. Select **Install or update**. Before writing files, Mendry checks the host's service manager, probe user, and Python version, then uses the detected Python path in the systemd unit. The install request returns `starting` when the remote install command completes; the page checks status separately and confirms monitoring only when the current probe reports a fresh `monitoring` status.
+
+File browsing uses the current SSH form values before the source is saved. It lists a single directory as the SSH user without reading log contents. Each response contains at most 100 files or directories, with a notice when results are truncated. Directories are navigation targets; select a specific file for the log path.
+
+The first run starts at the end of the file. The probe persists its inode and offset, starts a rotated file at its beginning, spools events before delivery, and only sends strict events for the active trigger version and rule IDs.
+
+## Operations
+
+Status is read over SSH from systemd and the probe status file. Uninstall stops the service and removes its program, token-bearing configuration, cursor, and spool.
+
+After rotating the trigger token or changing the trigger configuration, run **Install or update** immediately. Old tokens and stale configuration versions are rejected.
+
+The current release supports one regular Linux file. Docker stdout, journald, multiline aggregation, and missing-log rules are out of scope.

@@ -8,7 +8,6 @@ sources:
   - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
   - frontend/src/features/configuration/wizard/RemediationStep.tsx
   - frontend/src/features/observations/ObservationsPage.tsx
-  - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
   - frontend/src/features/notifications/NotificationsPage.tsx
@@ -48,9 +47,9 @@ sources:
 
 ## 分流事故
 
-通过 Pipeline 查看当前 Open 工作负载。它最多加载 100 条 Open 事故，每 25 秒刷新。按阶段、优先级或可操作性筛选，然后进入事故查看原始证据。需要浏览更广的列表时，使用每批加载 25 条的 Incidents。
+通过 Incidents 查看当前工作负载。列表每批加载 25 条，可按 Open、Recovered 或 Closed 筛选。进入事故后可查看修复阶段、下一步由谁处理以及原始证据。
 
-不要根据 Pipeline 阶段或修复结果推断服务已经恢复。Open、Recovered 和 Closed 是人工控制的事故状态，应在检查真实服务状态后修改。
+不要根据修复阶段或修复结果推断服务已经恢复。Open、Recovered 和 Closed 是人工控制的事故状态，应在检查真实服务状态后修改。
 
 ## 审查调查与操作
 

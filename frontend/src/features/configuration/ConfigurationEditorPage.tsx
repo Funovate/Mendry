@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, messageFromError, type DockerContainer, type ListResult, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
+import { api, messageFromError, type DockerContainer, type ListResult, type LogProbeStatus, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { LoadingState, PageError } from "../../shared/ui";
 import {
-  buildSourceConfig, buildTriggerConfig, defaultSourceCapabilities,
-  readConfigNumber, readConfigObject, readConfigString, readStringRecord, type WebhookProvider,
+  buildSourceConfig, buildTriggerConfig, defaultSourceCapabilities, isLogProbeMonitoring,
+  readConfigNumber, readConfigObject, readConfigString, readCustomRules, readStringRecord, type CustomRuleDraft, type WebhookProvider,
 } from "./configuration";
 import { LLMStep } from "./wizard/LLMStep";
 import { RemediationStep } from "./wizard/RemediationStep";
@@ -94,7 +94,9 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const awsCloudWatchConfig = readConfigObject(current.trigger?.config, "awsCloudWatch");
   const [awsTopicArn, setAwsTopicArn] = useState(readConfigString(awsCloudWatchConfig, "topicArn", ""));
   const [groupingWindowSeconds, setGroupingWindowSeconds] = useState(readConfigNumber(current.trigger?.config, "groupingWindowSeconds", 900));
-  const [matchExpression, setMatchExpression] = useState(readConfigString(current.trigger?.config, "matchExpression", "level=ERROR"));
+  const [customRules, setCustomRules] = useState<CustomRuleDraft[]>(readCustomRules(current.trigger?.config));
+  const [ruleIntent, setRuleIntent] = useState("");
+  const [ruleSample, setRuleSample] = useState("");
   const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? "https://api.openai.com");
   const [llmCredentialId, setLlmCredentialId] = useState(current.llm?.credentialSecretId ?? "");
   const [llmModel, setLlmModel] = useState(current.llm?.model ?? "");
@@ -136,7 +138,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   });
   const buildTriggerPayload = () => ({
     kind: triggerKind, signingSecretId: null,
-    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression, webhookProvider, awsTopicArn }),
+    config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression: "", customRules, webhookProvider, awsTopicArn }),
     enabled: current.trigger?.enabled ?? true,
   });
   const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
@@ -235,6 +237,59 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
       updateDraft({ trigger: current.trigger ? { ...current.trigger, inboundUrl: result.inboundUrl } : current.trigger });
     },
   });
+  const generateLogRule = useMutation({
+    mutationFn: () => api.generateLogRule(project.key, { intent: ruleIntent.trim(), sample: ruleSample.trim() || "No log sample provided." }),
+    onSuccess: (rule) => setCustomRules((rules) => {
+      const starter = rules.length === 1 && rules[0].id === "errors" && rules[0].name === "Application errors" && rules[0].pattern === "level=ERROR";
+      if (starter) return [rule];
+      const used = new Set(rules.map((item) => item.id));
+      let id = rule.id;
+      let suffix = 2;
+      while (used.has(id)) {
+        id = `${rule.id}-${suffix}`;
+        suffix += 1;
+      }
+      return [...rules, { ...rule, id }];
+    }),
+  });
+  const [pendingProbe, setPendingProbe] = useState<LogProbeStatus | null>(null);
+  const [probeTimedOut, setProbeTimedOut] = useState(false);
+  const probeQueryKey = ["log-probe", project.key];
+  const probeStatus = useQuery({
+    queryKey: probeQueryKey,
+    queryFn: ({ signal }) => api.getLogProbeStatus(project.key, signal),
+    enabled: savedTriggerKind === "custom_rule" && (activeStep === "trigger" || pendingProbe !== null),
+    retry: false,
+    refetchInterval: (query) => pendingProbe && !probeTimedOut && !isLogProbeMonitoring(query.state.data, pendingProbe) ? 3000 : false,
+  });
+  const probeHealthy = isLogProbeMonitoring(probeStatus.data, pendingProbe ?? undefined);
+  const probeChecking = pendingProbe !== null && !probeHealthy && !probeTimedOut;
+  useEffect(() => {
+    if (!pendingProbe || probeHealthy) return;
+    const timer = window.setTimeout(() => setProbeTimedOut(true), 90_000);
+    return () => window.clearTimeout(timer);
+  }, [pendingProbe, probeHealthy]);
+  const installLogProbe = useMutation({
+    mutationFn: () => api.installLogProbe(project.key),
+    onSuccess: (status) => {
+      setProbeTimedOut(false);
+      setPendingProbe(status);
+      queryClient.setQueryData(probeQueryKey, status);
+      void queryClient.invalidateQueries({ queryKey: probeQueryKey });
+    },
+  });
+  const refreshLogProbe = useMutation({
+    mutationFn: () => api.getLogProbeStatus(project.key),
+    onSuccess: (status) => queryClient.setQueryData(probeQueryKey, status),
+  });
+  const uninstallLogProbe = useMutation({
+    mutationFn: () => api.uninstallLogProbe(project.key),
+    onSuccess: (status) => {
+      setPendingProbe(null);
+      setProbeTimedOut(false);
+      queryClient.setQueryData(probeQueryKey, status);
+    },
+  });
   const createCredential = (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => createSecret.mutateAsync(input);
   const updateCredential = (input: { secretId: string; name: string; value?: string }) => updateSecret.mutateAsync(input);
   const knownSecrets = queryClient.getQueryData<ListResult<ProjectSecret>>(queryKeys.secrets(project.key))?.items ?? secrets;
@@ -327,12 +382,20 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         webhookProvider={webhookProvider} setWebhookProvider={setWebhookProvider}
         awsTopicArn={awsTopicArn} setAwsTopicArn={setAwsTopicArn}
         groupingWindowSeconds={groupingWindowSeconds} setGroupingWindowSeconds={setGroupingWindowSeconds}
-        matchExpression={matchExpression} setMatchExpression={setMatchExpression}
+        customRules={customRules} setCustomRules={setCustomRules}
+        ruleIntent={ruleIntent} setRuleIntent={setRuleIntent} ruleSample={ruleSample} setRuleSample={setRuleSample}
+        onGenerateRule={() => generateLogRule.mutate()} generatingRule={generateLogRule.isPending} generateRuleError={generateLogRule.error}
+        logProbeStatus={probeChecking ? pendingProbe ?? undefined : probeStatus.data ?? installLogProbe.data ?? uninstallLogProbe.data}
+        probeChecking={probeChecking} probeTimedOut={pendingProbe !== null && probeTimedOut && !probeHealthy}
+        onInstallLogProbe={() => installLogProbe.mutate()} installingLogProbe={installLogProbe.isPending} installLogProbeError={installLogProbe.error}
+        onRefreshLogProbe={() => refreshLogProbe.mutate()} refreshingLogProbe={refreshLogProbe.isPending} refreshLogProbeError={refreshLogProbe.error ?? (probeChecking ? probeStatus.error : undefined)}
+        onUninstallLogProbe={() => uninstallLogProbe.mutate()} uninstallingLogProbe={uninstallLogProbe.isPending} uninstallLogProbeError={uninstallLogProbe.error}
+        canManageLogProbe={sourceKind === "ssh" && sshDeploymentKind === "host" && readMode === "tail" && savedTriggerKind === "custom_rule"}
         inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}
         generatingInboundUrl={rotateWebhookToken.isPending} generateInboundUrlError={rotateWebhookToken.error}
         canGenerateInboundUrl={savedTriggerKind === "signed_webhook"}
         onSave={() => saveTrigger.mutate()} saving={saveTrigger.isPending}
-        canSave={webhookProvider !== "aws_cloudwatch" || /^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(awsTopicArn.trim())}
+        canSave={(triggerKind !== "custom_rule" || (customRules.length > 0 && new Set(customRules.map((rule) => rule.id.trim())).size === customRules.length && customRules.every((rule) => rule.id.trim() && rule.name.trim() && rule.pattern.trim() && rule.threshold >= 1 && rule.threshold <= 10000 && rule.windowSeconds >= 1 && rule.windowSeconds <= 86400 && rule.cooldownSeconds >= 0 && rule.cooldownSeconds <= 86400))) && (webhookProvider !== "aws_cloudwatch" || /^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+$/.test(awsTopicArn.trim()))}
         saveError={saveTrigger.error}
       />}
       {activeStep === "llm" && <LLMStep

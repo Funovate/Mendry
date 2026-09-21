@@ -7,7 +7,6 @@ sources:
   - frontend/src/features/configuration/ConfigurationEditorPage.tsx
   - frontend/src/features/configuration/wizard/RemediationStep.tsx
   - frontend/src/features/observations/ObservationsPage.tsx
-  - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
   - frontend/src/features/notifications/NotificationsPage.tsx
@@ -25,7 +24,6 @@ sources:
 | 项目与配置 | `/projects/:key/configuration/edit`          | 配置 Git、Source、Trigger、LLM、Automatic hotfix 和 Review。各配置步骤独立保存。                                  |
 | 项目通知   | `/projects/:key/configuration/notifications` | 配置多个 Telegram、飞书或企业微信渠道，发送测试消息，查看最近 100 条投递记录并重试符合条件的失败任务。            |
 | 事件流     | `/projects/:key/observations`                | 查看 Observation，按等级或 message/service/source 筛选当前页，并手动刷新。                                        |
-| Pipeline   | 项目导航中的 Pipeline                        | 展示最多 100 条 Open 事故，按阶段、优先级或可操作性筛选，再进入事故详情。每 25 秒刷新。                           |
 | 事故列表   | 项目导航中的 Incidents                       | 增量加载事故、检查证据，人工设置 Open、Recovered 或 Closed。                                                      |
 | 调查与修复 | `/projects/:key/incidents/:id`               | 查看诊断、引用、计划、候选 Diff、尝试记录、恢复信息及已有的 Hotfix delivery。操作是否可用取决于服务端状态与策略。 |
 | 登录认证   | 登录页与侧栏 Sign out                        | 使用唯一配置身份和 Cookie Session；当前没有多用户角色体系。                                                       |

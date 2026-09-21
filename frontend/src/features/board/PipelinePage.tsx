@@ -195,11 +195,14 @@ export interface CardActionability {
   category: ActionabilityCategory;
   badgeText: string;
   badgeTone: "running" | "action" | "blocked" | "recoverable" | "terminal" | "unstarted";
+  completedText: string;
   statusDescription: string;
   nextStepText: string;
+  actor: "Mendry" | "Operator" | "None";
   isAutoAdvancing: boolean;
   canAdvance: boolean;
   quickActionLabel?: string;
+  actionUrl?: string;
 }
 
 export function resolveActionability(
@@ -211,8 +214,10 @@ export function resolveActionability(
       category: "unstarted",
       badgeText: "Unstarted",
       badgeTone: "unstarted",
-      statusDescription: "Ready for telemetry · Waiting for webhook trigger or manual start",
-      nextStepText: "Manual start or inbound webhook",
+      completedText: "No remediation run has started.",
+      statusDescription: "Waiting for an inbound trigger or a manual start.",
+      nextStepText: "Start remediation or wait for matching telemetry.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: true,
       quickActionLabel: "Start Fix ➔",
@@ -238,8 +243,10 @@ export function resolveActionability(
       category: "running",
       badgeText: "Auto-Advancing",
       badgeTone: "running",
-      statusDescription: `${meta?.label || status} · Autonomous AI in flight; auto-advances on completion`,
-      nextStepText: meta?.next ? `Auto-advances to: ${meta.next}` : "Awaiting step completion",
+      completedText: meta?.prev ? `${meta.prev} is complete.` : "The previous step is complete.",
+      statusDescription: `${meta?.label || status} is in progress. No operator action is required.`,
+      nextStepText: meta?.next ? `Mendry will automatically continue to ${meta.next}.` : "Mendry is completing this step.",
+      actor: "Mendry",
       isAutoAdvancing: true,
       canAdvance: true,
     };
@@ -251,8 +258,10 @@ export function resolveActionability(
       category: "needs_action",
       badgeText: "Action Required",
       badgeTone: "action",
-      statusDescription: "Remediation plan ready · Requires operator approval to execute",
-      nextStepText: "Operator approval ➔ Patch & validation",
+      completedText: "Diagnosis and repair planning are complete.",
+      statusDescription: "Automation is paused until an operator reviews the proposed plan.",
+      nextStepText: "Review the plan in this incident, then approve it to start patching and validation.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: true,
       quickActionLabel: "Review Plan ➔",
@@ -260,15 +269,26 @@ export function resolveActionability(
   }
 
   if (status === "awaiting_human_review") {
+    const publication = remediationData?.checkpoint?.publication;
+    const validations = remediationData?.checkpoint?.validations ?? [];
+    const validationSummary = validations.length > 0 && validations.every((item) => item.passed)
+      ? "Configured validation passed and the hotfix was published."
+      : "The hotfix was published; no passing local validation record is available.";
+    const hasChangeRequest = Boolean(publication?.changeRef || publication?.compareUrl);
     return {
       category: "needs_action",
-      badgeText: "PR Review Needed",
+      badgeText: "Operator Action Required",
       badgeTone: "action",
-      statusDescription: "Patch validated · Awaiting operator review and merge",
-      nextStepText: "Operator merge ➔ Release",
+      completedText: validationSummary,
+      statusDescription: "Mendry automation has stopped at the Git review handoff.",
+      nextStepText: hasChangeRequest
+        ? "Open the change request in Git, review CI and the diff, then merge it. After deployment verification, mark the incident Recovered or Closed."
+        : `Review branch ${publication?.branchRef || "from Hotfix delivery"} against ${publication?.targetBranch || "the target branch"} in Git. After deployment verification, mark the incident Recovered or Closed.`,
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: true,
-      quickActionLabel: "Review PR ➔",
+      quickActionLabel: publication?.compareUrl ? "Open Git review" : "View Git instructions",
+      actionUrl: publication?.compareUrl,
     };
   }
 
@@ -279,8 +299,10 @@ export function resolveActionability(
       category: "blocked",
       badgeText: "Policy Blocked",
       badgeTone: "blocked",
-      statusDescription: suggestion ? `Blocked: ${suggestion}` : "Protected path or safety policy tripped · Automation halted",
-      nextStepText: "Cannot auto-advance · Operator takeover required",
+      completedText: "Diagnosis reached a policy boundary before an automatic repair could proceed.",
+      statusDescription: suggestion ? `Automation stopped: ${suggestion}` : "Automation stopped because a protected path or safety policy was triggered.",
+      nextStepText: "Review the policy finding and complete the repair manually, or update approved project policy before retrying.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: false,
       quickActionLabel: "Take Over ➔",
@@ -298,10 +320,12 @@ export function resolveActionability(
         category: "recoverable",
         badgeText: "Recoverable Error",
         badgeTone: "recoverable",
+        completedText: "The current attempt stopped before completing remediation.",
         statusDescription: remediationData?.terminalReason
-          ? `Halted: ${remediationData.terminalReason}`
-          : "Execution interrupted · Checkpoint preserved, retryable",
-        nextStepText: "Retry or repair with current policy ➔ Resume",
+          ? `The attempt stopped: ${remediationData.terminalReason}`
+          : "The attempt was interrupted, but its checkpoint can be resumed.",
+        nextStepText: "Review the failure details, then retry or repair with the current settings.",
+        actor: "Operator",
         isAutoAdvancing: false,
         canAdvance: true,
         quickActionLabel: "Retry Run ➔",
@@ -311,10 +335,12 @@ export function resolveActionability(
       category: "terminal",
       badgeText: "Failed (Terminated)",
       badgeTone: "terminal",
+      completedText: "The remediation attempt ended without a recoverable checkpoint.",
       statusDescription: remediationData?.terminalReason
-        ? `Terminated: ${remediationData.terminalReason}`
-        : "Task failed and non-retryable",
-      nextStepText: "Pipeline ended · Cannot advance",
+        ? `The attempt failed: ${remediationData.terminalReason}`
+        : "The attempt failed and cannot be resumed.",
+      nextStepText: "Inspect the failure details and project configuration before starting a new attempt.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: false,
     };
@@ -326,8 +352,10 @@ export function resolveActionability(
         category: "recoverable",
         badgeText: "Budget Exceeded",
         badgeTone: "recoverable",
-        statusDescription: "Round budget reached · Checkpoint preserved, recoverable",
-        nextStepText: "Extend budget or repair with settings ➔ Resume",
+        completedText: "The run reached its configured execution budget.",
+        statusDescription: "The checkpoint was preserved and the run will not continue automatically.",
+        nextStepText: "Review the consumed budget, then extend settings or resume the run.",
+        actor: "Operator",
         isAutoAdvancing: false,
         canAdvance: true,
         quickActionLabel: "Resume Run ➔",
@@ -337,8 +365,10 @@ export function resolveActionability(
       category: "terminal",
       badgeText: "Budget Terminated",
       badgeTone: "terminal",
-      statusDescription: "Maximum budget exhausted · Non-retryable",
-      nextStepText: "Pipeline ended · Cannot advance",
+      completedText: "The run exhausted its maximum budget.",
+      statusDescription: "No resumable execution budget remains.",
+      nextStepText: "Review the run and change project budget settings before starting a new attempt.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: false,
     };
@@ -349,8 +379,10 @@ export function resolveActionability(
       category: "terminal",
       badgeText: "Resolved",
       badgeTone: "terminal",
-      statusDescription: "Non-code mitigation or successfully closed",
-      nextStepText: "Incident resolved · Pipeline completed",
+      completedText: "The investigation completed without producing a code change.",
+      statusDescription: "Mendry has no further automatic action for this result.",
+      nextStepText: "Review the diagnosis, verify the service condition, then mark the incident Recovered or Closed when appropriate.",
+      actor: "Operator",
       isAutoAdvancing: false,
       canAdvance: false,
     };
@@ -360,8 +392,10 @@ export function resolveActionability(
     category: "running",
     badgeText: status,
     badgeTone: "running",
+    completedText: "The latest state was received, but no specific guidance is defined for it.",
     statusDescription: status,
-    nextStepText: "In flight",
+    nextStepText: "Open the incident details and inspect the latest attempt before taking action.",
+    actor: "Operator",
     isAutoAdvancing: true,
     canAdvance: true,
   };
@@ -859,7 +893,10 @@ export function PipelinePage() {
                           <div className={`task-advancement-banner is-${actionInfo.badgeTone}`}>
                             <strong className="advancement-heading">{actionInfo.badgeText}</strong>
                             <div className="advancement-desc">
-                              {actionInfo.statusDescription}
+                              {actionInfo.completedText}
+                            </div>
+                            <div className="advancement-next">
+                              <strong>{actionInfo.actor === "Mendry" ? "System next" : "Your next step"}:</strong> {actionInfo.nextStepText}
                             </div>
                           </div>
 
@@ -905,8 +942,23 @@ export function PipelinePage() {
                             </div>
 
                             {actionInfo.quickActionLabel && (
-                              <span className={`card-action-cue is-${actionInfo.badgeTone}`}>
-                                {actionInfo.quickActionLabel}
+                              <span
+                                className={`card-action-cue is-${actionInfo.badgeTone}`}
+                                role={actionInfo.actionUrl ? "link" : undefined}
+                                tabIndex={actionInfo.actionUrl ? 0 : undefined}
+                                onClick={actionInfo.actionUrl ? (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  window.open(actionInfo.actionUrl, "_blank", "noopener,noreferrer");
+                                } : undefined}
+                                onKeyDown={actionInfo.actionUrl ? (event) => {
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  window.open(actionInfo.actionUrl, "_blank", "noopener,noreferrer");
+                                } : undefined}
+                              >
+                                {actionInfo.quickActionLabel} ➔
                               </span>
                             )}
                           </div>

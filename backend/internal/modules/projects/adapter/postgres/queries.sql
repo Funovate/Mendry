@@ -243,13 +243,14 @@ FROM changed_environment, changed_repository, changed_source, changed_trigger, c
 
 -- name: LookupWebhookToken :one
 SELECT trigger.project_id, source.id AS source_id, trigger.id AS trigger_id,
+       trigger.kind AS trigger_kind, trigger.version AS trigger_version,
        trigger.config AS trigger_config
 FROM project_triggers AS trigger
 JOIN project_sources AS source
     ON source.project_id = trigger.project_id
    AND source.environment_id = trigger.environment_id
 WHERE trigger.ingress_token_hash = sqlc.arg(ingress_token_hash)
-  AND trigger.kind = 'signed_webhook'
+  AND trigger.kind IN ('signed_webhook', 'custom_rule')
   AND trigger.enabled
   AND source.enabled;
 
@@ -262,7 +263,7 @@ WITH changed_trigger AS (
         version = project_triggers.version + 1,
         updated_at = clock_timestamp()
     WHERE project_triggers.project_id = sqlc.arg(project_id)
-      AND project_triggers.kind = 'signed_webhook'
+      AND project_triggers.kind IN ('signed_webhook', 'custom_rule')
     RETURNING id, project_id, version
 )
 SELECT id, version

@@ -308,9 +308,12 @@ The editor reads partial state from `GET /configuration/draft`. Each component w
 SSH configuration stores host, port, user, project folder, log path, and
 `tail`/`snapshot` mode. MCP configuration stores endpoint, transport, safe headers,
 evidence profile, query scope, and capabilities. Trigger configuration stores
-webhook event types/deduplication key or a custom match expression/grouping window.
-These records survive restart. This milestone still does not connect to SSH, Cloud,
-or MCP, execute custom rules, or poll logs. Signed webhook ingress is live:
+webhook event types/deduplication key or deterministic custom rules with match,
+threshold, window, exclusion, and cooldown fields. SSH log evidence reads and the
+Linux file-log managed probe are live. The probe is installed over SSH as a
+systemd service, starts at the end of the existing file, persists its cursor and
+outbound spool, and sends strict custom-rule events to the trigger ingress URL.
+Cloud and MCP polling are not implemented. Signed webhook ingress is live:
 `POST /hooks/{token}` accepts the alert body without a Session, validates the
 token, and returns `202 {"accepted":true}` before AI fingerprint extraction.
 Normalization, Observation persistence, and `P2` incident ingestion continue
@@ -331,6 +334,10 @@ GET      /api/v1/projects/{projectKey}/configuration
 GET      /api/v1/projects/{projectKey}/configuration/draft
 PUT      /api/v1/projects/{projectKey}/configuration
 PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|source|trigger|llm|remediation}
+POST     /api/v1/projects/{projectKey}/configuration/log-rule/generate
+GET      /api/v1/projects/{projectKey}/configuration/log-probe
+POST     /api/v1/projects/{projectKey}/configuration/log-probe
+DELETE   /api/v1/projects/{projectKey}/configuration/log-probe
 POST     /api/v1/projects/{projectKey}/configuration/webhook-token
 POST     /api/v1/projects/{projectKey}/configuration/auto-hotfix/check
 GET      /api/v1/projects/{projectKey}/configuration/auto-hotfix/check

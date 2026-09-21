@@ -108,6 +108,10 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           text: "Optional · isolated container tests",
         },
         { title: "Review delivery", text: "Review branch / Draft PR or MR" },
+        {
+          title: "Result notification",
+          text: "Telegram, Feishu, or WeCom",
+        },
         { title: "Team review", text: "Repository CI, merge & deployment" },
       ],
       note: "Illustrative automatic-hotfix flow, not a live run. Local prevalidation is optional; delivery depends on repository support and credentials.",
@@ -184,8 +188,8 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/docs/guides/operator-workflow/",
         },
         {
-          title: "Pipeline",
-          text: "Find open incidents by stage, priority, and the next available action.",
+          title: "Incidents",
+          text: "Browse incidents by status, then open one to see its remediation stage and next step.",
           href: "/docs/guides/operator-workflow/",
         },
         {
@@ -233,9 +237,9 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/docs/guides/automatic-hotfix/",
         },
         {
-          title: "Explore current features",
-          text: "Find console capabilities, operating guides, and current limits.",
-          href: "/docs/reference/features/",
+          title: "Configure project notifications",
+          text: "Send incident triggers and the first AI result to Telegram, Feishu, or WeCom.",
+          href: "/docs/guides/notifications/",
         },
       ],
     },
@@ -280,6 +284,7 @@ export const introContent: Record<IntroLocale, IntroContent> = {
       delivery: [
         { title: "本地预验证", text: "可选 · 隔离容器测试" },
         { title: "交付审查", text: "评审分支 / 草稿 PR 或 MR" },
+        { title: "结果通知", text: "Telegram、飞书或企业微信" },
         { title: "团队接续", text: "仓库 CI、审查合并与部署" },
       ],
       note: "此处为自动 Hotfix 流程示例，非真实运行结果。本地预验证可选，交付方式取决于仓库支持与凭据配置。",
@@ -346,8 +351,8 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/zh-cn/docs/guides/operator-workflow/",
         },
         {
-          title: "Pipeline 看板",
-          text: "按阶段、优先级和可操作性查找 Open 事故，进入下一步处理。",
+          title: "事故列表",
+          text: "按状态浏览事故，进入事故查看修复阶段与下一步操作。",
           href: "/zh-cn/docs/guides/operator-workflow/",
         },
         {
@@ -395,9 +400,9 @@ export const introContent: Record<IntroLocale, IntroContent> = {
           href: "/zh-cn/docs/guides/automatic-hotfix/",
         },
         {
-          title: "查看功能导航",
-          text: "查找现有控制台能力、操作指南与适用边界。",
-          href: "/zh-cn/docs/reference/features/",
+          title: "配置项目通知",
+          text: "将事故触发与首次 AI 处理结果发送到 Telegram、飞书或企业微信。",
+          href: "/zh-cn/docs/guides/notifications/",
         },
       ],
     },

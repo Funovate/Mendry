@@ -8,7 +8,6 @@ sources:
   - frontend/src/features/configuration/wizard/AutoHotfixSetup.tsx
   - frontend/src/features/configuration/wizard/RemediationStep.tsx
   - frontend/src/features/observations/ObservationsPage.tsx
-  - frontend/src/features/board/PipelinePage.tsx
   - frontend/src/features/incidents/IncidentsPage.tsx
   - frontend/src/features/incidents/RemediationPanel.tsx
   - frontend/src/features/notifications/NotificationsPage.tsx
@@ -63,12 +62,11 @@ An accepted signal and a completed investigation are separate outcomes.
 
 ## Triage incidents
 
-Use Pipeline for the current Open workload. It loads at most 100 Open incidents
-and refreshes every 25 seconds. Filter by stage, priority, or actionability, then
-open the incident to inspect the underlying evidence. Use Incidents for the
-broader list, loaded in batches of 25.
+Use Incidents for the current workload. The list loads in batches of 25 and can
+be filtered by Open, Recovered, or Closed. Open an incident to see its
+remediation stage, who owns the next step, and the underlying evidence.
 
-Do not infer recovery from a Pipeline stage or a repair outcome. Open, Recovered,
+Do not infer recovery from a remediation stage or a repair outcome. Open, Recovered,
 and Closed are incident states controlled manually after checking the real
 service condition.
 

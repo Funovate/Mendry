@@ -570,22 +570,25 @@ func (q *Queries) ListProjects(ctx context.Context, resultLimit int32) ([]ListPr
 
 const lookupWebhookToken = `-- name: LookupWebhookToken :one
 SELECT trigger.project_id, source.id AS source_id, trigger.id AS trigger_id,
+       trigger.kind AS trigger_kind, trigger.version AS trigger_version,
        trigger.config AS trigger_config
 FROM project_triggers AS trigger
 JOIN project_sources AS source
     ON source.project_id = trigger.project_id
    AND source.environment_id = trigger.environment_id
 WHERE trigger.ingress_token_hash = $1
-  AND trigger.kind = 'signed_webhook'
+  AND trigger.kind IN ('signed_webhook', 'custom_rule')
   AND trigger.enabled
   AND source.enabled
 `
 
 type LookupWebhookTokenRow struct {
-	ProjectID     pgtype.UUID
-	SourceID      pgtype.UUID
-	TriggerID     pgtype.UUID
-	TriggerConfig []byte
+	ProjectID      pgtype.UUID
+	SourceID       pgtype.UUID
+	TriggerID      pgtype.UUID
+	TriggerKind    string
+	TriggerVersion int64
+	TriggerConfig  []byte
 }
 
 func (q *Queries) LookupWebhookToken(ctx context.Context, ingressTokenHash []byte) (LookupWebhookTokenRow, error) {
@@ -595,6 +598,8 @@ func (q *Queries) LookupWebhookToken(ctx context.Context, ingressTokenHash []byt
 		&i.ProjectID,
 		&i.SourceID,
 		&i.TriggerID,
+		&i.TriggerKind,
+		&i.TriggerVersion,
 		&i.TriggerConfig,
 	)
 	return i, err
@@ -724,7 +729,7 @@ WITH changed_trigger AS (
         version = project_triggers.version + 1,
         updated_at = clock_timestamp()
     WHERE project_triggers.project_id = $4
-      AND project_triggers.kind = 'signed_webhook'
+      AND project_triggers.kind IN ('signed_webhook', 'custom_rule')
     RETURNING id, project_id, version
 )
 SELECT id, version

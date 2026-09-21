@@ -539,7 +539,7 @@ func TestGetConfigurationRevealsInboundURL(t *testing.T) {
 	}
 }
 
-func TestRotateWebhookTokenRejectsNonSignedWebhook(t *testing.T) {
+func TestRotateWebhookTokenAllowsCustomRule(t *testing.T) {
 	configuration := validConfiguration()
 	configuration.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
 	configuration.Trigger.Kind = "custom_rule"
@@ -549,11 +549,10 @@ func TestRotateWebhookTokenRejectsNonSignedWebhook(t *testing.T) {
 		configuration: configuration,
 	}
 	service := newService(t, repository, &fakeCipher{})
-	if _, err := service.RotateWebhookToken(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments"); err != ErrInvalidInput {
-		t.Fatalf("error = %v", err)
-	}
-	if repository.rotated {
-		t.Fatal("token rotated for custom_rule")
+	service.newWebhookToken = func() (string, error) { return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", nil }
+	url, err := service.RotateWebhookToken(context.Background(), authdomain.User{ID: userID, Enabled: true}, "payments")
+	if err != nil || url != "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" || !repository.rotated {
+		t.Fatalf("RotateWebhookToken() = %q rotated=%t err=%v", url, repository.rotated, err)
 	}
 }
 
@@ -579,7 +578,7 @@ func TestRotateWebhookTokenReplacesHash(t *testing.T) {
 	}
 }
 
-func TestPutConfigurationClearsWebhookTokenWhenKindChanges(t *testing.T) {
+func TestPutConfigurationRotatesIngressTokenWhenKindChanges(t *testing.T) {
 	existing := validConfiguration()
 	existing.Trigger.ID = "019ff544-405c-7d34-9f10-cb3fc579605c"
 	existing.Trigger.IngressTokenHash = []byte("existing-hash-32-bytes-aaaaaaaa")
@@ -590,6 +589,7 @@ func TestPutConfigurationClearsWebhookTokenWhenKindChanges(t *testing.T) {
 		configuration: existing,
 	}
 	service := newService(t, repository, &fakeCipher{})
+	service.newWebhookToken = func() (string, error) { return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", nil }
 	next := validConfiguration()
 	next.Trigger.Kind = "custom_rule"
 	next.Trigger.Config = json.RawMessage(`{"schemaVersion":1,"groupingWindowSeconds":60,"matchExpression":"level=ERROR"}`)
@@ -597,8 +597,10 @@ func TestPutConfigurationClearsWebhookTokenWhenKindChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PutConfiguration() error = %v", err)
 	}
-	if len(repository.configuration.Trigger.IngressTokenHash) != 0 || result.Trigger.InboundURL != "" {
-		t.Fatalf("token columns survived kind change: %#v", repository.configuration.Trigger)
+	if len(repository.configuration.Trigger.IngressTokenHash) != 32 ||
+		string(repository.configuration.Trigger.IngressTokenHash) == "existing-hash-32-bytes-aaaaaaaa" ||
+		result.Trigger.InboundURL != "http://127.0.0.1:8080/hooks/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" {
+		t.Fatalf("token was not rotated for custom rule: %#v", repository.configuration.Trigger)
 	}
 }
 

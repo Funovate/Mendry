@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, ChevronRight, ChevronsUpDown, Copy, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, PanelRightClose, PanelRightOpen, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Activity, ArrowRight, ArrowUpRight, BadgeCheck, Check, CheckCircle2, ChevronRight, ChevronsUpDown, CircleDot, Copy, ExternalLink, FileCode2, Fingerprint, GitBranch, History, Layers, ListChecks, LoaderCircle, PanelRightClose, PanelRightOpen, Play, RotateCcw, ScanSearch, ShieldCheck, Waypoints, Wrench, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, messageFromError, type RemediationContinuationInput, type RemediationRepairInput } from "../../api";
 import { queryKeys } from "../../app/query";
 import { formatDate } from "../../shared/format";
 import { ErrorNotice } from "../../shared/ui";
-import { STAGE_ICONS, STATE_METADATA, WORKFLOW_STAGES } from "../board/PipelinePage";
+import { STAGE_ICONS, STATE_METADATA, WORKFLOW_STAGES, resolveActionability } from "../board/PipelinePage";
 import { parseUnifiedDiff, type DiffFile, type DiffLine } from "./remediationDiff";
 
 type RemediationPanelProps = {
@@ -52,6 +52,16 @@ function formatCheckpointAge(updatedAt: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours}h ${minutes % 60}m ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+// Highlights whole-word identifiers (branch names) inside guidance prose.
+function withInlineCode(text: string, tokens: Array<string | null | undefined>): ReactNode {
+  const needles = [...new Set(tokens.filter((token): token is string => Boolean(token?.trim())))].sort((a, b) => b.length - a.length);
+  if (needles.length === 0) return text;
+  const escaped = needles.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const parts = text.split(new RegExp(`(?<=^|\\s)(${escaped})(?=$|\\s|[.,;])`));
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part));
 }
 
 function DiffLineView({ line }: { line: DiffLine | null }) {
@@ -254,18 +264,26 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
     (continueRemediation.error.status === 403 || continuationBlockingCodes.has(continueRemediation.error.code));
   const repairPolicyUnavailable = repairWithCurrentPolicy.error instanceof ApiError && repairWithCurrentPolicy.error.code === "remediation_policy_unavailable";
   const review = remediation.data;
+  const guidance = review ? resolveActionability(review.status, review) : null;
   const repairEligible = review != null && ["diagnosis_ready_for_review", "failed", "budget_exhausted", "blocked_manual_review"].includes(review.status);
   const commitCopied = Boolean(review?.deployedCommit && copiedCommit === review.deployedCommit);
+  const publication = review?.checkpoint?.publication;
+  const handoffBranch = review?.status === "awaiting_human_review" && !guidance?.actionUrl ? publication?.branchRef || null : null;
+  const branchCopied = Boolean(handoffBranch && copiedCommit === handoffBranch);
 
-  const copyDeployedCommit = async () => {
-    if (!review?.deployedCommit) return;
+  const copyValue = async (value: string) => {
     try {
-      await navigator.clipboard.writeText(review.deployedCommit);
-      setCopiedCommit(review.deployedCommit);
+      await navigator.clipboard.writeText(value);
+      setCopiedCommit(value);
       window.setTimeout(() => setCopiedCommit(null), 1600);
     } catch {
       // Clipboard access may be denied by the browser.
     }
+  };
+
+  const copyDeployedCommit = async () => {
+    if (!review?.deployedCommit) return;
+    await copyValue(review.deployedCommit);
   };
 
   const continueFromReview = () => {
@@ -373,8 +391,12 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
               {WORKFLOW_STAGES.map((stg, sIdx) => {
                 const Icon = STAGE_ICONS[stg.id] || Waypoints;
                 const currentIdx = WORKFLOW_STAGES.findIndex((s) => s.states.includes(review.status));
-                const isCurrent = stg.states.includes(review.status);
-                const isPassed = currentIdx > sIdx;
+                const awaitingGitReview = review.status === "awaiting_human_review";
+                const isCurrent = stg.states.includes(review.status) && !awaitingGitReview;
+                const isPassed = currentIdx > sIdx || (awaitingGitReview && stg.id === "validation");
+                const stageState = awaitingGitReview && stg.id === "resolution"
+                  ? "After Git review"
+                  : isCurrent ? "Active" : isPassed ? "Done" : "Pending";
 
                 return (
                   <div key={stg.id} className="stepper-item-wrap">
@@ -385,7 +407,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                       </span>
                       <div className="stepper-node-text">
                         <strong>{stg.title}</strong>
-                        <small>{isCurrent ? "Active" : isPassed ? "Done" : "Pending"}</small>
+                        <small>{stageState}</small>
                       </div>
                     </div>
                     {sIdx < WORKFLOW_STAGES.length - 1 && (
@@ -413,13 +435,51 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                   <span>Next: {STATE_METADATA[review.status]?.next || "Resolution"}</span>
                 </span>
               </div>
-
-              <Link to={`/projects/${encodeURIComponent(projectKey)}/pipeline`} className="stepper-pipeline-link">
-                <Waypoints size={12} aria-hidden="true" />
-                <span>Pipeline</span>
-              </Link>
             </div>
           </div>
+          {guidance && (
+            <section className={`remediation-handoff is-${guidance.badgeTone}`} aria-labelledby="remediation-handoff-heading">
+              <div className="remediation-handoff-head">
+                <div className="remediation-handoff-title">
+                  <span className="remediation-handoff-owner">Now: {guidance.actor}</span>
+                  <h3 id="remediation-handoff-heading">{guidance.badgeText}</h3>
+                </div>
+                <div className="remediation-handoff-actions">
+                  {handoffBranch && (
+                    <button
+                      type="button"
+                      className={`secondary-button remediation-handoff-copy-branch ${branchCopied ? "copied" : ""}`}
+                      onClick={() => void copyValue(handoffBranch)}
+                      title={handoffBranch}
+                    >
+                      {branchCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                      {branchCopied ? "Branch copied" : "Copy branch"}
+                    </button>
+                  )}
+                  {guidance.actionUrl && (
+                    <a className="primary-button remediation-handoff-action" href={guidance.actionUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={15} aria-hidden="true" />
+                      Open Git review
+                    </a>
+                  )}
+                </div>
+              </div>
+              <ol className="remediation-handoff-steps">
+                <li className="is-done">
+                  <span className="handoff-step-label"><CheckCircle2 size={13} aria-hidden="true" />Completed</span>
+                  <p>{guidance.completedText}</p>
+                </li>
+                <li className="is-current">
+                  <span className="handoff-step-label"><CircleDot size={13} aria-hidden="true" />Current state</span>
+                  <p>{guidance.statusDescription}</p>
+                </li>
+                <li className="is-next">
+                  <span className="handoff-step-label"><ArrowRight size={13} aria-hidden="true" />{guidance.actor === "Mendry" ? "System next" : "Your next step"}</span>
+                  <p>{withInlineCode(guidance.nextStepText, [publication?.branchRef, publication?.targetBranch])}</p>
+                </li>
+              </ol>
+            </section>
+          )}
           <div className={`remediation-columns ${contextExpanded ? "with-context" : "context-collapsed"}`}>
           <div className="remediation-main">
 
@@ -550,16 +610,14 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                         <div className="plan-tag-group">
                           <span className="plan-number"><Layers size={12} aria-hidden="true" />Plan {index + 1}</span>
                           <span className="plan-risk-tag">{plan.risk}</span>
+                          {plan.recommended && (
+                            <span className="plan-recommended-tag">
+                              <BadgeCheck size={13} aria-hidden="true" />
+                              Recommended
+                            </span>
+                          )}
                         </div>
                         <strong>{plan.intendedBehavior}</strong>
-                      </div>
-                      <div className="remediation-plan-meta">
-                        {plan.recommended && (
-                          <span className="recommended">
-                            <BadgeCheck size={14} aria-hidden="true" />
-                            Recommended
-                          </span>
-                        )}
                       </div>
                     </div>
                     <div className="remediation-plan-body">
@@ -628,7 +686,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
 
             {!canWrite && <p className="readonly-note">Viewer access is read-only.</p>}
             {activeStates.has(review.status) && <p className="run-context-note">An analysis attempt is currently active.</p>}
-            {!review.continuationAvailable && !activeStates.has(review.status) && <p className="run-context-note">This remediation result cannot be continued.</p>}
+            {!review.continuationAvailable && !activeStates.has(review.status) && review.status !== "awaiting_human_review" && <p className="run-context-note">This automation run has ended. Follow the next-step guidance in the incident.</p>}
           </section>
           {review.checkpoint && (review.checkpoint.validations.length > 0 || review.checkpoint.publication) && (
             <section className="remediation-attempts" aria-labelledby="delivery-heading">
@@ -643,7 +701,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                   <div className="attempt-details"><code>{validation.treeHash || "legacy tree"}</code></div>
                 </li>)}
               </ol>}
-              {review.checkpoint.publication && <dl className="remediation-technical-facts">
+              {review.checkpoint.publication && <dl className="remediation-technical-facts remediation-stacked-facts">
                 <div><dt>Branch</dt><dd><code>{review.checkpoint.publication.branchRef}</code></dd></div>
                 <div><dt>Target</dt><dd><code>{review.checkpoint.publication.targetBranch}</code></dd></div>
                 <div><dt>Commit</dt><dd><code>{review.checkpoint.publication.commitHash}</code></dd></div>
