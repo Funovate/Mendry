@@ -797,7 +797,8 @@
 }
 
 .app-shell .remediation-focused .remediation-diagnosis > .remediation-prose {
-  max-width: 96ch;
+  width: 100%;
+  max-width: none;
   overflow-wrap: anywhere;
   margin: 16px 0 0;
   font-size: 13.5px;
