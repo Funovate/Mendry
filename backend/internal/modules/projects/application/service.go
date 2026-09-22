@@ -792,7 +792,7 @@ func (s *Service) InstallLogProbe(ctx context.Context, principal authdomain.User
 }
 
 func (s *Service) GetLogProbeStatus(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeStatus, error) {
-	request, err := s.logProbeRequest(ctx, principal, projectKey)
+	request, err := s.logProbeTarget(ctx, principal, projectKey)
 	if err != nil {
 		return LogProbeStatus{}, err
 	}
@@ -804,7 +804,7 @@ func (s *Service) GetLogProbeStatus(ctx context.Context, principal authdomain.Us
 }
 
 func (s *Service) UninstallLogProbe(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeStatus, error) {
-	request, err := s.logProbeRequest(ctx, principal, projectKey)
+	request, err := s.logProbeTarget(ctx, principal, projectKey)
 	if err != nil {
 		return LogProbeStatus{}, err
 	}
@@ -813,6 +813,32 @@ func (s *Service) UninstallLogProbe(ctx context.Context, principal authdomain.Us
 		return LogProbeStatus{}, fmt.Errorf("%w: %v", ErrLogProbeUnavailable, err)
 	}
 	return status, nil
+}
+
+func (s *Service) logProbeTarget(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeRequest, error) {
+	if s.logProbes == nil {
+		return LogProbeRequest{}, ErrLogProbeUnavailable
+	}
+	project, err := s.resolveProject(ctx, principal, projectKey)
+	if err != nil {
+		return LogProbeRequest{}, err
+	}
+	draft, err := s.repository.GetConfigurationDraft(ctx, project.ID)
+	if err != nil {
+		return LogProbeRequest{}, err
+	}
+	if draft.Source == nil || draft.Source.Kind != "ssh" || draft.Source.CredentialSecretID == nil {
+		return LogProbeRequest{}, ErrInvalidInput
+	}
+	source, err := domain.ParseSSHSourceConfig(draft.Source.Config)
+	if err != nil || source.Deployment.Kind != domain.SSHDeploymentHost {
+		return LogProbeRequest{}, ErrInvalidInput
+	}
+	version := int64(1)
+	if draft.Trigger != nil {
+		version = draft.Trigger.Version
+	}
+	return LogProbeRequest{ProjectID: project.ID, Source: source, CredentialSecretID: *draft.Source.CredentialSecretID, TriggerVersion: version}, nil
 }
 
 func (s *Service) logProbeRequest(ctx context.Context, principal authdomain.User, projectKey string) (LogProbeRequest, error) {

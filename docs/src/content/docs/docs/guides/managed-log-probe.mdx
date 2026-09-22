@@ -59,6 +59,8 @@ If nothing appears, check the exclusion pattern, cooldown, and delivery status b
 
 Status is read over SSH from systemd and the probe status file. Uninstall stops the service and removes its program, token-bearing configuration, cursor, and spool.
 
-After rotating the trigger token or changing the trigger configuration, run **Install or update** immediately. Old tokens and stale configuration versions are rejected.
+After rotating the trigger token or changing the trigger configuration, run **Install or update** immediately. Old tokens and stale configuration versions are rejected. Permanently rejected events (such as invalid or stale requests) move to `/var/lib/mendry-log-probe/rejected` rather than blocking subsequent deliveries. The status remains degraded until those files are reviewed and cleared; uninstall removes the directory. Retryable failures, including 429 and 5xx responses, remain in the spool.
+
+When switching from the managed probe to a signed webhook, disable the previous probe from the Trigger page while the saved SSH host is still available. If the SSH source or host is replaced first, Mendry no longer has the original connection details and the service must be removed on the old host.
 
 The current release supports one regular Linux file. Docker stdout, journald, multiline aggregation, and missing-log rules are out of scope. The service and configuration paths are shared on each host, so installing a probe for another project on the same host replaces the existing probe configuration.

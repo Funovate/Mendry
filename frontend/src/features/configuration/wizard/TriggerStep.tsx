@@ -41,7 +41,7 @@ export function TriggerStep({
   canGenerateInboundUrl = false,
   logProbeStatus, probeChecking = false, probeTimedOut = false, onInstallLogProbe, installingLogProbe = false, installLogProbeError,
   onRefreshLogProbe, refreshingLogProbe = false, refreshLogProbeError,
-  onUninstallLogProbe, uninstallingLogProbe = false, uninstallLogProbeError, canManageLogProbe = false,
+  onUninstallLogProbe, uninstallingLogProbe = false, uninstallLogProbeError, canManageLogProbe = false, canRemoveLogProbe = false,
   onSave, saving = false, canSave = false, saveError,
 }: {
   triggerKind: TriggerKind;
@@ -80,6 +80,7 @@ export function TriggerStep({
   uninstallingLogProbe?: boolean;
   uninstallLogProbeError?: unknown;
   canManageLogProbe?: boolean;
+  canRemoveLogProbe?: boolean;
   onSave: () => void;
   saving?: boolean;
   canSave?: boolean;
@@ -179,6 +180,14 @@ export function TriggerStep({
         {!canGenerateInboundUrl && <p className="inbound-url-hint">Save the signed webhook configuration first. The first save creates the inbound URL.</p>}
         {generateInboundUrlError instanceof Error && <p className="credential-field-error" role="alert">{generateInboundUrlError.message}</p>}
       </div>
+      {canRemoveLogProbe && logProbeStatus?.state && logProbeStatus.state !== "not_installed" &&
+        <div className="probe-management" data-state={logProbeStatus.state}>
+          <div className="probe-management-row">
+            <div className="probe-status"><span className="probe-status-icon"><ServerCog size={16} /></span><div><strong>Installed log probe</strong><small>Monitoring remains installed on the SSH host.</small></div></div>
+            <button className="secondary-button" type="button" disabled={probeBusy} onClick={onUninstallLogProbe}><Unplug size={15} />Disable monitoring</button>
+          </div>
+          {uninstallLogProbeError != null && <p className="credential-field-error" role="alert">{messageFromError(uninstallLogProbeError)}</p>}
+        </div>}
     </> : <>
       <div className="probe-intent-composer">
         <div className="probe-intent-head">

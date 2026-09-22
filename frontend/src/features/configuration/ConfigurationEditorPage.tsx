@@ -255,10 +255,11 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [pendingProbe, setPendingProbe] = useState<LogProbeStatus | null>(null);
   const [probeTimedOut, setProbeTimedOut] = useState(false);
   const probeQueryKey = ["log-probe", project.key];
+  const savedHostProbeTarget = current.source?.kind === "ssh" && readConfigString(readConfigObject(current.source.config, "deployment"), "kind", "host") === "host";
   const probeStatus = useQuery({
     queryKey: probeQueryKey,
     queryFn: ({ signal }) => api.getLogProbeStatus(project.key, signal),
-    enabled: savedTriggerKind === "custom_rule" && (activeStep === "trigger" || pendingProbe !== null),
+    enabled: savedHostProbeTarget && (activeStep === "trigger" || pendingProbe !== null),
     retry: false,
     refetchInterval: (query) => pendingProbe && !probeTimedOut && !isLogProbeMonitoring(query.state.data, pendingProbe) ? 3000 : false,
   });
@@ -392,6 +393,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         onRefreshLogProbe={() => refreshLogProbe.mutate()} refreshingLogProbe={refreshLogProbe.isPending} refreshLogProbeError={refreshLogProbe.error ?? (probeChecking ? probeStatus.error : undefined)}
         onUninstallLogProbe={() => uninstallLogProbe.mutate()} uninstallingLogProbe={uninstallLogProbe.isPending} uninstallLogProbeError={uninstallLogProbe.error}
         canManageLogProbe={sourceKind === "ssh" && sshDeploymentKind === "host" && readMode === "tail" && savedTriggerKind === "custom_rule"}
+        canRemoveLogProbe={savedHostProbeTarget}
         inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}
         generatingInboundUrl={rotateWebhookToken.isPending} generateInboundUrlError={rotateWebhookToken.error}
         canGenerateInboundUrl={savedTriggerKind === "signed_webhook"}
