@@ -27,8 +27,9 @@ The managed log probe monitors regular Linux log files. Mendry installs a fixed 
 1. Enter the SSH host, user, and private-key credential under Collection source. For Host process deployments, select **Browse remote files**, navigate to a readable log file on the host, select it, and save the source. You can also enter an absolute file path manually.
 2. Select **Managed log probe** under Trigger.
 3. Add contains/regex rules manually, or generate one from an intent and redacted sample.
-4. Review the ID, pattern, threshold, detection window, exclusion regex, and cooldown, then save.
-5. Select **Install or update**. Before writing files, Mendry checks the host's service manager, probe user, and Python version, then uses the detected Python path in the systemd unit. The install request returns `starting` when the remote install command completes; the page checks status separately and confirms monitoring only when the current probe reports a fresh `monitoring` status.
+4. Paste redacted expected error and non-error lines into **Test rules** and select **Run test**. Review missed error lines, unexpected matches, and exclusions; the test uses the unsaved rule draft and does not send an alert.
+5. Review the ID, pattern, threshold, detection window, exclusion regex, and cooldown, then save.
+6. Select **Enable monitoring**. Before writing files, Mendry checks the host's service manager, probe user, and Python version, then uses the detected Python path in the systemd unit. The install request returns `starting` when the remote install command completes; the page checks status separately and confirms monitoring only when the current probe reports a fresh `monitoring` status.
 
 File browsing uses the current SSH form values before the source is saved. It lists a single directory as the SSH user without reading log contents. Each response contains at most 100 files or directories, with a notice when results are truncated. Directories are navigation targets; select a specific file for the log path.
 
@@ -47,6 +48,8 @@ Configure 1–20 rules with unique IDs matching `^[a-z][a-z0-9_-]{0,63}$`. Thres
 A stable event ID becomes the incident fingerprint. Retrying the same event updates the same incident instead of creating another; a lost delivery response can still result in a duplicate observation.
 
 ## Verify monitoring
+
+The rule test checks line matching only. It cannot prove that enough lines will arrive within `windowSeconds`, that delivery succeeds, or that future error formats match. Complex regex constructs outside the trial matcher subset are rejected rather than reported as a passing test. The pasted lines are not sent to the LLM or stored; use redacted examples. Editing rules or samples invalidates the visible result.
 
 Wait for a fresh `monitoring` status after installation. Then have the application write new matching lines to the selected file until the rule's threshold is reached within its detection window. Historical lines from before the first start are not replayed. Inspect the project's event stream and incident list for the resulting signal and incident.
 

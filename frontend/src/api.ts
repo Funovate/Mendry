@@ -205,6 +205,14 @@ const customRuleSchema = z.object({
   excludePattern: z.string().default(""), threshold: z.number().int(), windowSeconds: z.number().int(), cooldownSeconds: z.number().int(),
 });
 
+const logRuleTrialSchema = z.object({
+  positiveCount: z.number().int(), negativeCount: z.number().int(),
+  rules: z.array(z.object({
+    ruleId: z.string(), positiveMatches: z.array(z.number().int()), negativeMatches: z.array(z.number().int()),
+    positiveExcluded: z.array(z.number().int()), negativeExcluded: z.array(z.number().int()),
+  })),
+});
+
 const logProbeStatusSchema = z.object({
   state: z.string(),
   version: z.string(),
@@ -406,6 +414,7 @@ const listSuccessEnvelope = <T extends z.ZodType>(schema: T) => z.object({
 
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 export type TriggerKind = z.infer<typeof triggerKindSchema>;
+export type LogRuleTrial = z.infer<typeof logRuleTrialSchema>;
 export type LogProbeStatus = z.infer<typeof logProbeStatusSchema>;
 export type GeneratedLogRule = z.infer<typeof customRuleSchema>;
 export type IncidentStatus = z.infer<typeof incidentStatusSchema>;
@@ -619,6 +628,8 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/auto-hotfix/enable"), remediationPolicySchema, { method: "POST", body: JSON.stringify({ checkId }) }),
   rotateWebhookToken: (projectKey: string) =>
     requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
+  trialLogRules: (projectKey: string, input: { config: unknown; positive: string[]; negative: string[] }) =>
+    requestData(projectPath(projectKey, "/configuration/log-rule/test"), logRuleTrialSchema, { method: "POST", body: JSON.stringify(input) }),
   generateLogRule: (projectKey: string, input: { intent: string; sample: string }) =>
     requestData(projectPath(projectKey, "/configuration/log-rule/generate"), customRuleSchema, { method: "POST", body: JSON.stringify(input) }),
   getLogProbeStatus: (projectKey: string, signal?: AbortSignal) =>

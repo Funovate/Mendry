@@ -185,6 +185,11 @@ func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, strin
 	return nil
 }
 
+func (f *fakeService) TrialLogRules(_ context.Context, _ authdomain.User, projectKey string, input projectapplication.LogRuleTrialInput) (projectapplication.LogRuleTrial, error) {
+	f.projectKey = projectKey
+	return projectapplication.LogRuleTrial{PositiveCount: len(input.Positive), NegativeCount: len(input.Negative), Rules: []projectapplication.LogRuleTrialResult{{RuleID: "errors", PositiveMatches: []int{1}, NegativeMatches: []int{}, PositiveExcluded: []int{}, NegativeExcluded: []int{}}}}, nil
+}
+
 type fakeAuthService struct{ user authdomain.User }
 
 func (*fakeAuthService) Login(context.Context, string, []byte, string) (authapplication.LoginResult, error) {
@@ -197,6 +202,20 @@ func (f *fakeAuthService) Authenticate(context.Context, string) (authdomain.User
 	return f.user, nil
 }
 func (*fakeAuthService) Logout(context.Context, string) error { return nil }
+
+func TestLogRuleTrialRouteOmitsSampleText(t *testing.T) {
+	handler := newHandler(t, &fakeService{})
+	const sample = "private-trial-line"
+	payload := `{"config":{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[]},"positive":["` + sample + `"],"negative":[]}`
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/configuration/log-rule/test", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || strings.Contains(response.Body.String(), sample) || !strings.Contains(response.Body.String(), `"positiveMatches":[1]`) {
+		t.Fatalf("trial response = %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestProjectResponseOmitsAuthorizationMetadata(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)

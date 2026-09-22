@@ -385,6 +385,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         customRules={customRules} setCustomRules={setCustomRules}
         ruleIntent={ruleIntent} setRuleIntent={setRuleIntent} ruleSample={ruleSample} setRuleSample={setRuleSample}
         onGenerateRule={() => generateLogRule.mutate()} generatingRule={generateLogRule.isPending} generateRuleError={generateLogRule.error}
+        onTrialLogRules={(positive, negative) => api.trialLogRules(project.key, { config: buildTriggerPayload().config, positive, negative })}
         logProbeStatus={probeChecking ? pendingProbe ?? undefined : probeStatus.data ?? installLogProbe.data ?? uninstallLogProbe.data}
         probeChecking={probeChecking} probeTimedOut={pendingProbe !== null && probeTimedOut && !probeHealthy}
         onInstallLogProbe={() => installLogProbe.mutate()} installingLogProbe={installLogProbe.isPending} installLogProbeError={installLogProbe.error}

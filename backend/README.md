@@ -352,6 +352,7 @@ PUT      /api/v1/projects/{projectKey}/configuration/{environment|repository|sou
 POST     /api/v1/projects/{projectKey}/configuration/source/ssh/log-files
 POST     /api/v1/projects/{projectKey}/configuration/source/ssh/containers
 POST     /api/v1/projects/{projectKey}/configuration/log-rule/generate
+POST     /api/v1/projects/{projectKey}/configuration/log-rule/test
 GET      /api/v1/projects/{projectKey}/configuration/log-probe
 POST     /api/v1/projects/{projectKey}/configuration/log-probe
 DELETE   /api/v1/projects/{projectKey}/configuration/log-probe

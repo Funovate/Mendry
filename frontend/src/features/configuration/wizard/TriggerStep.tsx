@@ -1,6 +1,6 @@
-import { Activity, Check, Copy, LoaderCircle, Plus, RefreshCw, ScrollText, ServerCog, Trash2, Unplug, WandSparkles, Webhook } from "lucide-react";
+import { Activity, Check, Copy, FlaskConical, LoaderCircle, Plus, RefreshCw, ScrollText, ServerCog, Trash2, Unplug, WandSparkles, Webhook } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { messageFromError, type LogProbeStatus, type TriggerKind } from "../../../api";
+import { messageFromError, type LogProbeStatus, type LogRuleTrial, type TriggerKind } from "../../../api";
 import type { CustomRuleDraft, WebhookProvider } from "../configuration";
 
 const COMMON_WINDOWS = [60, 300, 900, 1800, 3600];
@@ -36,6 +36,7 @@ export function TriggerStep({
   awsTopicArn, setAwsTopicArn,
   groupingWindowSeconds, setGroupingWindowSeconds, customRules, setCustomRules,
   ruleIntent, setRuleIntent, ruleSample, setRuleSample, onGenerateRule, generatingRule = false, generateRuleError,
+  onTrialLogRules,
   inboundUrl, onGenerateInboundUrl, generatingInboundUrl = false, generateInboundUrlError,
   canGenerateInboundUrl = false,
   logProbeStatus, probeChecking = false, probeTimedOut = false, onInstallLogProbe, installingLogProbe = false, installLogProbeError,
@@ -60,6 +61,7 @@ export function TriggerStep({
   onGenerateRule: () => void;
   generatingRule?: boolean;
   generateRuleError?: unknown;
+  onTrialLogRules: (positive: string[], negative: string[]) => Promise<LogRuleTrial>;
   inboundUrl?: string | null;
   onGenerateInboundUrl?: () => Promise<string>;
   generatingInboundUrl?: boolean;
@@ -84,6 +86,33 @@ export function TriggerStep({
   saveError?: unknown;
 }) {
   const [copied, setCopied] = useState(false);
+  const [trialPositive, setTrialPositive] = useState("");
+  const [trialNegative, setTrialNegative] = useState("");
+  const [trialPending, setTrialPending] = useState(false);
+  const [trial, setTrial] = useState<{ signature: string; result?: LogRuleTrial; error?: unknown } | null>(null);
+  const trialSignature = JSON.stringify([customRules, groupingWindowSeconds, trialPositive, trialNegative]);
+  const trialResult = trial?.signature === trialSignature ? trial.result : undefined;
+  const trialSummary = trialResult ? (() => {
+    const covered = new Set(trialResult.rules.flatMap((rule) => rule.positiveMatches));
+    const unexpected = [...new Set(trialResult.rules.flatMap((rule) => rule.negativeMatches))].sort((a, b) => a - b);
+    const missing = Array.from({ length: trialResult.positiveCount }, (_, index) => index + 1).filter((line) => !covered.has(line));
+    return { covered: covered.size, unexpected, missing };
+  })() : undefined;
+  const trialError = trial?.signature === trialSignature ? trial.error : undefined;
+  const sampleLines = (text: string) => text.split(/\r?\n/).map((line) => line.replace(/\r$/, "")).filter((line) => line.trim() !== "");
+  const runTrial = async () => {
+    const signature = trialSignature;
+    setTrialPending(true);
+    setTrial(null);
+    try {
+      const result = await onTrialLogRules(sampleLines(trialPositive), sampleLines(trialNegative));
+      setTrial({ signature, result });
+    } catch (error) {
+      setTrial({ signature, error });
+    } finally {
+      setTrialPending(false);
+    }
+  };
   const copyUrl = async () => {
     if (!inboundUrl) return;
     await navigator.clipboard.writeText(inboundUrl);
@@ -225,6 +254,30 @@ export function TriggerStep({
             </div>
           </details>
         </article>)}
+      </div>
+      <div className="probe-rule-trial">
+        <div className="probe-section-head"><h3>Test rules</h3></div>
+        <div className="probe-trial-inputs">
+          <label>Expected errors<textarea value={trialPositive} onChange={(event) => setTrialPositive(event.target.value)} placeholder="Paste redacted error log lines" /></label>
+          <label>Expected non-errors<textarea value={trialNegative} onChange={(event) => setTrialNegative(event.target.value)} placeholder="Paste redacted normal or ignored log lines" /></label>
+        </div>
+        <div className="probe-trial-actions">
+          <button className="secondary-button" type="button" disabled={trialPending || (!trialPositive.trim() && !trialNegative.trim())} onClick={() => void runTrial()}>
+            {trialPending ? <LoaderCircle className="spin" size={15} /> : <FlaskConical size={15} />}Run test
+          </button>
+          {trialError != null && <p className="credential-field-error" role="alert">{messageFromError(trialError)}</p>}
+        </div>
+        {trialResult && <div className="probe-trial-results" role="status">
+          <p>{trialResult.positiveCount === 0 || trialResult.negativeCount === 0 ? "Only one sample category provided; coverage is incomplete." : trialSummary?.missing.length === 0 && trialSummary.unexpected.length === 0 ? "Matches these samples" : "Needs review"}</p>
+          <p>Errors: {trialSummary?.covered}/{trialResult.positiveCount} matched · Non-errors: {trialSummary?.unexpected.length}/{trialResult.negativeCount} matched</p>
+          {trialSummary && trialSummary.missing.length > 0 && <p>Missed error lines: {trialSummary.missing.join(", ")}</p>}
+          {trialSummary && trialSummary.unexpected.length > 0 && <p>Unexpected match lines: {trialSummary.unexpected.join(", ")}</p>}
+          {trialResult.rules.map((result) => <div className="probe-trial-rule" key={result.ruleId}>
+            <strong>{customRules.find((rule) => rule.id === result.ruleId)?.name ?? result.ruleId}</strong>
+            <span>{result.positiveMatches.length} errors · {result.negativeMatches.length} non-errors matched</span>
+            {result.positiveExcluded.length > 0 && <small>Excluded error lines: {result.positiveExcluded.join(", ")}</small>}
+          </div>)}
+        </div>}
       </div>
       <details className="probe-global-settings">
         <summary>Incident grouping</summary>

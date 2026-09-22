@@ -46,6 +46,10 @@ type logRuleGeneratorService interface {
 	GenerateLogRule(context.Context, authdomain.User, string, application.LogRuleGenerationInput) (domain.CustomRule, error)
 }
 
+type logRuleTrialService interface {
+	TrialLogRules(context.Context, authdomain.User, string, application.LogRuleTrialInput) (application.LogRuleTrial, error)
+}
+
 type logProbeService interface {
 	InstallLogProbe(context.Context, authdomain.User, string) (application.LogProbeStatus, error)
 	GetLogProbeStatus(context.Context, authdomain.User, string) (application.LogProbeStatus, error)
@@ -85,6 +89,7 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/log-files", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHLogFiles)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/containers", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHContainers)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-rule/generate", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.generateLogRule)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-rule/test", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.trialLogRules)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getLogProbe)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.installLogProbe)))
 	mux.Handle("DELETE /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.uninstallLogProbe)))
@@ -524,6 +529,28 @@ func (h *Handler) generateLogRule(writer nethttp.ResponseWriter, request *nethtt
 	writeJSON(writer, request, nethttp.StatusOK, rule)
 }
 
+func (h *Handler) trialLogRules(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	trial, ok := h.service.(logRuleTrialService)
+	if !ok {
+		writeApplicationError(writer, request, application.ErrInvalidInput)
+		return
+	}
+	var payload application.LogRuleTrialInput
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	result, err := trial.TrialLogRules(request.Context(), principal, request.PathValue("projectKey"), payload)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, result)
+}
+
 func (h *Handler) getLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	h.handleLogProbe(writer, request, "status")
 }
@@ -880,6 +907,8 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: pathError.Reason, Message: pathError.Message()})
 	case errors.As(err, &setupError):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: setupError.Reason, Message: setupError.Message()})
+	case errors.Is(err, application.ErrLogRuleTrialUnsupported):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: "log_rule_trial_unsupported", Message: "This regular expression cannot be tested reliably. Use a simpler pattern without flags, lookarounds or shorthand character classes."})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Project request is invalid."})
 	case errors.Is(err, application.ErrNotFound):
