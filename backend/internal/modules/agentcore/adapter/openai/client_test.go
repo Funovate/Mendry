@@ -110,6 +110,61 @@ func TestClientMapsLogicalToolsAndPreservesUsageAndCredentials(t *testing.T) {
 	}
 }
 
+func TestClientMapsResponsesToolsAndUsage(t *testing.T) {
+	var received responsesRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/responses" {
+			t.Errorf("request path = %q", request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		writeOpenAIJSON(t, writer, map[string]any{
+			"status": "completed",
+			"output": []map[string]any{{
+				"type": "function_call", "id": "fc-1", "call_id": "call-1",
+				"name": "workspace_read", "arguments": `{"path":"main.go"}`,
+			}},
+			"usage": map[string]any{
+				"input_tokens": 9, "output_tokens": 4, "total_tokens": 13,
+				"input_tokens_details": map[string]any{"cached_tokens": 3},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{Bindings: StaticBindingLoader{Binding: Binding{
+		BaseURL: server.URL, Model: "test-model", APIKey: []byte("test-secret"),
+		ResponseFormat: ResponseFormatJSONObject, APIMode: APIModeResponses,
+	}}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Complete(context.Background(), domain.ModelTurn{
+		UserMessage: "read a file", MaxTokens: 64,
+		Tools: []domain.ToolDefinition{{
+			Name: "workspace.read", Version: "v1", Description: "read", Effect: domain.ToolEffectRead,
+			Parameters: openAIClosedSchema(map[string]any{"path": map[string]any{"type": "string"}}, "path"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if received.Model != "test-model" || received.MaxOutputTokens != 64 || len(received.Input) != 1 || received.Input[0].Content != "read a file" {
+		t.Fatalf("responses request = %+v", received)
+	}
+	if len(received.Tools) != 1 || received.Tools[0].Name != "workspace_read" || received.Text == nil || received.Text.Format.Type != "json_object" {
+		t.Fatalf("responses tools = %+v text=%+v", received.Tools, received.Text)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ID != "call-1" || result.ToolCalls[0].Name != "workspace.read" || result.ToolCalls[0].Version != "v1" {
+		t.Fatalf("responses tool mapping = %+v", result.ToolCalls)
+	}
+	if result.InputTokens != 9 || result.OutputTokens != 4 || result.UsageTokens != 13 || !result.CacheTokensReported || result.CacheHitTokens != 3 || result.CacheMissTokens != 6 {
+		t.Fatalf("responses usage = %+v", result)
+	}
+}
+
 func TestClientRetriesTemporaryHTTPFailureWithinOneTurn(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

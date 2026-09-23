@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"mendry/backend/internal/modules/projects/domain"
 	"mendry/backend/internal/platform/observability"
 )
 
@@ -24,7 +25,7 @@ func TestListModelsReturnsSortedIDs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models, err := NewLister(server.Client(), nil).ListModels(context.Background(), server.URL, []byte("sk-test"))
+	models, err := NewLister(server.Client(), nil).ListModels(context.Background(), server.URL, []byte("sk-test"), "")
 	if err != nil {
 		t.Fatalf("ListModels() error = %v", err)
 	}
@@ -59,7 +60,31 @@ func TestProbeChatAcceptsHiReply(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6"); err != nil {
+	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions); err != nil {
+		t.Fatalf("ProbeChat() error = %v", err)
+	}
+}
+
+func TestProbeResponsesAcceptsOutputText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/responses" {
+			t.Errorf("request path = %q", request.URL.Path)
+		}
+		var payload responsesRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if payload.Model != "gpt-5.6" || payload.MaxOutputTokens != chatProbeMaxTokens || len(payload.Input) != 1 || payload.Input[0]["content"] != "hi" {
+			t.Errorf("responses request = %+v", payload)
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"output": []map[string]any{{"type": "message", "content": []map[string]string{{"type": "output_text", "text": "hello"}}}},
+		})
+	}))
+	defer server.Close()
+
+	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses); err != nil {
 		t.Fatalf("ProbeChat() error = %v", err)
 	}
 }
@@ -70,7 +95,7 @@ func TestProbeChatHidesNonOKBodies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6")
+	err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions)
 	if err == nil || strings.Contains(err.Error(), "sk-secret") || strings.Contains(err.Error(), "sk-test") {
 		t.Fatalf("error = %v", err)
 	}
@@ -82,7 +107,7 @@ func TestListModelsHidesNonOKBodies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := NewLister(server.Client(), nil).ListModels(context.Background(), server.URL, []byte("sk-test"))
+	_, err := NewLister(server.Client(), nil).ListModels(context.Background(), server.URL, []byte("sk-test"), "")
 	if err == nil || strings.Contains(err.Error(), "sk-secret") || strings.Contains(err.Error(), "sk-test") {
 		t.Fatalf("error = %v", err)
 	}
@@ -103,7 +128,7 @@ func TestProbeChatLogsBoundedFailure(t *testing.T) {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
 
-	probeErr := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6")
+	probeErr := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions)
 	if probeErr == nil {
 		t.Fatal("expected probe error")
 	}
@@ -161,7 +186,7 @@ func TestListModelsLogsBoundedSuccess(t *testing.T) {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
 
-	if _, err := NewLister(server.Client(), logger).ListModels(context.Background(), server.URL, []byte("sk-test")); err != nil {
+	if _, err := NewLister(server.Client(), logger).ListModels(context.Background(), server.URL, []byte("sk-test"), ""); err != nil {
 		t.Fatalf("ListModels() error = %v", err)
 	}
 
@@ -208,12 +233,36 @@ func TestGenerateLogRuleReturnsStructuredRuleWithoutLoggingSample(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := NewLister(server.Client(), logger).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", "alert on repeated payment failures", sample)
+	rule, err := NewLister(server.Client(), logger).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, "alert on repeated payment failures", sample)
 	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 3 {
 		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
 	}
 	if strings.Contains(output.String(), sample) || strings.Contains(output.String(), "sk-test") {
 		t.Fatalf("generation log leaked prompt or credential: %s", output.String())
+	}
+}
+
+func TestGenerateLogRuleWithResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/responses" {
+			t.Errorf("request path = %q", request.URL.Path)
+		}
+		var payload responsesRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || len(payload.Input) != 2 {
+			t.Errorf("responses request = %+v error=%v", payload, err)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"output": []map[string]any{{"type": "message", "content": []map[string]string{{
+				"type": "output_text", "text": `{"id":"payment-errors","name":"Payment errors","matchType":"contains","pattern":"declined","excludePattern":"","threshold":2,"windowSeconds":60,"cooldownSeconds":120}`,
+			}}}},
+		})
+	}))
+	defer server.Close()
+
+	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses, "payment failures", "declined")
+	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 2 {
+		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
 	}
 }
 
@@ -228,4 +277,77 @@ func lastJSONRecord(t *testing.T, raw []byte) map[string]any {
 		t.Fatalf("json.Unmarshal() error = %v; output = %q", err, raw)
 	}
 	return record
+}
+
+func TestListModelsUsesAnthropicHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/models" || request.Header.Get("x-api-key") != "sk-ant" ||
+			request.Header.Get("anthropic-version") != anthropicVersion || request.Header.Get("Authorization") != "" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"data": []map[string]string{{"id": "claude-sonnet-5"}, {"id": "claude-opus-5-5"}},
+		})
+	}))
+	defer server.Close()
+
+	models, err := NewLister(server.Client(), nil).ListModels(context.Background(), server.URL, []byte("sk-ant"), domain.LLMAPIModeMessages)
+	if err != nil || strings.Join(models, ",") != "claude-opus-5-5,claude-sonnet-5" {
+		t.Fatalf("ListModels() = %v error=%v", models, err)
+	}
+}
+
+func TestProbeMessagesAcceptsTextContent(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := observability.NewLogger(observability.LoggerOptions{Writer: &output, Level: "debug", Format: "json", Service: "mendry-test", Environment: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload map[string]any
+		if request.URL.Path != "/v1/messages" || request.Header.Get("x-api-key") != "sk-ant" {
+			t.Errorf("request = %s headers=%v", request.URL.Path, request.Header)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload["max_tokens"] != float64(chatProbeMaxTokens) || payload["temperature"] != nil {
+			t.Errorf("messages request = %+v error=%v", payload, err)
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"stop_reason": "end_turn",
+			"content":     []map[string]string{{"type": "text", "text": "Hello!"}},
+		})
+	}))
+	defer server.Close()
+
+	if err := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages); err != nil {
+		t.Fatalf("ProbeChat() error = %v", err)
+	}
+	record := lastJSONRecord(t, output.Bytes())
+	if record["component"] != "anthropic" || record["llm.operation.name"] != "messages" || strings.Contains(output.String(), "sk-ant") {
+		t.Fatalf("log record = %v", record)
+	}
+}
+
+func TestGenerateLogRuleWithAnthropicMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/messages" {
+			t.Errorf("request path = %q", request.URL.Path)
+		}
+		var payload messagesRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.System == "" || len(payload.Messages) != 1 || payload.Messages[0]["role"] != "user" {
+			t.Errorf("messages request = %+v error=%v", payload, err)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"content": []map[string]string{{
+				"type": "text", "text": "```json\n" + `{"id":"payment-errors","name":"Payment errors","matchType":"contains","pattern":"declined","excludePattern":"","threshold":2,"windowSeconds":60,"cooldownSeconds":120}` + "\n```",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages, "payment failures", "declined")
+	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 2 {
+		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
+	}
 }

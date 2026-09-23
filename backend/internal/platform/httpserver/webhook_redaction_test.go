@@ -10,6 +10,30 @@ import (
 	"testing"
 )
 
+func TestAccessLogNeverDumpsLogRuleTrialSamples(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
+			t.Run(fmt.Sprintf("debug_%t_status_%d", debug, status), func(t *testing.T) {
+				var output bytes.Buffer
+				mux := http.NewServeMux()
+				mux.HandleFunc("POST /api/v1/projects/{projectKey}/configuration/log-rule/test", func(writer http.ResponseWriter, request *http.Request) {
+					_, _ = io.ReadAll(request.Body)
+					writer.WriteHeader(status)
+					_, _ = writer.Write([]byte(`{"sample":"sensitive-trial-marker"}`))
+				})
+				request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/payments/configuration/log-rule/test", strings.NewReader(`{"positive":["sensitive-trial-marker"]}`))
+				AccessLog(testLogger(t, &output), 1<<20, debug, mux).ServeHTTP(httptest.NewRecorder(), request)
+				logged := output.String()
+				for _, forbidden := range []string{"sensitive-trial-marker", "request_body", "http.request_headers", "http.response_headers"} {
+					if strings.Contains(logged, forbidden) {
+						t.Fatalf("trial log contains %q: %s", forbidden, logged)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestAccessLogNeverDumpsWebhookCapabilitiesEvenInDebugMode(t *testing.T) {
 	var output bytes.Buffer
 	logger := testLogger(t, &output)

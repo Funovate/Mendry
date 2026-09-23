@@ -62,6 +62,30 @@ func TestLogProbeManagerInstallsWithFixedSSHCommand(t *testing.T) {
 	}
 }
 
+func TestLogProbeStatusAndUninstallDoNotRequireCurrentRules(t *testing.T) {
+	commandPath := filepath.Join(t.TempDir(), "fake-ssh")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *'log-probe.service'*) printf 'active\\n' ;;\nesac\n"
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := sshlog.NewLogProbeManager(sshlog.LogProbeManagerOptions{
+		Secrets: staticSecrets{}, Cipher: staticCipher{}, SSHCommand: commandPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validLogProbeRequest()
+	request.InboundURL = ""
+	request.Rules = projectdomain.CustomRuleConfig{}
+	status, err := manager.Status(context.Background(), request)
+	if err != nil || status.State != "active" {
+		t.Fatalf("Status() = %#v, %v", status, err)
+	}
+	if _, err := manager.Uninstall(context.Background(), request); err != nil {
+		t.Fatalf("Uninstall() = %v", err)
+	}
+}
+
 func TestLogProbeManagerRejectsUnsafeRuntimeConfiguration(t *testing.T) {
 	manager, err := sshlog.NewLogProbeManager(sshlog.LogProbeManagerOptions{Secrets: staticSecrets{}, Cipher: staticCipher{}})
 	if err != nil {

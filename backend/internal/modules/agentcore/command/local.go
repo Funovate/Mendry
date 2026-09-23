@@ -80,6 +80,13 @@ type ProfileConfig struct {
 	MaxTokens           int                       `json:"maxTokens"`
 }
 
+// anthropic provider 模式的缺省接入点；协议固定为 Messages API。
+const (
+	anthropicBaseURL   = "https://api.anthropic.com"
+	anthropicModelID   = "claude-sonnet-5"
+	anthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
+)
+
 type ProviderConfig struct {
 	Mode           string                `json:"mode"`
 	Binding        string                `json:"binding"`
@@ -88,6 +95,7 @@ type ProviderConfig struct {
 	APIKeyEnv      string                `json:"apiKeyEnv"`
 	Headers        map[string]string     `json:"headers"`
 	ResponseFormat openai.ResponseFormat `json:"responseFormat"`
+	APIMode        openai.APIMode        `json:"apiMode"`
 }
 
 type PolicyConfig struct {
@@ -338,18 +346,18 @@ func buildProvider(config ProviderConfig, options Options) (domain.ModelProvider
 	if mode == "fixture" {
 		return NewFixtureProvider(), nil
 	}
-	if mode != "openai" {
-		return nil, errors.New("provider mode must be fixture or openai")
+	if mode != "openai" && mode != "anthropic" {
+		return nil, errors.New("provider mode must be fixture, openai or anthropic")
 	}
 	if config.Binding == "" {
 		config.Binding = "default"
 	}
 	key, ok := options.Env(config.APIKeyEnv)
 	if !ok || key == "" {
-		return nil, errors.New("configured OpenAI API key environment variable is unavailable")
+		return nil, errors.New("configured provider API key environment variable is unavailable")
 	}
 	key = ""
-	loader := envOpenAIBindingLoader{baseURL: config.BaseURL, model: config.Model, apiKeyEnv: config.APIKeyEnv, headers: cloneStringMap(config.Headers), responseFormat: config.ResponseFormat, env: options.Env}
+	loader := envOpenAIBindingLoader{baseURL: config.BaseURL, model: config.Model, apiKeyEnv: config.APIKeyEnv, headers: cloneStringMap(config.Headers), responseFormat: config.ResponseFormat, apiMode: config.APIMode, env: options.Env}
 	client, err := openai.NewClient(openai.Options{Bindings: loader, HTTPClient: options.HTTPClient, Logger: options.Logger})
 	if err != nil {
 		return nil, err
@@ -363,15 +371,16 @@ type envOpenAIBindingLoader struct {
 	apiKeyEnv      string
 	headers        map[string]string
 	responseFormat openai.ResponseFormat
+	apiMode        openai.APIMode
 	env            EnvLookup
 }
 
 func (l envOpenAIBindingLoader) LoadBinding(_ context.Context, _ string) (openai.Binding, error) {
 	key, ok := l.env(l.apiKeyEnv)
 	if !ok || key == "" {
-		return openai.Binding{}, errors.New("configured OpenAI API key environment variable is unavailable")
+		return openai.Binding{}, errors.New("configured provider API key environment variable is unavailable")
 	}
-	return openai.Binding{BaseURL: l.baseURL, Model: l.model, APIKey: []byte(key), Headers: cloneStringMap(l.headers), ResponseFormat: l.responseFormat}, nil
+	return openai.Binding{BaseURL: l.baseURL, Model: l.model, APIKey: []byte(key), Headers: cloneStringMap(l.headers), ResponseFormat: l.responseFormat, APIMode: l.apiMode}, nil
 }
 
 type boundProvider struct {
@@ -544,17 +553,33 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.Provider.Binding == "" {
 		config.Provider.Binding = "default"
 	}
+	anthropic := config.Provider.Mode == "anthropic"
 	config.Provider.BaseURL = strings.TrimRight(strings.TrimSpace(config.Provider.BaseURL), "/")
 	if config.Provider.BaseURL == "" {
 		config.Provider.BaseURL = "https://api.openai.com"
+		if anthropic {
+			config.Provider.BaseURL = anthropicBaseURL
+		}
 	}
 	config.Provider.Model = strings.TrimSpace(config.Provider.Model)
 	if config.Provider.Model == "" {
 		config.Provider.Model = openai.ModelID
+		if anthropic {
+			config.Provider.Model = anthropicModelID
+		}
 	}
 	config.Provider.APIKeyEnv = strings.TrimSpace(config.Provider.APIKeyEnv)
+	if config.Provider.APIKeyEnv == "" && anthropic {
+		config.Provider.APIKeyEnv = anthropicAPIKeyEnv
+	}
 	if config.Provider.ResponseFormat == "" {
 		config.Provider.ResponseFormat = openai.ResponseFormatNone
+	}
+	if config.Provider.APIMode == "" {
+		config.Provider.APIMode = openai.APIModeChatCompletions
+		if anthropic {
+			config.Provider.APIMode = openai.APIModeMessages
+		}
 	}
 	config.Provider.Headers = cloneStringMap(config.Provider.Headers)
 
@@ -659,17 +684,22 @@ func validateConfig(config Config) error {
 	if config.Profile.MaxTokens <= 0 || config.Profile.MaxTokens > 16384 {
 		return errors.New("profile maxTokens is outside the bound")
 	}
-	if config.Provider.Mode != "fixture" && config.Provider.Mode != "openai" {
-		return errors.New("provider mode must be fixture or openai")
+	if config.Provider.Mode != "fixture" && config.Provider.Mode != "openai" && config.Provider.Mode != "anthropic" {
+		return errors.New("provider mode must be fixture, openai or anthropic")
 	}
 	if !validBoundedText(config.Provider.Binding, 256) || !validBoundedText(config.Provider.BaseURL, 2048) || !validBoundedText(config.Provider.Model, 256) {
 		return errors.New("provider binding is invalid")
 	}
-	if config.Provider.Mode == "openai" && !validEnvironmentName(config.Provider.APIKeyEnv) {
-		return errors.New("OpenAI apiKeyEnv is required and must be a valid environment name")
+	if config.Provider.Mode != "fixture" && !validEnvironmentName(config.Provider.APIKeyEnv) {
+		return errors.New("provider apiKeyEnv is required and must be a valid environment name")
 	}
 	if config.Provider.ResponseFormat != openai.ResponseFormatNone && config.Provider.ResponseFormat != openai.ResponseFormatJSONObject {
 		return errors.New("provider response format is invalid")
+	}
+	switch {
+	case config.Provider.Mode == "anthropic" && config.Provider.APIMode != openai.APIModeMessages,
+		config.Provider.Mode != "anthropic" && config.Provider.APIMode != openai.APIModeChatCompletions && config.Provider.APIMode != openai.APIModeResponses:
+		return errors.New("provider API mode is invalid")
 	}
 	if len(config.Provider.Headers) > 64 {
 		return errors.New("provider headers are too large")

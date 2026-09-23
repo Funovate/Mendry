@@ -53,6 +53,8 @@ var pemPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE 
 // LLMRequest 是一次出站 LLM HTTP 调用的有界观测记录。
 // Host 和 Path 必须已经去掉 userinfo 与 query。Request/Response 只能是脱敏截断后的载荷。
 type LLMRequest struct {
+	// Provider 是模型供应方（openai、anthropic），写入 component；缺省为 openai。
+	Provider            string
 	Operation           string
 	Host                string
 	Path                string
@@ -167,8 +169,12 @@ func LogLLMRequest(ctx context.Context, logger *slog.Logger, rec LLMRequest) {
 		outcome = "failure"
 		level = outboundFailureLevel(class)
 	}
+	component := rec.Provider
+	if component == "" {
+		component = "openai"
+	}
 	attrs := []slog.Attr{
-		slog.String(FieldComponent, "openai"),
+		slog.String(FieldComponent, component),
 		slog.String(FieldLLMOperation, rec.Operation),
 		slog.String(FieldHTTPHost, rec.Host),
 		slog.String(FieldHTTPPath, rec.Path),

@@ -164,6 +164,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 		}
 
 		protectedWebhook := route == "POST /hooks/{token}" || strings.HasPrefix(request.URL.Path, "/hooks/")
+		protectedTrial := strings.HasPrefix(request.URL.Path, "/api/v1/projects/") && strings.HasSuffix(request.URL.Path, "/configuration/log-rule/test")
 		attrs := []slog.Attr{
 			slog.String(observability.FieldComponent, "httpserver"),
 			slog.String(observability.FieldRequestID, RequestID(request.Context())),
@@ -172,7 +173,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 			slog.Int("status", recorder.status),
 			slog.Int64(observability.FieldDurationMS, time.Since(started).Milliseconds()),
 		}
-		if requestDebug && !protectedWebhook {
+		if requestDebug && !protectedWebhook && !protectedTrial {
 			attrs = appendRequestDebugAttrs(attrs, request, capture, capturedResponse)
 		}
 		observability.Log(request.Context(), logger, slog.LevelInfo, observability.EventHTTPCompleted, "request completed", attrs...)
@@ -180,7 +181,7 @@ func AccessLog(logger *slog.Logger, maxBodyBytes int64, requestDebug bool, next 
 		if recorder.internalError != nil {
 			logInternalError(request, logger, route, recorder.status, recorder.internalError, recorder.internalErrorStack)
 		}
-		if !requestDebug && !protectedWebhook && recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
+		if !requestDebug && !protectedWebhook && !protectedTrial && recorder.status >= http.StatusBadRequest && recorder.status != statusClientClosedRequest {
 			logFailureSnapshot(request, logger, route, recorder.status, capture)
 		}
 	})

@@ -217,7 +217,8 @@ func (r *Repository) GetConfiguration(ctx context.Context, projectID string) (do
 		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
 		ingressTokenNonce: row.IngressTokenNonce,
 		llmID:             row.LlmID, llmProvider: row.LlmProvider, llmBaseURL: row.LlmBaseUrl,
-		llmSecretID: row.LlmCredentialSecretID, llmModel: row.LlmModel, llmVersion: row.LlmVersion,
+		llmSecretID: row.LlmCredentialSecretID, llmModel: row.LlmModel, llmAPIMode: row.LlmApiMode,
+		llmVersion: row.LlmVersion,
 	})
 	if err != nil {
 		return domain.Configuration{}, err
@@ -499,7 +500,7 @@ func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, pr
 	}
 	row, err := r.queries.UpsertProjectLLMProvider(platformpostgres.WithOperation(ctx, "project.configuration.llm.upsert"), projectdb.UpsertProjectLLMProviderParams{
 		LlmID: llmID, ProjectID: params.projectID, LlmProvider: provider.Provider, LlmBaseUrl: provider.BaseURL,
-		LlmCredentialSecretID: credentialID, LlmModel: provider.Model,
+		LlmCredentialSecretID: credentialID, LlmModel: provider.Model, LlmApiMode: string(provider.APIMode),
 	})
 	if configurationReferenceConflict(err) {
 		return domain.LLMProvider{}, application.ErrInvalidInput
@@ -510,7 +511,7 @@ func (r *Repository) UpsertLLMProvider(ctx context.Context, projectID string, pr
 	if err != nil {
 		return domain.LLMProvider{}, newRepositoryError("upsert project LLM provider", err)
 	}
-	return mapLLMRow(projectdb.GetProjectLLMProviderRow{ID: row.ID, Provider: row.Provider, BaseUrl: row.BaseUrl, CredentialSecretID: row.CredentialSecretID, Model: row.Model, Version: row.Version})
+	return mapLLMRow(projectdb.GetProjectLLMProviderRow{ID: row.ID, Provider: row.Provider, BaseUrl: row.BaseUrl, CredentialSecretID: row.CredentialSecretID, Model: row.Model, ApiMode: row.ApiMode, Version: row.Version})
 }
 
 func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, configuration domain.Configuration) (domain.Configuration, error) {
@@ -562,6 +563,7 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		IngressTokenNonce: configuration.Trigger.IngressTokenNonce,
 		LlmID:             llmID, LlmProvider: configuration.LLM.Provider, LlmBaseUrl: configuration.LLM.BaseURL,
 		LlmCredentialSecretID: llmSecretID, LlmModel: configuration.LLM.Model,
+		LlmApiMode: string(configuration.LLM.APIMode),
 	})
 	if configurationReferenceConflict(err) {
 		return domain.Configuration{}, application.ErrInvalidInput
@@ -586,7 +588,8 @@ func (r *Repository) UpsertConfiguration(ctx context.Context, projectID string, 
 		ingressTokenHash: row.IngressTokenHash, ingressTokenCiphertext: row.IngressTokenCiphertext,
 		ingressTokenNonce: row.IngressTokenNonce,
 		llmID:             row.LlmID, llmProvider: stringPointer(row.LlmProvider), llmBaseURL: stringPointer(row.LlmBaseUrl),
-		llmSecretID: row.LlmCredentialSecretID, llmModel: stringPointer(row.LlmModel), llmVersion: int64Pointer(row.LlmVersion),
+		llmSecretID: row.LlmCredentialSecretID, llmModel: stringPointer(row.LlmModel), llmAPIMode: stringPointer(row.LlmApiMode),
+		llmVersion: int64Pointer(row.LlmVersion),
 	})
 	if err != nil {
 		return domain.Configuration{}, err
@@ -698,7 +701,7 @@ type configurationRow struct {
 	triggerVersion                                              int64
 	ingressTokenHash, ingressTokenCiphertext, ingressTokenNonce []byte
 	llmID                                                       pgtype.UUID
-	llmProvider, llmBaseURL, llmModel                           *string
+	llmProvider, llmBaseURL, llmModel, llmAPIMode               *string
 	llmSecretID                                                 pgtype.UUID
 	llmVersion                                                  *int64
 }
@@ -784,7 +787,7 @@ func mapLLMRow(row projectdb.GetProjectLLMProviderRow) (domain.LLMProvider, erro
 	if !row.ID.Valid || !row.CredentialSecretID.Valid || row.Version <= 0 {
 		return domain.LLMProvider{}, fmt.Errorf("project LLM provider row has invalid generated values")
 	}
-	provider := domain.LLMProvider{ID: uuidString(row.ID), Provider: row.Provider, BaseURL: row.BaseUrl, CredentialSecretID: uuidString(row.CredentialSecretID), Model: row.Model, Version: row.Version}
+	provider := domain.LLMProvider{ID: uuidString(row.ID), Provider: row.Provider, BaseURL: row.BaseUrl, CredentialSecretID: uuidString(row.CredentialSecretID), Model: row.Model, APIMode: domain.LLMAPIMode(row.ApiMode), Version: row.Version}
 	if err := domain.ValidateLLMProvider(provider); err != nil {
 		return domain.LLMProvider{}, fmt.Errorf("validate project LLM provider row: %w", err)
 	}
@@ -816,7 +819,7 @@ func mapSecret(id, projectID pgtype.UUID, name, kindValue string, keyVersion int
 }
 
 func mapLLMProvider(row configurationRow) *domain.LLMProvider {
-	if !row.llmID.Valid || row.llmProvider == nil || row.llmBaseURL == nil || row.llmModel == nil || row.llmVersion == nil {
+	if !row.llmID.Valid || row.llmProvider == nil || row.llmBaseURL == nil || row.llmModel == nil || row.llmAPIMode == nil || row.llmVersion == nil {
 		return nil
 	}
 	secretID := optionalUUIDString(row.llmSecretID)
@@ -825,7 +828,7 @@ func mapLLMProvider(row configurationRow) *domain.LLMProvider {
 	}
 	return &domain.LLMProvider{
 		ID: uuidString(row.llmID), Provider: *row.llmProvider, BaseURL: *row.llmBaseURL,
-		CredentialSecretID: *secretID, Model: *row.llmModel, Version: *row.llmVersion,
+		CredentialSecretID: *secretID, Model: *row.llmModel, APIMode: domain.LLMAPIMode(*row.llmAPIMode), Version: *row.llmVersion,
 	}
 }
 

@@ -271,3 +271,32 @@ func TestValidateRemediationPolicyCompatibilityAndAutoRequirements(t *testing.T)
 		t.Fatal("auto hotfix accepted missing required commands")
 	}
 }
+
+func TestValidateLLMProviderPairsProviderWithAPIMode(t *testing.T) {
+	base := LLMProvider{BaseURL: "https://api.example.com", CredentialSecretID: "019ff544-405c-7d24-9f10-cb3fc579605c", Model: "model-1"}
+	cases := []struct {
+		provider string
+		mode     LLMAPIMode
+		valid    bool
+	}{
+		{"openai", "", true},
+		{"openai", LLMAPIModeChatCompletions, true},
+		{"openai", LLMAPIModeResponses, true},
+		{"openai", LLMAPIModeMessages, false},
+		{"anthropic", "", true},
+		{"anthropic", LLMAPIModeMessages, true},
+		{"anthropic", LLMAPIModeResponses, false},
+		{"anthropic", LLMAPIModeChatCompletions, false},
+		{"gemini", "", false},
+	}
+	for _, test := range cases {
+		provider := base
+		provider.Provider, provider.APIMode = test.provider, test.mode
+		if err := ValidateLLMProvider(provider); (err == nil) != test.valid {
+			t.Fatalf("ValidateLLMProvider(%s, %q) error = %v, want valid=%t", test.provider, test.mode, err, test.valid)
+		}
+	}
+	if NormalizeLLMAPIMode("anthropic", "") != LLMAPIModeMessages || NormalizeLLMAPIMode("openai", "") != LLMAPIModeChatCompletions {
+		t.Fatal("NormalizeLLMAPIMode() default modes are wrong")
+	}
+}

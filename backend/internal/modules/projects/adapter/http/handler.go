@@ -38,12 +38,16 @@ type service interface {
 	RotateWebhookToken(context.Context, authdomain.User, string) (string, error)
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
 	ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error)
-	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
-	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
+	ProbeLLMModels(context.Context, authdomain.User, string, string, string, domain.LLMAPIMode) (application.LLMModels, error)
+	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string, domain.LLMAPIMode) error
 }
 
 type logRuleGeneratorService interface {
 	GenerateLogRule(context.Context, authdomain.User, string, application.LogRuleGenerationInput) (domain.CustomRule, error)
+}
+
+type logRuleTrialService interface {
+	TrialLogRules(context.Context, authdomain.User, string, application.LogRuleTrialInput) (application.LogRuleTrial, error)
 }
 
 type logProbeService interface {
@@ -85,6 +89,7 @@ func (h *Handler) Register(mux *nethttp.ServeMux) {
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/log-files", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHLogFiles)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/source/ssh/containers", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.probeSSHContainers)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-rule/generate", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.generateLogRule)))
+	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-rule/test", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.trialLogRules)))
 	mux.Handle("GET /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.getLogProbe)))
 	mux.Handle("POST /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.installLogProbe)))
 	mux.Handle("DELETE /api/v1/projects/{projectKey}/configuration/log-probe", h.authentication.RequireAuthentication(nethttp.HandlerFunc(h.uninstallLogProbe)))
@@ -150,21 +155,25 @@ type remediationPolicyRequest struct {
 }
 
 type llmRequest struct {
-	Provider           string `json:"provider"`
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
+	Provider           string            `json:"provider"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
 }
 
 type llmModelsRequest struct {
+	Provider           string `json:"provider"`
 	BaseURL            string `json:"baseUrl"`
 	CredentialSecretID string `json:"credentialSecretId"`
 }
 
 type llmChatRequest struct {
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
+	Provider           string            `json:"provider"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
 }
 
 type environmentRequest struct {
@@ -268,12 +277,13 @@ type remediationPolicyResponse struct {
 }
 
 type llmResponse struct {
-	ID                 string `json:"id"`
-	Provider           string `json:"provider"`
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
-	Version            int64  `json:"version"`
+	ID                 string            `json:"id"`
+	Provider           string            `json:"provider"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
+	Version            int64             `json:"version"`
 }
 
 type llmModelsResponse struct {
@@ -524,6 +534,28 @@ func (h *Handler) generateLogRule(writer nethttp.ResponseWriter, request *nethtt
 	writeJSON(writer, request, nethttp.StatusOK, rule)
 }
 
+func (h *Handler) trialLogRules(writer nethttp.ResponseWriter, request *nethttp.Request) {
+	trial, ok := h.service.(logRuleTrialService)
+	if !ok {
+		writeApplicationError(writer, request, application.ErrInvalidInput)
+		return
+	}
+	var payload application.LogRuleTrialInput
+	if !decodeJSON(writer, request, &payload) {
+		return
+	}
+	principal, ok := currentUser(request)
+	if !ok {
+		return
+	}
+	result, err := trial.TrialLogRules(request.Context(), principal, request.PathValue("projectKey"), payload)
+	if err != nil {
+		writeApplicationError(writer, request, err)
+		return
+	}
+	writeJSON(writer, request, nethttp.StatusOK, result)
+}
+
 func (h *Handler) getLogProbe(writer nethttp.ResponseWriter, request *nethttp.Request) {
 	h.handleLogProbe(writer, request, "status")
 }
@@ -572,7 +604,12 @@ func (h *Handler) probeLLMModels(writer nethttp.ResponseWriter, request *nethttp
 	if !ok {
 		return
 	}
-	models, err := h.service.ProbeLLMModels(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID)
+	apiMode, ok := probeLLMAPIMode(payload.Provider, "")
+	if !ok {
+		writeApplicationError(writer, request, application.ErrInvalidInput)
+		return
+	}
+	models, err := h.service.ProbeLLMModels(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, apiMode)
 	if err != nil {
 		writeApplicationError(writer, request, err)
 		return
@@ -589,11 +626,25 @@ func (h *Handler) probeLLMChat(writer nethttp.ResponseWriter, request *nethttp.R
 	if !ok {
 		return
 	}
-	if err := h.service.ProbeLLMChat(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, payload.Model); err != nil {
+	apiMode, ok := probeLLMAPIMode(payload.Provider, payload.APIMode)
+	if !ok {
+		writeApplicationError(writer, request, application.ErrInvalidInput)
+		return
+	}
+	if err := h.service.ProbeLLMChat(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, payload.Model, apiMode); err != nil {
 		writeApplicationError(writer, request, err)
 		return
 	}
 	writeJSON(writer, request, nethttp.StatusOK, map[string]string{"status": "ok"})
+}
+
+// probeLLMAPIMode 把探测请求的 provider 折算成协议；provider 缺省为 openai 以兼容旧客户端。
+func probeLLMAPIMode(provider string, apiMode domain.LLMAPIMode) (domain.LLMAPIMode, bool) {
+	if provider == "" {
+		provider = domain.LLMProviderOpenAI
+	}
+	apiMode = domain.NormalizeLLMAPIMode(provider, apiMode)
+	return apiMode, domain.ValidLLMAPIMode(provider, apiMode)
 }
 
 func (h *Handler) getConfiguration(writer nethttp.ResponseWriter, request *nethttp.Request) {
@@ -817,7 +868,7 @@ func mapTrigger(trigger domain.Trigger) triggerResponse {
 }
 
 func mapLLM(provider domain.LLMProvider) llmResponse {
-	return llmResponse{ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL, CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, Version: provider.Version}
+	return llmResponse{ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL, CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, APIMode: provider.APIMode, Version: provider.Version}
 }
 
 func mapLLMResponse(provider *domain.LLMProvider) *llmResponse {
@@ -834,7 +885,7 @@ func mapLLMRequest(payload *llmRequest) *domain.LLMProvider {
 	}
 	return &domain.LLMProvider{
 		Provider: payload.Provider, BaseURL: payload.BaseURL,
-		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model,
+		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model, APIMode: payload.APIMode,
 	}
 }
 
@@ -880,6 +931,8 @@ func writeApplicationError(writer nethttp.ResponseWriter, request *nethttp.Reque
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: pathError.Reason, Message: pathError.Message()})
 	case errors.As(err, &setupError):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: setupError.Reason, Message: setupError.Message()})
+	case errors.Is(err, application.ErrLogRuleTrialUnsupported):
+		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusUnprocessableEntity, Code: "log_rule_trial_unsupported", Message: "This regular expression cannot be tested reliably. Use a simpler pattern without flags, lookarounds or shorthand character classes."})
 	case errors.Is(err, application.ErrInvalidInput):
 		httpserver.WriteError(writer, request, httpserver.Error{Status: nethttp.StatusBadRequest, Code: "invalid_request", Message: "Project request is invalid."})
 	case errors.Is(err, application.ErrNotFound):

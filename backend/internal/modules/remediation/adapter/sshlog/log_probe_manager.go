@@ -107,7 +107,7 @@ printf 'MENDRY_PROBE_PYTHON=%s\n' "$python"
 }
 
 func (m *LogProbeManager) Status(ctx context.Context, request projectapplication.LogProbeRequest) (projectapplication.LogProbeStatus, error) {
-	if err := validateLogProbeRequest(request); err != nil {
+	if err := validateLogProbeTarget(request); err != nil {
 		return projectapplication.LogProbeStatus{}, err
 	}
 	output, err := m.run(ctx, request, "log_probe_status", "sudo -n sh -c 'systemctl is-active "+logProbeServiceName+" 2>/dev/null || true; cat /var/lib/mendry-log-probe/status.json 2>/dev/null || true'", nil)
@@ -140,7 +140,7 @@ func (m *LogProbeManager) Status(ctx context.Context, request projectapplication
 }
 
 func (m *LogProbeManager) Uninstall(ctx context.Context, request projectapplication.LogProbeRequest) (projectapplication.LogProbeStatus, error) {
-	if err := validateLogProbeRequest(request); err != nil {
+	if err := validateLogProbeTarget(request); err != nil {
 		return projectapplication.LogProbeStatus{}, err
 	}
 	command := "sudo -n sh -c 'systemctl disable --now " + logProbeServiceName + " >/dev/null 2>&1 || true; rm -rf /var/lib/mendry-log-probe; rm -f /etc/systemd/system/" + logProbeServiceName + " /etc/mendry-log-probe.json /opt/mendry/log-probe.py; systemctl daemon-reload'"
@@ -150,10 +150,21 @@ func (m *LogProbeManager) Uninstall(ctx context.Context, request projectapplicat
 	return projectapplication.LogProbeStatus{State: "not_installed", Version: logProbeVersion, ConfigVersion: request.TriggerVersion, CheckedAt: time.Now().UTC()}, nil
 }
 
+func validateLogProbeTarget(request projectapplication.LogProbeRequest) error {
+	if request.ProjectID == "" || request.CredentialSecretID == "" ||
+		request.Source.Deployment.Kind != projectdomain.SSHDeploymentHost ||
+		!linuxUserPattern.MatchString(request.Source.User) {
+		return fmt.Errorf("managed log probe SSH target is invalid")
+	}
+	return nil
+}
+
 func validateLogProbeRequest(request projectapplication.LogProbeRequest) error {
-	if request.ProjectID == "" || request.CredentialSecretID == "" || request.TriggerVersion < 1 ||
-		request.Source.Deployment.Kind != projectdomain.SSHDeploymentHost || request.Source.Mode != "tail" ||
-		!linuxUserPattern.MatchString(request.Source.User) || !strings.HasPrefix(request.Source.LogPath, "/") ||
+	if err := validateLogProbeTarget(request); err != nil {
+		return err
+	}
+	if request.TriggerVersion < 1 || request.Source.Mode != "tail" ||
+		!strings.HasPrefix(request.Source.LogPath, "/") ||
 		(!strings.HasPrefix(request.InboundURL, "https://") && !strings.HasPrefix(request.InboundURL, "http://127.0.0.1:")) ||
 		len(request.Rules.Rules) == 0 {
 		return fmt.Errorf("managed log probe configuration is invalid")
@@ -317,6 +328,8 @@ for name, (payload, mode) in files.items():
 os.chown("/etc/mendry-log-probe.json", account.pw_uid, account.pw_gid)
 os.chown("/var/lib/mendry-log-probe", account.pw_uid, account.pw_gid)
 os.chown("/var/lib/mendry-log-probe/spool", account.pw_uid, account.pw_gid)
+os.chmod("/var/lib/mendry-log-probe", 0o700)
+os.chmod("/var/lib/mendry-log-probe/spool", 0o700)
 subprocess.run(["systemctl", "daemon-reload"], check=True)
 subprocess.run(["systemctl", "enable", "mendry-log-probe.service"], check=True)
 try:
@@ -328,12 +341,13 @@ subprocess.run(["systemctl", "restart", "mendry-log-probe.service"], check=True)
 }
 
 const logProbePython = `#!/usr/bin/python3
-import collections, hashlib, json, os, pathlib, re, socket, time, urllib.request
+import collections, hashlib, json, os, pathlib, re, socket, time, urllib.error, urllib.request
 CONFIG_PATH = pathlib.Path("/etc/mendry-log-probe.json")
 STATE_DIR = pathlib.Path("/var/lib/mendry-log-probe")
 STATE_PATH = STATE_DIR / "state.json"
 STATUS_PATH = STATE_DIR / "status.json"
 SPOOL = STATE_DIR / "spool"
+REJECTED = STATE_DIR / "rejected"
 
 def atomic_json(path, value):
     temporary = path.with_suffix(".tmp")
@@ -355,15 +369,42 @@ def spool_event(config, event_id, event):
     if overflowed: status(config, "spool limit reached; oldest event dropped")
 
 def send_spool(config):
+    REJECTED.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(REJECTED, 0o700)
+    failure = None
     for path in sorted(SPOOL.glob("*.json")):
         try:
             data = path.read_bytes()
             request = urllib.request.Request(config["inboundUrl"], data=data, headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(request, timeout=15) as response:
                 if 200 <= response.status < 300: path.unlink()
+        except urllib.error.HTTPError as error:
+            if 400 <= error.code < 500 and error.code not in (408, 429):
+                if len(list(REJECTED.glob("*.json"))) >= 1000:
+                    return "rejected event quarantine full"
+                os.replace(path, REJECTED / path.name)
+                failure = "delivery rejected: HTTP " + str(error.code)
+                continue
+            return "delivery retry pending: HTTP " + str(error.code)
         except Exception as error:
-            status(config, "delivery retry pending: " + type(error).__name__)
-            return
+            return "delivery retry pending: " + type(error).__name__
+    if list(REJECTED.glob("*.json")):
+        return failure or "delivery rejected: events quarantined"
+    return "monitoring"
+
+def bounded_line(line):
+    return line.rstrip("\r\n").encode("utf-8")[:4096].decode("utf-8", "ignore")
+
+def bounded_event(event):
+    # Go's JSON encoder also escapes HTML characters; budget for that before sending.
+    def encoded_size():
+        encoded = json.dumps(event, ensure_ascii=True, separators=(",", ":"))
+        for char in ("&", "<", ">"):
+            encoded = encoded.replace(char, "\\u%04x" % ord(char))
+        return len(encoded.encode("utf-8"))
+    while len(event["samples"]) > 1 and encoded_size() > 60000:
+        event["samples"].pop(0)
+    return event
 
 def matches(rule, line):
     if rule.get("excludePattern") and re.search(rule["excludePattern"], line): return False
@@ -371,7 +412,8 @@ def matches(rule, line):
     return rule["pattern"] in line
 
 def main():
-    STATE_DIR.mkdir(parents=True, exist_ok=True); SPOOL.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700); SPOOL.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(STATE_DIR, 0o700); os.chmod(SPOOL, 0o700)
     config = json.loads(CONFIG_PATH.read_text())
     rules = config["rules"]
     windows = {rule["id"]: collections.deque() for rule in rules}
@@ -392,7 +434,10 @@ def main():
                 while True:
                     line = stream.readline()
                     if not line: break
-                    line = line.rstrip("\r\n")[:4096]
+                    line = bounded_line(line)
+                    if not line.strip():
+                        state = {"inode": inode, "offset": stream.tell()}; atomic_json(STATE_PATH, state)
+                        continue
                     now = time.time()
                     for rule in rules:
                         if not matches(rule, line): continue
@@ -402,11 +447,11 @@ def main():
                             seed = rule["id"] + str(queue[0]) + str(now) + "\n".join(samples[rule["id"]])
                             event_id = hashlib.sha256(seed.encode()).hexdigest()
                             event = {"schemaVersion":1,"eventId":event_id,"ruleId":rule["id"],"configVersion":config["configVersion"],"matchCount":len(queue),"windowStartedAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(queue[0])),"triggeredAt":time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime(now)),"host":socket.gethostname(),"samples":list(samples[rule["id"]])}
-                            spool_event(config, event_id, event)
+                            spool_event(config, event_id, bounded_event(event))
                             cooldown[rule["id"]] = now + rule["cooldownSeconds"]
                             queue.clear(); samples[rule["id"]].clear()
                     state = {"inode": inode, "offset": stream.tell()}; atomic_json(STATE_PATH, state)
-            send_spool(config); status(config, "monitoring")
+            status(config, send_spool(config))
         except Exception as error:
             status(config, "read failed: " + type(error).__name__)
         time.sleep(2)

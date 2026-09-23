@@ -128,7 +128,7 @@ func TestNotificationsTransactionalLifecycleAndDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := projects.UpsertConfiguration(ctx, project.ID, projectdomain.Configuration{
-		LLM:         &projectdomain.LLMProvider{ID: notificationUUID(t), Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretID, Model: "test-model"},
+		LLM:         &projectdomain.LLMProvider{ID: notificationUUID(t), Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretID, Model: "test-model", APIMode: projectdomain.LLMAPIModeChatCompletions},
 		Environment: projectdomain.Environment{ID: notificationUUID(t), Key: "production", Name: "Production"},
 		Repository:  projectdomain.Repository{ID: notificationUUID(t), RemoteURL: "https://github.com/example/service.git", SCMProvider: "github", Transport: "https", ProductionBranch: "main", DeployedCommit: strings.Repeat("a", 40)},
 		Source:      projectdomain.Source{ID: notificationUUID(t), Kind: "cloud", Config: []byte(`{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"test"}`), Capabilities: []string{"push_ingestion"}, Enabled: true},

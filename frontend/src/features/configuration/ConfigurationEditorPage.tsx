@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, messageFromError, type DockerContainer, type ListResult, type LogProbeStatus, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
+import { api, messageFromError, type DockerContainer, type ListResult, type LLMAPIMode, type LLMProviderName, type LogProbeStatus, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { LoadingState, PageError } from "../../shared/ui";
@@ -10,7 +10,7 @@ import {
   buildSourceConfig, buildTriggerConfig, defaultSourceCapabilities, isLogProbeMonitoring,
   readConfigNumber, readConfigObject, readConfigString, readCustomRules, readStringRecord, type CustomRuleDraft, type WebhookProvider,
 } from "./configuration";
-import { LLMStep } from "./wizard/LLMStep";
+import { LLM_DEFAULT_API_MODE, LLM_DEFAULT_BASE_URL, LLMStep } from "./wizard/LLMStep";
 import { RemediationStep } from "./wizard/RemediationStep";
 import { RepositoryStep } from "./wizard/RepositoryStep";
 import { ReviewStep } from "./wizard/ReviewStep";
@@ -97,9 +97,11 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [customRules, setCustomRules] = useState<CustomRuleDraft[]>(readCustomRules(current.trigger?.config));
   const [ruleIntent, setRuleIntent] = useState("");
   const [ruleSample, setRuleSample] = useState("");
-  const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? "https://api.openai.com");
+  const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? LLM_DEFAULT_BASE_URL.openai);
   const [llmCredentialId, setLlmCredentialId] = useState(current.llm?.credentialSecretId ?? "");
   const [llmModel, setLlmModel] = useState(current.llm?.model ?? "");
+  const [llmProvider, setLlmProvider] = useState<LLMProviderName>(current.llm?.provider ?? "openai");
+  const [llmAPIMode, setLlmAPIMode] = useState<LLMAPIMode>(current.llm?.apiMode ?? "chat_completions");
   const [llmModels, setLlmModels] = useState<string[]>(current.llm?.model ? [current.llm.model] : []);
   const [llmChatReady, setLlmChatReady] = useState(false);
   const [remediationPolicy, setRemediationPolicy] = useState<NonNullable<ProjectConfigurationDraft["remediation"]>>(current.remediation ?? {
@@ -141,7 +143,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression: "", customRules, webhookProvider, awsTopicArn }),
     enabled: current.trigger?.enabled ?? true,
   });
-  const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
+  const buildLLMPayload = () => ({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode });
   const buildRemediationPayload = () => {
     const payload = { ...remediationPolicy };
     delete (payload as { version?: unknown }).version;
@@ -190,7 +192,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     },
   });
   const probeLLMModels = useMutation({
-    mutationFn: (input: { baseUrl: string; credentialSecretId: string }) => api.probeLLMModels(project.key, input),
+    mutationFn: (input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string }) => api.probeLLMModels(project.key, input),
     onSuccess: (result) => {
       setLlmModels(result.models);
       if (llmModel && !result.models.includes(llmModel)) {
@@ -200,7 +202,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     },
   });
   const probeLLMChat = useMutation({
-    mutationFn: (input: { baseUrl: string; credentialSecretId: string; model: string }) => api.probeLLMChat(project.key, input),
+    mutationFn: (input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode }) => api.probeLLMChat(project.key, input),
     onSuccess: () => setLlmChatReady(true),
   });
   const saveRepository = useMutation({
@@ -255,10 +257,11 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [pendingProbe, setPendingProbe] = useState<LogProbeStatus | null>(null);
   const [probeTimedOut, setProbeTimedOut] = useState(false);
   const probeQueryKey = ["log-probe", project.key];
+  const savedHostProbeTarget = current.source?.kind === "ssh" && readConfigString(readConfigObject(current.source.config, "deployment"), "kind", "host") === "host";
   const probeStatus = useQuery({
     queryKey: probeQueryKey,
     queryFn: ({ signal }) => api.getLogProbeStatus(project.key, signal),
-    enabled: savedTriggerKind === "custom_rule" && (activeStep === "trigger" || pendingProbe !== null),
+    enabled: savedHostProbeTarget && (activeStep === "trigger" || pendingProbe !== null),
     retry: false,
     refetchInterval: (query) => pendingProbe && !probeTimedOut && !isLogProbeMonitoring(query.state.data, pendingProbe) ? 3000 : false,
   });
@@ -385,12 +388,14 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         customRules={customRules} setCustomRules={setCustomRules}
         ruleIntent={ruleIntent} setRuleIntent={setRuleIntent} ruleSample={ruleSample} setRuleSample={setRuleSample}
         onGenerateRule={() => generateLogRule.mutate()} generatingRule={generateLogRule.isPending} generateRuleError={generateLogRule.error}
+        onTrialLogRules={(positive, negative) => api.trialLogRules(project.key, { config: buildTriggerPayload().config, positive, negative })}
         logProbeStatus={probeChecking ? pendingProbe ?? undefined : probeStatus.data ?? installLogProbe.data ?? uninstallLogProbe.data}
         probeChecking={probeChecking} probeTimedOut={pendingProbe !== null && probeTimedOut && !probeHealthy}
         onInstallLogProbe={() => installLogProbe.mutate()} installingLogProbe={installLogProbe.isPending} installLogProbeError={installLogProbe.error}
         onRefreshLogProbe={() => refreshLogProbe.mutate()} refreshingLogProbe={refreshLogProbe.isPending} refreshLogProbeError={refreshLogProbe.error ?? (probeChecking ? probeStatus.error : undefined)}
         onUninstallLogProbe={() => uninstallLogProbe.mutate()} uninstallingLogProbe={uninstallLogProbe.isPending} uninstallLogProbeError={uninstallLogProbe.error}
         canManageLogProbe={sourceKind === "ssh" && sshDeploymentKind === "host" && readMode === "tail" && savedTriggerKind === "custom_rule"}
+        canRemoveLogProbe={savedHostProbeTarget}
         inboundUrl={inboundUrl} onGenerateInboundUrl={() => rotateWebhookToken.mutateAsync().then((result) => result.inboundUrl)}
         generatingInboundUrl={rotateWebhookToken.isPending} generateInboundUrlError={rotateWebhookToken.error}
         canGenerateInboundUrl={savedTriggerKind === "signed_webhook"}
@@ -402,9 +407,20 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         baseUrl={llmBaseUrl} setBaseUrl={(value) => { setLlmBaseUrl(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
         credentialId={llmCredentialId} setCredentialId={(value) => { setLlmCredentialId(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
         model={llmModel} setModel={(value) => { setLlmModel(value); setLlmChatReady(false); }} models={llmModels}
-        onLoadModels={() => { if (llmCredentialId) probeLLMModels.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId }); }}
+        provider={llmProvider} setProvider={(value) => {
+          if (value === llmProvider) return;
+          // Models and API differ per provider; only swap the base URL while it is still the previous default.
+          setLlmProvider(value);
+          setLlmAPIMode(LLM_DEFAULT_API_MODE[value]);
+          if (llmBaseUrl.trim() === LLM_DEFAULT_BASE_URL[llmProvider] || !llmBaseUrl.trim()) setLlmBaseUrl(LLM_DEFAULT_BASE_URL[value]);
+          setLlmModel("");
+          setLlmModels([]);
+          setLlmChatReady(false);
+        }}
+        apiMode={llmAPIMode} setAPIMode={(value) => { setLlmAPIMode(value); setLlmChatReady(false); }}
+        onLoadModels={() => { if (llmCredentialId) probeLLMModels.mutate({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId }); }}
         loadingModels={probeLLMModels.isPending} loadModelsError={probeLLMModels.error}
-        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() }); }}
+        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode }); }}
         testingChat={probeLLMChat.isPending} testChatError={probeLLMChat.error} chatReady={llmChatReady}
         onSave={() => saveLLM.mutate()} saving={saveLLM.isPending} canSave={Boolean(llmCredentialId && llmModel.trim() && llmChatReady)} saveError={saveLLM.error}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}

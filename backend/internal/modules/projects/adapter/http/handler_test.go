@@ -30,6 +30,7 @@ type fakeService struct {
 	inboundURL    string
 	configuration domain.Configuration
 	updateErr     error
+	probeAPIMode  domain.LLMAPIMode
 }
 
 func (f *fakeService) CreateProject(context.Context, authdomain.User, string, string, string) (domain.Project, error) {
@@ -178,11 +179,18 @@ func (*fakeService) ProbeRepositoryRefs(context.Context, authdomain.User, string
 func (*fakeService) ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error) {
 	return []domain.DockerContainer{{Name: "app", ID: "0123456789abcdef", Image: "example/app:latest", State: "running", Status: "Up 1 minute"}}, nil
 }
-func (*fakeService) ProbeLLMModels(context.Context, authdomain.User, string, string, string) (projectapplication.LLMModels, error) {
+func (f *fakeService) ProbeLLMModels(_ context.Context, _ authdomain.User, _, _, _ string, apiMode domain.LLMAPIMode) (projectapplication.LLMModels, error) {
+	f.probeAPIMode = apiMode
 	return projectapplication.LLMModels{Models: []string{"gpt-4.1", "gpt-5.6"}}, nil
 }
-func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error {
+func (f *fakeService) ProbeLLMChat(_ context.Context, _ authdomain.User, _, _, _, _ string, apiMode domain.LLMAPIMode) error {
+	f.probeAPIMode = apiMode
 	return nil
+}
+
+func (f *fakeService) TrialLogRules(_ context.Context, _ authdomain.User, projectKey string, input projectapplication.LogRuleTrialInput) (projectapplication.LogRuleTrial, error) {
+	f.projectKey = projectKey
+	return projectapplication.LogRuleTrial{PositiveCount: len(input.Positive), NegativeCount: len(input.Negative), Rules: []projectapplication.LogRuleTrialResult{{RuleID: "errors", PositiveMatches: []int{1}, NegativeMatches: []int{}, PositiveExcluded: []int{}, NegativeExcluded: []int{}}}}, nil
 }
 
 type fakeAuthService struct{ user authdomain.User }
@@ -197,6 +205,20 @@ func (f *fakeAuthService) Authenticate(context.Context, string) (authdomain.User
 	return f.user, nil
 }
 func (*fakeAuthService) Logout(context.Context, string) error { return nil }
+
+func TestLogRuleTrialRouteOmitsSampleText(t *testing.T) {
+	handler := newHandler(t, &fakeService{})
+	const sample = "private-trial-line"
+	payload := `{"config":{"schemaVersion":2,"groupingWindowSeconds":300,"rules":[]},"positive":["` + sample + `"],"negative":[]}`
+	request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/configuration/log-rule/test", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(sessionCookie())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != nethttp.StatusOK || strings.Contains(response.Body.String(), sample) || !strings.Contains(response.Body.String(), `"positiveMatches":[1]`) {
+		t.Fatalf("trial response = %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestProjectResponseOmitsAuthorizationMetadata(t *testing.T) {
 	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
@@ -524,5 +546,32 @@ func TestRotateWebhookTokenMapsForbidden(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != nethttp.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"forbidden"`) {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestProbeLLMDerivesAPIModeFromProvider(t *testing.T) {
+	cases := []struct {
+		path, body string
+		status     int
+		want       domain.LLMAPIMode
+	}{
+		{"llm/models", `{"baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeChatCompletions},
+		{"llm/models", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeMessages},
+		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5"}`, nethttp.StatusOK, domain.LLMAPIModeMessages},
+		{"llm/chat", `{"provider":"openai","baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"gpt-5.6","apiMode":"responses"}`, nethttp.StatusOK, domain.LLMAPIModeResponses},
+		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5","apiMode":"responses"}`, nethttp.StatusBadRequest, ""},
+		{"llm/models", `{"provider":"gemini","baseUrl":"https://example.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusBadRequest, ""},
+	}
+	for _, test := range cases {
+		service := &fakeService{}
+		handler := newHandler(t, service)
+		request := httptest.NewRequest(nethttp.MethodPost, "/api/v1/projects/payments/"+test.path, strings.NewReader(test.body))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(sessionCookie())
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != test.status || service.probeAPIMode != test.want {
+			t.Fatalf("%s %s = %d mode %q, want %d mode %q: %s", test.path, test.body, response.Code, service.probeAPIMode, test.status, test.want, response.Body.String())
+		}
 	}
 }

@@ -105,12 +105,18 @@ const triggerSchema = z.object({
   version: z.number().optional(),
 });
 
+const llmProviderNameSchema = z.enum(["openai", "anthropic"]);
+const llmAPIModeSchema = z.enum(["chat_completions", "responses", "messages"]);
+export type LLMProviderName = z.infer<typeof llmProviderNameSchema>;
+export type LLMAPIMode = z.infer<typeof llmAPIModeSchema>;
+
 const llmProviderSchema = z.object({
   id: z.string().optional(),
-  provider: z.literal("openai"),
+  provider: llmProviderNameSchema,
   baseUrl: z.string(),
   credentialSecretId: z.string(),
   model: z.string(),
+  apiMode: llmAPIModeSchema,
   version: z.number().optional(),
 });
 
@@ -203,6 +209,14 @@ const webhookTokenSchema = z.object({
 const customRuleSchema = z.object({
   id: z.string(), name: z.string(), matchType: z.enum(["contains", "regex"]), pattern: z.string(),
   excludePattern: z.string().default(""), threshold: z.number().int(), windowSeconds: z.number().int(), cooldownSeconds: z.number().int(),
+});
+
+const logRuleTrialSchema = z.object({
+  positiveCount: z.number().int(), negativeCount: z.number().int(),
+  rules: z.array(z.object({
+    ruleId: z.string(), positiveMatches: z.array(z.number().int()), negativeMatches: z.array(z.number().int()),
+    positiveExcluded: z.array(z.number().int()), negativeExcluded: z.array(z.number().int()),
+  })),
 });
 
 const logProbeStatusSchema = z.object({
@@ -406,6 +420,7 @@ const listSuccessEnvelope = <T extends z.ZodType>(schema: T) => z.object({
 
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 export type TriggerKind = z.infer<typeof triggerKindSchema>;
+export type LogRuleTrial = z.infer<typeof logRuleTrialSchema>;
 export type LogProbeStatus = z.infer<typeof logProbeStatusSchema>;
 export type GeneratedLogRule = z.infer<typeof customRuleSchema>;
 export type IncidentStatus = z.infer<typeof incidentStatusSchema>;
@@ -588,9 +603,9 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/source/ssh/containers"), sshContainersSchema, { method: "POST", body: JSON.stringify(input) }),
   browseSSHLogFiles: (projectKey: string, input: { host: string; port: number; user: string; credentialSecretId: string; path: string }) =>
     requestData(projectPath(projectKey, "/configuration/source/ssh/log-files"), sshLogFilesSchema, { method: "POST", body: JSON.stringify(input) }),
-  probeLLMModels: (projectKey: string, input: { baseUrl: string; credentialSecretId: string }) =>
+  probeLLMModels: (projectKey: string, input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
-  probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
+  probeLLMChat: (projectKey: string, input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode }) =>
     requestData(projectPath(projectKey, "/llm/chat"), llmChatProbeSchema, { method: "POST", body: JSON.stringify(input) }),
   getConfiguration: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { signal }),
   getConfigurationDraft: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration/draft"), projectConfigurationDraftSchema, { signal }),
@@ -619,6 +634,8 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/auto-hotfix/enable"), remediationPolicySchema, { method: "POST", body: JSON.stringify({ checkId }) }),
   rotateWebhookToken: (projectKey: string) =>
     requestData(projectPath(projectKey, "/configuration/webhook-token"), webhookTokenSchema, { method: "POST", body: "{}" }),
+  trialLogRules: (projectKey: string, input: { config: unknown; positive: string[]; negative: string[] }) =>
+    requestData(projectPath(projectKey, "/configuration/log-rule/test"), logRuleTrialSchema, { method: "POST", body: JSON.stringify(input) }),
   generateLogRule: (projectKey: string, input: { intent: string; sample: string }) =>
     requestData(projectPath(projectKey, "/configuration/log-rule/generate"), customRuleSchema, { method: "POST", body: JSON.stringify(input) }),
   getLogProbeStatus: (projectKey: string, signal?: AbortSignal) =>

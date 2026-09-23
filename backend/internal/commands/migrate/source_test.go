@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 26 {
-		t.Fatalf("migration count = %d, want 26", len(migrations))
+	if len(migrations) != 28 {
+		t.Fatalf("migration count = %d, want 28", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {
@@ -398,6 +398,19 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 		!strings.Contains(forward.SQL, "SET DEFAULT") ||
 		strings.Contains(forward.SQL, "UPDATE projects") {
 		t.Fatal("migration 000026 must change the default without rewriting existing project policies")
+	}
+	responsesAPI := migrations[26]
+	if responsesAPI.Name != "llm_responses_api" ||
+		!strings.Contains(responsesAPI.SQL, "api_mode text NOT NULL DEFAULT 'chat_completions'") ||
+		!strings.Contains(responsesAPI.SQL, "CHECK (api_mode IN ('chat_completions', 'responses'))") {
+		t.Fatal("migration 000027 must add a backward-compatible constrained LLM API mode")
+	}
+	anthropic := migrations[27]
+	if anthropic.Name != "llm_anthropic" ||
+		!strings.Contains(anthropic.SQL, "CHECK (provider IN ('openai', 'anthropic'))") ||
+		!strings.Contains(anthropic.SQL, "CHECK (api_mode IN ('chat_completions', 'responses', 'messages'))") ||
+		!strings.Contains(anthropic.SQL, "CHECK ((provider = 'anthropic') = (api_mode = 'messages'))") {
+		t.Fatal("migration 000028 must allow the anthropic provider only with the messages API mode")
 	}
 	requiredAutoHotfixPolicy := []string{
 		"remediation_execution_mode",

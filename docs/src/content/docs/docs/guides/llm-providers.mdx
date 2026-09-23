@@ -1,7 +1,7 @@
 ---
 title: LLM providers for incident investigation
-summary: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
-description: Configure optional OpenAI-compatible incident analysis without expanding model authority or weakening deterministic operation.
+summary: Configure optional OpenAI-compatible or Anthropic incident analysis without expanding model authority or weakening deterministic operation.
+description: Configure optional OpenAI-compatible or Anthropic incident analysis without expanding model authority or weakening deterministic operation.
 availability: preview
 translationKey: llm-providers
 sources:
@@ -18,17 +18,25 @@ or planned generic Service. The neutral core depends only on `ModelProvider` and
 an opaque turn binding; concrete adapters and trusted composition resolve
 endpoint, model, and credentials.
 
-Mendry supports project-scoped OpenAI-compatible provider configuration. The
+Mendry supports project-scoped OpenAI-compatible and Anthropic provider configuration. The
 provider is optional configuration, and a failed webhook classifier call falls
 back to deterministic normalization. Remediation model turns require valid
 project provider configuration when that mode is used.
 
 ## Configure
 
-1. Create an `http_bearer` project credential.
-2. Save provider `openai`, an HTTPS-compatible `baseUrl`, the credential ID, and a model ID.
+1. Create an `http_bearer` project credential that holds the provider API key.
+2. Save a provider, an HTTPS-compatible `baseUrl`, the credential ID, a model ID, and an API mode:
+   - Provider `openai` (OpenAI-compatible) supports two API modes:
+     - `chat_completions` calls `/v1/chat/completions`.
+     - `responses` calls `/v1/responses`.
+   - Provider `anthropic` always uses API mode `messages`, which calls the Anthropic Messages API at `/v1/messages`. The default `baseUrl` is `https://api.anthropic.com`, and model IDs look like `claude-sonnet-5` or `claude-opus-5-5`.
 3. List models through the project probe endpoint and select an ID returned by the provider.
-4. Run the bounded connectivity probe before saving the operational choice.
+4. Run the bounded connectivity probe with the selected API mode before saving the operational choice.
+
+Existing provider records default to `chat_completions`. The selected mode is used consistently for connectivity probes, log-rule generation, and remediation model turns. Every mode discovers models through `/v1/models`.
+
+For Anthropic, the stored credential is sent as the `x-api-key` header together with `anthropic-version: 2023-06-01`, not as a bearer token. The Messages API has no JSON-object response mode, so Mendry instructs the model to reply with a single JSON object and removes markdown fences before validating the reply. Sampling parameters such as `temperature` are not sent. When a reply contains tool calls, any text before them is discarded.
 
 The API key is write-only. Provider reads expose configuration metadata, not the
 secret.

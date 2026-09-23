@@ -8,7 +8,7 @@ import { formatTime } from "../../shared/format";
 import { LoadingState, PageError } from "../../shared/ui";
 import "./observations.css";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 export function ObservationsPage() {
   const project = useCurrentProject();
