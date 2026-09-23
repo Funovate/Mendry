@@ -156,7 +156,7 @@ SELECT e.id AS environment_id, e.environment_key, e.name AS environment_name, e.
        t.ingress_token_hash, t.ingress_token_ciphertext, t.ingress_token_nonce,
        l.id AS llm_id, l.provider AS llm_provider, l.base_url AS llm_base_url,
        l.credential_secret_id AS llm_credential_secret_id, l.model AS llm_model,
-       l.version AS llm_version
+       l.api_mode AS llm_api_mode, l.version AS llm_version
 FROM project_environments AS e
 JOIN project_repositories AS r ON r.project_id = e.project_id
 JOIN project_sources AS s ON s.project_id = e.project_id AND s.environment_id = e.id
@@ -202,6 +202,7 @@ type GetProjectConfigurationRow struct {
 	LlmBaseUrl                   *string
 	LlmCredentialSecretID        pgtype.UUID
 	LlmModel                     *string
+	LlmApiMode                   *string
 	LlmVersion                   *int64
 }
 
@@ -243,6 +244,7 @@ func (q *Queries) GetProjectConfiguration(ctx context.Context, projectID pgtype.
 		&i.LlmBaseUrl,
 		&i.LlmCredentialSecretID,
 		&i.LlmModel,
+		&i.LlmApiMode,
 		&i.LlmVersion,
 	)
 	return i, err
@@ -278,7 +280,7 @@ func (q *Queries) GetProjectEnvironment(ctx context.Context, projectID pgtype.UU
 }
 
 const getProjectLLMProvider = `-- name: GetProjectLLMProvider :one
-SELECT id, provider, base_url, credential_secret_id, model, version
+SELECT id, provider, base_url, credential_secret_id, model, api_mode, version
 FROM project_llm_providers
 WHERE project_id = $1
 LIMIT 1
@@ -290,6 +292,7 @@ type GetProjectLLMProviderRow struct {
 	BaseUrl            string
 	CredentialSecretID pgtype.UUID
 	Model              string
+	ApiMode            string
 	Version            int64
 }
 
@@ -302,6 +305,7 @@ func (q *Queries) GetProjectLLMProvider(ctx context.Context, projectID pgtype.UU
 		&i.BaseUrl,
 		&i.CredentialSecretID,
 		&i.Model,
+		&i.ApiMode,
 		&i.Version,
 	)
 	return i, err
@@ -837,19 +841,21 @@ WITH changed_environment AS (
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 ), changed_llm AS (
     INSERT INTO project_llm_providers (
-        id, project_id, provider, base_url, credential_secret_id, model
+        id, project_id, provider, base_url, credential_secret_id, model, api_mode
     ) VALUES (
         $27, $2, $28,
-        $29, $30, $31
+        $29, $30, $31,
+        $32
     )
     ON CONFLICT (project_id) DO UPDATE
     SET provider = EXCLUDED.provider,
         base_url = EXCLUDED.base_url,
         credential_secret_id = EXCLUDED.credential_secret_id,
         model = EXCLUDED.model,
+        api_mode = EXCLUDED.api_mode,
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, provider, base_url, credential_secret_id, model, version
+    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, version
 )
 SELECT changed_environment.id AS environment_id,
        changed_environment.environment_key, changed_environment.name AS environment_name,
@@ -871,7 +877,8 @@ SELECT changed_environment.id AS environment_id,
        changed_llm.id AS llm_id, changed_llm.provider AS llm_provider,
        changed_llm.base_url AS llm_base_url,
        changed_llm.credential_secret_id AS llm_credential_secret_id,
-       changed_llm.model AS llm_model, changed_llm.version AS llm_version
+       changed_llm.model AS llm_model, changed_llm.api_mode AS llm_api_mode,
+       changed_llm.version AS llm_version
 FROM changed_environment, changed_repository, changed_source, changed_trigger, changed_llm
 `
 
@@ -907,6 +914,7 @@ type UpsertProjectConfigurationParams struct {
 	LlmBaseUrl                   string
 	LlmCredentialSecretID        pgtype.UUID
 	LlmModel                     string
+	LlmApiMode                   string
 }
 
 type UpsertProjectConfigurationRow struct {
@@ -944,6 +952,7 @@ type UpsertProjectConfigurationRow struct {
 	LlmBaseUrl                   string
 	LlmCredentialSecretID        pgtype.UUID
 	LlmModel                     string
+	LlmApiMode                   string
 	LlmVersion                   int64
 }
 
@@ -980,6 +989,7 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		arg.LlmBaseUrl,
 		arg.LlmCredentialSecretID,
 		arg.LlmModel,
+		arg.LlmApiMode,
 	)
 	var i UpsertProjectConfigurationRow
 	err := row.Scan(
@@ -1017,6 +1027,7 @@ func (q *Queries) UpsertProjectConfiguration(ctx context.Context, arg UpsertProj
 		&i.LlmBaseUrl,
 		&i.LlmCredentialSecretID,
 		&i.LlmModel,
+		&i.LlmApiMode,
 		&i.LlmVersion,
 	)
 	return i, err
@@ -1077,21 +1088,23 @@ func (q *Queries) UpsertProjectEnvironment(ctx context.Context, arg UpsertProjec
 const upsertProjectLLMProvider = `-- name: UpsertProjectLLMProvider :one
 WITH changed_llm AS (
     INSERT INTO project_llm_providers (
-        id, project_id, provider, base_url, credential_secret_id, model
+        id, project_id, provider, base_url, credential_secret_id, model, api_mode
     ) VALUES (
         $1, $2, $3,
-        $4, $5, $6
+        $4, $5, $6,
+        $7
     )
     ON CONFLICT (project_id) DO UPDATE
     SET provider = EXCLUDED.provider,
         base_url = EXCLUDED.base_url,
         credential_secret_id = EXCLUDED.credential_secret_id,
         model = EXCLUDED.model,
+        api_mode = EXCLUDED.api_mode,
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, provider, base_url, credential_secret_id, model, version
+    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, version
 )
-SELECT id, provider, base_url, credential_secret_id, model, version
+SELECT id, provider, base_url, credential_secret_id, model, api_mode, version
 FROM changed_llm
 `
 
@@ -1102,6 +1115,7 @@ type UpsertProjectLLMProviderParams struct {
 	LlmBaseUrl            string
 	LlmCredentialSecretID pgtype.UUID
 	LlmModel              string
+	LlmApiMode            string
 }
 
 type UpsertProjectLLMProviderRow struct {
@@ -1110,6 +1124,7 @@ type UpsertProjectLLMProviderRow struct {
 	BaseUrl            string
 	CredentialSecretID pgtype.UUID
 	Model              string
+	ApiMode            string
 	Version            int64
 }
 
@@ -1121,6 +1136,7 @@ func (q *Queries) UpsertProjectLLMProvider(ctx context.Context, arg UpsertProjec
 		arg.LlmBaseUrl,
 		arg.LlmCredentialSecretID,
 		arg.LlmModel,
+		arg.LlmApiMode,
 	)
 	var i UpsertProjectLLMProviderRow
 	err := row.Scan(
@@ -1129,6 +1145,7 @@ func (q *Queries) UpsertProjectLLMProvider(ctx context.Context, arg UpsertProjec
 		&i.BaseUrl,
 		&i.CredentialSecretID,
 		&i.Model,
+		&i.ApiMode,
 		&i.Version,
 	)
 	return i, err

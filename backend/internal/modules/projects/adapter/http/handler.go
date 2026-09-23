@@ -39,7 +39,7 @@ type service interface {
 	ProbeRepositoryRefs(context.Context, authdomain.User, string, string, string, string) (application.RepositoryRefs, error)
 	ProbeSSHContainers(context.Context, authdomain.User, string, string, int, string, string) ([]domain.DockerContainer, error)
 	ProbeLLMModels(context.Context, authdomain.User, string, string, string) (application.LLMModels, error)
-	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error
+	ProbeLLMChat(context.Context, authdomain.User, string, string, string, string, domain.LLMAPIMode) error
 }
 
 type logRuleGeneratorService interface {
@@ -155,10 +155,11 @@ type remediationPolicyRequest struct {
 }
 
 type llmRequest struct {
-	Provider           string `json:"provider"`
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
+	Provider           string            `json:"provider"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
 }
 
 type llmModelsRequest struct {
@@ -167,9 +168,10 @@ type llmModelsRequest struct {
 }
 
 type llmChatRequest struct {
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
 }
 
 type environmentRequest struct {
@@ -273,12 +275,13 @@ type remediationPolicyResponse struct {
 }
 
 type llmResponse struct {
-	ID                 string `json:"id"`
-	Provider           string `json:"provider"`
-	BaseURL            string `json:"baseUrl"`
-	CredentialSecretID string `json:"credentialSecretId"`
-	Model              string `json:"model"`
-	Version            int64  `json:"version"`
+	ID                 string            `json:"id"`
+	Provider           string            `json:"provider"`
+	BaseURL            string            `json:"baseUrl"`
+	CredentialSecretID string            `json:"credentialSecretId"`
+	Model              string            `json:"model"`
+	APIMode            domain.LLMAPIMode `json:"apiMode"`
+	Version            int64             `json:"version"`
 }
 
 type llmModelsResponse struct {
@@ -616,7 +619,7 @@ func (h *Handler) probeLLMChat(writer nethttp.ResponseWriter, request *nethttp.R
 	if !ok {
 		return
 	}
-	if err := h.service.ProbeLLMChat(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, payload.Model); err != nil {
+	if err := h.service.ProbeLLMChat(request.Context(), principal, request.PathValue("projectKey"), payload.BaseURL, payload.CredentialSecretID, payload.Model, payload.APIMode); err != nil {
 		writeApplicationError(writer, request, err)
 		return
 	}
@@ -844,7 +847,7 @@ func mapTrigger(trigger domain.Trigger) triggerResponse {
 }
 
 func mapLLM(provider domain.LLMProvider) llmResponse {
-	return llmResponse{ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL, CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, Version: provider.Version}
+	return llmResponse{ID: provider.ID, Provider: provider.Provider, BaseURL: provider.BaseURL, CredentialSecretID: provider.CredentialSecretID, Model: provider.Model, APIMode: provider.APIMode, Version: provider.Version}
 }
 
 func mapLLMResponse(provider *domain.LLMProvider) *llmResponse {
@@ -861,7 +864,7 @@ func mapLLMRequest(payload *llmRequest) *domain.LLMProvider {
 	}
 	return &domain.LLMProvider{
 		Provider: payload.Provider, BaseURL: payload.BaseURL,
-		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model,
+		CredentialSecretID: payload.CredentialSecretID, Model: payload.Model, APIMode: payload.APIMode,
 	}
 }
 

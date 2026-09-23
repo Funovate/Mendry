@@ -62,6 +62,13 @@ const (
 	ResponseFormatJSONObject ResponseFormat = "json_object"
 )
 
+type APIMode string
+
+const (
+	APIModeChatCompletions APIMode = "chat_completions"
+	APIModeResponses       APIMode = "responses"
+)
+
 // Binding 是 composition 注入的可信 provider 连接信息。
 // APIKey 由 adapter 在使用后清零；调用方不得复用或修改该 backing array。
 type Binding struct {
@@ -70,6 +77,7 @@ type Binding struct {
 	APIKey         []byte
 	Headers        map[string]string
 	ResponseFormat ResponseFormat
+	APIMode        APIMode
 }
 
 // BindingLoader 根据 opaque binding ID 返回一次调用所需的可信绑定。
@@ -176,6 +184,63 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
+type responsesRequest struct {
+	Model           string               `json:"model"`
+	MaxOutputTokens int                  `json:"max_output_tokens,omitempty"`
+	Input           []responsesInputItem `json:"input"`
+	Tools           []responsesTool      `json:"tools,omitempty"`
+	Text            *responsesText       `json:"text,omitempty"`
+}
+
+type responsesInputItem struct {
+	Type      string `json:"type,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Content   string `json:"content,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	Output    string `json:"output,omitempty"`
+}
+
+type responsesTool struct {
+	Type        string         `json:"type"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type responsesText struct {
+	Format responseFormat `json:"format"`
+}
+
+type responsesResponse struct {
+	Status            string `json:"status"`
+	IncompleteDetails struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+	Output []struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+		Content   []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
+	Usage responsesUsage `json:"usage"`
+}
+
+type responsesUsage struct {
+	InputTokens        int64 `json:"input_tokens"`
+	OutputTokens       int64 `json:"output_tokens"`
+	TotalTokens        int64 `json:"total_tokens"`
+	InputTokensDetails struct {
+		CachedTokens *int64 `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
 type chatMessage struct {
 	Role       string         `json:"role"`
 	Content    string         `json:"content,omitempty"`
@@ -206,14 +271,18 @@ type chatFunctionCall struct {
 }
 
 type chatResponse struct {
-	Choices []struct {
-		FinishReason string `json:"finish_reason"`
-		Message      struct {
-			Content   string         `json:"content"`
-			ToolCalls []chatToolCall `json:"tool_calls"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage chatUsage `json:"usage"`
+	Choices []chatChoice `json:"choices"`
+	Usage   chatUsage    `json:"usage"`
+}
+
+type chatChoice struct {
+	FinishReason string              `json:"finish_reason"`
+	Message      chatResponseMessage `json:"message"`
+}
+
+type chatResponseMessage struct {
+	Content   string         `json:"content"`
+	ToolCalls []chatToolCall `json:"tool_calls"`
 }
 
 type chatUsage struct {
@@ -375,7 +444,15 @@ func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn doma
 	if binding.ResponseFormat == ResponseFormatJSONObject {
 		request.ResponseFormat = &responseFormat{Type: string(ResponseFormatJSONObject)}
 	}
-	payload, err := json.Marshal(request)
+	var requestPayload any = request
+	if binding.APIMode == APIModeResponses {
+		responses, buildErr := buildResponsesRequest(binding.Model, maxTokens, messages, tools, binding.ResponseFormat)
+		if buildErr != nil {
+			return result, buildErr
+		}
+		requestPayload = responses
+	}
+	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		return result, fmt.Errorf("encode openai request: %w", err)
 	}
@@ -385,7 +462,12 @@ func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn doma
 		return result, err
 	}
 	var decoded chatResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	if binding.APIMode == APIModeResponses {
+		decoded, err = decodeResponsesResponse(body)
+	} else {
+		err = json.Unmarshal(body, &decoded)
+	}
+	if err != nil {
 		wrapped := fmt.Errorf("decode openai response: invalid JSON")
 		c.logRequest(ctx, binding, payload, status, elapsed, body, result, wrapped)
 		return result, wrapped
@@ -430,7 +512,7 @@ func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn doma
 }
 
 func (c *Client) doRequest(ctx context.Context, binding Binding, payload []byte, metrics domain.ModelResult) ([]byte, int, time.Duration, error) {
-	endpoint := binding.BaseURL + "/v1/chat/completions"
+	endpoint := binding.endpoint()
 	var lastDuration time.Duration
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
@@ -488,6 +570,76 @@ func (c *Client) doRequest(ctx context.Context, binding Binding, payload []byte,
 		return body, response.StatusCode, lastDuration, nil
 	}
 	return nil, 0, lastDuration, errors.New("openai request attempts exhausted")
+}
+
+func buildResponsesRequest(model string, maxTokens int, messages []chatMessage, tools []chatTool, format ResponseFormat) (responsesRequest, error) {
+	input := make([]responsesInputItem, 0, len(messages))
+	for _, message := range messages {
+		switch message.Role {
+		case "tool":
+			input = append(input, responsesInputItem{Type: "function_call_output", CallID: message.ToolCallID, Output: message.Content})
+		case "assistant":
+			if message.Content != "" {
+				input = append(input, responsesInputItem{Role: message.Role, Content: message.Content})
+			}
+			for _, call := range message.ToolCalls {
+				input = append(input, responsesInputItem{Type: "function_call", CallID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+			}
+		case "system", "user":
+			input = append(input, responsesInputItem{Role: message.Role, Content: message.Content})
+		default:
+			return responsesRequest{}, errors.New("encode openai responses input: invalid role")
+		}
+	}
+	responseTools := make([]responsesTool, 0, len(tools))
+	for _, tool := range tools {
+		responseTools = append(responseTools, responsesTool{
+			Type: "function", Name: tool.Function.Name, Description: tool.Function.Description,
+			Parameters: tool.Function.Parameters,
+		})
+	}
+	request := responsesRequest{Model: model, MaxOutputTokens: maxTokens, Input: input, Tools: responseTools}
+	if format == ResponseFormatJSONObject {
+		request.Text = &responsesText{Format: responseFormat{Type: string(ResponseFormatJSONObject)}}
+	}
+	return request, nil
+}
+
+func decodeResponsesResponse(body []byte) (chatResponse, error) {
+	var response responsesResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return chatResponse{}, err
+	}
+	choice := chatChoice{FinishReason: response.Status}
+	if response.Status == "incomplete" && response.IncompleteDetails.Reason == "max_output_tokens" {
+		choice.FinishReason = "length"
+	}
+	var content strings.Builder
+	for _, output := range response.Output {
+		switch output.Type {
+		case "message":
+			for _, item := range output.Content {
+				if item.Type == "output_text" {
+					content.WriteString(item.Text)
+				}
+			}
+		case "function_call":
+			callID := output.CallID
+			if callID == "" {
+				callID = output.ID
+			}
+			choice.Message.ToolCalls = append(choice.Message.ToolCalls, chatToolCall{
+				ID: callID, Type: "function", Function: chatFunctionCall{Name: output.Name, Arguments: output.Arguments},
+			})
+		}
+	}
+	choice.Message.Content = content.String()
+	usage := chatUsage{
+		PromptTokens: response.Usage.InputTokens, CompletionTokens: response.Usage.OutputTokens,
+		TotalTokens: response.Usage.TotalTokens,
+	}
+	usage.PromptTokensDetails.CachedTokens = response.Usage.InputTokensDetails.CachedTokens
+	return chatResponse{Choices: []chatChoice{choice}, Usage: usage}, nil
 }
 
 func buildMessages(turn domain.ModelTurn, names providerToolNames) ([]chatMessage, error) {
@@ -909,6 +1061,13 @@ func mergeResults(previous, current domain.ModelResult) domain.ModelResult {
 	return merged
 }
 
+func (binding Binding) endpoint() string {
+	if binding.APIMode == APIModeResponses {
+		return binding.BaseURL + "/v1/responses"
+	}
+	return binding.BaseURL + "/v1/chat/completions"
+}
+
 func normalizeBinding(binding Binding) (Binding, error) {
 	binding.BaseURL = strings.TrimRight(strings.TrimSpace(binding.BaseURL), "/")
 	if binding.BaseURL == "" {
@@ -920,6 +1079,9 @@ func normalizeBinding(binding Binding) (Binding, error) {
 	}
 	if binding.ResponseFormat == "" {
 		binding.ResponseFormat = ResponseFormatNone
+	}
+	if binding.APIMode == "" {
+		binding.APIMode = APIModeChatCompletions
 	}
 	binding.APIKey = append([]byte(nil), binding.APIKey...)
 	if len(binding.Headers) > 0 {
@@ -952,6 +1114,9 @@ func validateBinding(binding Binding) error {
 	}
 	if binding.ResponseFormat != "" && binding.ResponseFormat != ResponseFormatNone && binding.ResponseFormat != ResponseFormatJSONObject {
 		return errors.New("response format is invalid")
+	}
+	if binding.APIMode != APIModeChatCompletions && binding.APIMode != APIModeResponses {
+		return errors.New("API mode is invalid")
 	}
 	for name, value := range binding.Headers {
 		if strings.TrimSpace(name) == "" || !utf8.ValidString(name) || !utf8.ValidString(value) || strings.ContainsAny(name+value, "\r\n") || len(name) > 128 || len(value) > 4096 {
@@ -991,8 +1156,12 @@ func clearBinding(binding *Binding) {
 }
 
 func (c *Client) logRequest(ctx context.Context, binding Binding, request []byte, status int, duration time.Duration, response []byte, metrics domain.ModelResult, err error) {
-	host, path := observability.HTTPIdentity(binding.BaseURL + "/v1/chat/completions")
-	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{Operation: "chat.completions", Host: host, Path: path, Model: binding.Model, Status: status, Duration: duration, Request: request, Response: response, RequestBytes: metrics.RequestBytes, ToolCount: metrics.ToolCount, ToolSchemaBytes: metrics.ToolSchemaBytes, CacheTokensReported: metrics.CacheTokensReported, CacheHitTokens: metrics.CacheHitTokens, CacheMissTokens: metrics.CacheMissTokens, Err: err})
+	host, path := observability.HTTPIdentity(binding.endpoint())
+	operation := "chat.completions"
+	if binding.APIMode == APIModeResponses {
+		operation = "responses"
+	}
+	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{Operation: operation, Host: host, Path: path, Model: binding.Model, Status: status, Duration: duration, Request: request, Response: response, RequestBytes: metrics.RequestBytes, ToolCount: metrics.ToolCount, ToolSchemaBytes: metrics.ToolSchemaBytes, CacheTokensReported: metrics.CacheTokensReported, CacheHitTokens: metrics.CacheHitTokens, CacheMissTokens: metrics.CacheMissTokens, Err: err})
 }
 
 func classifyTransport(ctx context.Context, err error) error {

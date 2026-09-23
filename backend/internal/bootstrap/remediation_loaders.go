@@ -139,6 +139,7 @@ func (l *projectRuntimeLoaders) LoadLLMProvider(ctx context.Context, projectID s
 		BaseURL:            configuration.LLM.BaseURL,
 		Model:              configuration.LLM.Model,
 		CredentialSecretID: configuration.LLM.CredentialSecretID,
+		APIMode:            remediationopenai.APIMode(configuration.LLM.APIMode),
 	}, nil
 }
 

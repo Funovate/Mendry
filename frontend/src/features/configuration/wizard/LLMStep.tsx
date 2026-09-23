@@ -8,7 +8,7 @@ const LLM_CREDENTIAL_KINDS: { value: ProjectSecret["kind"]; label: string }[] = 
 ];
 
 export function LLMStep({
-  baseUrl, setBaseUrl, credentialId, setCredentialId, model, setModel,
+  baseUrl, setBaseUrl, credentialId, setCredentialId, model, setModel, apiMode, setAPIMode,
   models, onLoadModels, loadingModels, loadModelsError,
   onTestChat, testingChat, testChatError, chatReady,
   onSave, saving = false, canSave = false, saveError,
@@ -21,6 +21,8 @@ export function LLMStep({
   setCredentialId: (value: string) => void;
   model: string;
   setModel: (value: string) => void;
+  apiMode: "chat_completions" | "responses";
+  setAPIMode: (value: "chat_completions" | "responses") => void;
   models: string[];
   onLoadModels: () => void;
   loadingModels: boolean;
@@ -52,6 +54,13 @@ export function LLMStep({
       <h2>LLM provider</h2>
     </div>
     <label>Provider<input aria-label="LLM provider" value="openai" readOnly /></label>
+    <label>
+      API
+      <div className="segmented-control" role="group" aria-label="LLM API">
+        <button type="button" className={apiMode === "chat_completions" ? "active" : ""} aria-pressed={apiMode === "chat_completions"} onClick={() => setAPIMode("chat_completions")}>Chat Completions</button>
+        <button type="button" className={apiMode === "responses" ? "active" : ""} aria-pressed={apiMode === "responses"} onClick={() => setAPIMode("responses")}>Responses</button>
+      </div>
+    </label>
     <label>Base URL<input aria-label="LLM base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com" /></label>
     <CredentialField
       label="API key credential" value={credentialId} onChange={setCredentialId} secrets={bearerSecrets}
@@ -83,6 +92,6 @@ export function LLMStep({
       </button>
       {saveError !== undefined && saveError !== null && <p className="credential-field-error" role="alert">{messageFromError(saveError)}</p>}
     </div>
-    <p className="choice-note">Load models checks that the API key can list models. Test with hi sends a bounded Chat Completions request so an unusable model cannot be saved.</p>
+    <p className="choice-note">Load models checks that the API key can list models. Test with hi sends a bounded request through the selected API so an unusable model cannot be saved.</p>
   </section>;
 }

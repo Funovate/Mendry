@@ -106,8 +106,16 @@ type LLMProvider struct {
 	BaseURL            string
 	CredentialSecretID string
 	Model              string
+	APIMode            LLMAPIMode
 	Version            int64
 }
+
+type LLMAPIMode string
+
+const (
+	LLMAPIModeChatCompletions LLMAPIMode = "chat_completions"
+	LLMAPIModeResponses       LLMAPIMode = "responses"
+)
 
 type AgentLoopMode string
 
@@ -412,9 +420,18 @@ func ValidateSecret(secret Secret, value []byte) error {
 	return nil
 }
 
+func NormalizeLLMAPIMode(apiMode LLMAPIMode) LLMAPIMode {
+	if apiMode == "" {
+		return LLMAPIModeChatCompletions
+	}
+	return apiMode
+}
+
 func ValidateLLMProvider(provider LLMProvider) error {
+	apiMode := NormalizeLLMAPIMode(provider.APIMode)
 	if !oneOf(provider.Provider, "openai") || !validHTTPURL(provider.BaseURL) || !bounded(provider.BaseURL, 1, 2048) ||
-		!bounded(provider.Model, 1, 200) || strings.ContainsAny(provider.Model, " \t\r\n") {
+		!bounded(provider.Model, 1, 200) || strings.ContainsAny(provider.Model, " \t\r\n") ||
+		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses) {
 		return fmt.Errorf("LLM provider configuration is invalid")
 	}
 	if err := validateRequiredUUIDv7(provider.CredentialSecretID); err != nil {
@@ -430,11 +447,13 @@ func ValidateLLMModelsProbe(baseURL, secretID string) error {
 	return validateRequiredUUIDv7(secretID)
 }
 
-func ValidateLLMChatProbe(baseURL, secretID, model string) error {
+func ValidateLLMChatProbe(baseURL, secretID, model string, apiMode LLMAPIMode) error {
 	if err := ValidateLLMModelsProbe(baseURL, secretID); err != nil {
 		return err
 	}
-	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") {
+	apiMode = NormalizeLLMAPIMode(apiMode)
+	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") ||
+		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses) {
 		return fmt.Errorf("LLM model is invalid")
 	}
 	return nil

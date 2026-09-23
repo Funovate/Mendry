@@ -181,7 +181,7 @@ func (*fakeService) ProbeSSHContainers(context.Context, authdomain.User, string,
 func (*fakeService) ProbeLLMModels(context.Context, authdomain.User, string, string, string) (projectapplication.LLMModels, error) {
 	return projectapplication.LLMModels{Models: []string{"gpt-4.1", "gpt-5.6"}}, nil
 }
-func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, string, string, string) error {
+func (*fakeService) ProbeLLMChat(context.Context, authdomain.User, string, string, string, string, domain.LLMAPIMode) error {
 	return nil
 }
 

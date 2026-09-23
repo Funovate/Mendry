@@ -111,6 +111,7 @@ const llmProviderSchema = z.object({
   baseUrl: z.string(),
   credentialSecretId: z.string(),
   model: z.string(),
+  apiMode: z.enum(["chat_completions", "responses"]),
   version: z.number().optional(),
 });
 
@@ -599,7 +600,7 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/source/ssh/log-files"), sshLogFilesSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMModels: (projectKey: string, input: { baseUrl: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
-  probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string }) =>
+  probeLLMChat: (projectKey: string, input: { baseUrl: string; credentialSecretId: string; model: string; apiMode: "chat_completions" | "responses" }) =>
     requestData(projectPath(projectKey, "/llm/chat"), llmChatProbeSchema, { method: "POST", body: JSON.stringify(input) }),
   getConfiguration: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { signal }),
   getConfigurationDraft: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration/draft"), projectConfigurationDraftSchema, { signal }),

@@ -26,9 +26,13 @@ project provider configuration when that mode is used.
 ## Configure
 
 1. Create an `http_bearer` project credential.
-2. Save provider `openai`, an HTTPS-compatible `baseUrl`, the credential ID, and a model ID.
+2. Save provider `openai`, an HTTPS-compatible `baseUrl`, the credential ID, a model ID, and an API mode:
+   - `chat_completions` calls `/v1/chat/completions`.
+   - `responses` calls `/v1/responses`.
 3. List models through the project probe endpoint and select an ID returned by the provider.
-4. Run the bounded connectivity probe before saving the operational choice.
+4. Run the bounded connectivity probe with the selected API mode before saving the operational choice.
+
+Existing provider records default to `chat_completions`. The selected mode is used consistently for connectivity probes, log-rule generation, and remediation model turns. The `/v1/models` discovery call is shared by both modes.
 
 The API key is write-only. Provider reads expose configuration metadata, not the
 secret.

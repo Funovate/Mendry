@@ -46,11 +46,19 @@ const (
 // context.DeadlineExceeded 兼容性，供上层与 run elapsed exhaustion 区分。
 var ErrModelTurnTimeout = fmt.Errorf("openai model turn timed out: %w", context.DeadlineExceeded)
 
+type APIMode string
+
+const (
+	APIModeChatCompletions APIMode = "chat_completions"
+	APIModeResponses       APIMode = "responses"
+)
+
 // ProviderConfig 是适配器读取的无凭据 LLM 配置。
 type ProviderConfig struct {
 	BaseURL            string
 	Model              string
 	CredentialSecretID string
+	APIMode            APIMode
 }
 
 // ConfigLoader 按项目加载已保存的 LLM 接入点。
@@ -74,6 +82,7 @@ type Options struct {
 	BaseURL      string
 	Model        string
 	StaticAPIKey string
+	APIMode      APIMode
 }
 
 // Client 用净 HTTP 调用 Chat Completions，不导出 SDK 类型。
@@ -87,6 +96,7 @@ type Client struct {
 	baseURL      string
 	model        string
 	staticAPIKey string
+	apiMode      APIMode
 }
 
 // NewClient 验证依赖并构造 LLM 适配器。
@@ -118,6 +128,7 @@ func NewClient(options Options) (*Client, error) {
 		baseURL:      strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
 		model:        strings.TrimSpace(options.Model),
 		staticAPIKey: options.StaticAPIKey,
+		apiMode:      options.APIMode,
 	}, nil
 }
 
@@ -130,6 +141,67 @@ type chatRequest struct {
 	ResponseFormat map[string]string `json:"response_format"`
 	Messages       []chatMessage     `json:"messages"`
 	Tools          []chatTool        `json:"tools,omitempty"`
+}
+
+type responsesRequest struct {
+	Model           string               `json:"model"`
+	MaxOutputTokens int                  `json:"max_output_tokens,omitempty"`
+	Input           []responsesInputItem `json:"input"`
+	Tools           []responsesTool      `json:"tools,omitempty"`
+	Text            *responsesText       `json:"text,omitempty"`
+}
+
+type responsesInputItem struct {
+	Type      string `json:"type,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Content   string `json:"content,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	Output    string `json:"output,omitempty"`
+}
+
+type responsesTool struct {
+	Type        string                 `json:"type"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+type responsesText struct {
+	Format responseFormat `json:"format"`
+}
+
+type responsesResponse struct {
+	Status            string `json:"status"`
+	IncompleteDetails struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+	Output []struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+		Content   []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
+	Usage responsesUsage `json:"usage"`
+}
+
+type responsesUsage struct {
+	InputTokens        int64 `json:"input_tokens"`
+	OutputTokens       int64 `json:"output_tokens"`
+	TotalTokens        int64 `json:"total_tokens"`
+	InputTokensDetails struct {
+		CachedTokens *int64 `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
 }
 
 type chatMessage struct {
@@ -257,14 +329,18 @@ func isProviderToolNameCharacter(r rune) bool {
 }
 
 type chatResponse struct {
-	Choices []struct {
-		FinishReason string `json:"finish_reason"`
-		Message      struct {
-			Content   string         `json:"content"`
-			ToolCalls []chatToolCall `json:"tool_calls"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage chatUsage `json:"usage"`
+	Choices []chatChoice `json:"choices"`
+	Usage   chatUsage    `json:"usage"`
+}
+
+type chatChoice struct {
+	FinishReason string              `json:"finish_reason"`
+	Message      chatResponseMessage `json:"message"`
+}
+
+type chatResponseMessage struct {
+	Content   string         `json:"content"`
+	ToolCalls []chatToolCall `json:"tool_calls"`
 }
 
 type chatUsage struct {
@@ -347,14 +423,22 @@ func (c *Client) completeWithTokens(
 		Provider: providerName, Model: session.model,
 		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
-	payload, err := json.Marshal(chatRequest{
+	var requestPayload any = chatRequest{
 		Model:          session.model,
 		Temperature:    req.Temperature,
 		MaxTokens:      maxTokens,
 		ResponseFormat: map[string]string{"type": "json_object"},
 		Messages:       messages,
 		Tools:          tools,
-	})
+	}
+	if session.apiMode == APIModeResponses {
+		responses, buildErr := buildResponsesRequest(session.model, maxTokens, messages, tools)
+		if buildErr != nil {
+			return result, buildErr
+		}
+		requestPayload = responses
+	}
+	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		return result, fmt.Errorf("encode openai request: %w", err)
 	}
@@ -365,10 +449,15 @@ func (c *Client) completeWithTokens(
 		return result, err
 	}
 	logResult := func(callErr error) {
-		c.logRequest(ctx, session.baseURL+"/v1/chat/completions", session.model, payload, status, elapsed, body, result, callErr)
+		c.logRequest(ctx, session.endpoint(), session.model, payload, status, elapsed, body, result, callErr)
 	}
 	var decoded chatResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	if session.apiMode == APIModeResponses {
+		decoded, err = decodeResponsesResponse(body)
+	} else {
+		err = json.Unmarshal(body, &decoded)
+	}
+	if err != nil {
 		wrapped := fmt.Errorf("decode openai response: %w", err)
 		logResult(wrapped)
 		return result, wrapped
@@ -445,6 +534,75 @@ func (c *Client) completeWithTokens(
 	return result, nil
 }
 
+func buildResponsesRequest(model string, maxTokens int, messages []chatMessage, tools []chatTool) (responsesRequest, error) {
+	input := make([]responsesInputItem, 0, len(messages))
+	for _, message := range messages {
+		switch message.Role {
+		case "tool":
+			input = append(input, responsesInputItem{Type: "function_call_output", CallID: message.ToolCallID, Output: message.Content})
+		case "assistant":
+			if message.Content != "" {
+				input = append(input, responsesInputItem{Role: message.Role, Content: message.Content})
+			}
+			for _, call := range message.ToolCalls {
+				input = append(input, responsesInputItem{Type: "function_call", CallID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+			}
+		case "system", "user":
+			input = append(input, responsesInputItem{Role: message.Role, Content: message.Content})
+		default:
+			return responsesRequest{}, fmt.Errorf("encode openai responses input: invalid role")
+		}
+	}
+	responseTools := make([]responsesTool, 0, len(tools))
+	for _, tool := range tools {
+		responseTools = append(responseTools, responsesTool{
+			Type: "function", Name: tool.Function.Name, Description: tool.Function.Description,
+			Parameters: tool.Function.Parameters,
+		})
+	}
+	return responsesRequest{
+		Model: model, MaxOutputTokens: maxTokens, Input: input, Tools: responseTools,
+		Text: &responsesText{Format: responseFormat{Type: "json_object"}},
+	}, nil
+}
+
+func decodeResponsesResponse(body []byte) (chatResponse, error) {
+	var response responsesResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return chatResponse{}, err
+	}
+	choice := chatChoice{FinishReason: response.Status}
+	if response.Status == "incomplete" && response.IncompleteDetails.Reason == "max_output_tokens" {
+		choice.FinishReason = "length"
+	}
+	var content strings.Builder
+	for _, output := range response.Output {
+		switch output.Type {
+		case "message":
+			for _, item := range output.Content {
+				if item.Type == "output_text" {
+					content.WriteString(item.Text)
+				}
+			}
+		case "function_call":
+			callID := output.CallID
+			if callID == "" {
+				callID = output.ID
+			}
+			choice.Message.ToolCalls = append(choice.Message.ToolCalls, chatToolCall{
+				ID: callID, Type: "function", Function: chatFunctionCall{Name: output.Name, Arguments: output.Arguments},
+			})
+		}
+	}
+	choice.Message.Content = content.String()
+	usage := chatUsage{
+		PromptTokens: response.Usage.InputTokens, CompletionTokens: response.Usage.OutputTokens,
+		TotalTokens: response.Usage.TotalTokens,
+	}
+	usage.PromptTokensDetails.CachedTokens = response.Usage.InputTokensDetails.CachedTokens
+	return chatResponse{Choices: []chatChoice{choice}, Usage: usage}, nil
+}
+
 func applyUsageMetrics(result *domain.ModelResult, usage chatUsage) {
 	if result == nil {
 		return
@@ -507,7 +665,7 @@ func nonNegativeInt64(value *int64) int64 {
 // 明确的临时 HTTP 状态会重放；请求参数、鉴权和响应协议错误保持立即失败。
 // 每次尝试单独记录 outbound observation，避免重试把真实 provider 失败隐藏掉。
 func (c *Client) doChatCompletion(ctx context.Context, session llmSession, payload []byte, metrics domain.ModelResult) ([]byte, int, time.Duration, error) {
-	endpoint := session.baseURL + "/v1/chat/completions"
+	endpoint := session.endpoint()
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		if err != nil {
@@ -796,8 +954,12 @@ func validateToolSchemaValue(value any, depth int) error {
 
 func (c *Client) logRequest(ctx context.Context, endpoint, model string, request []byte, status int, duration time.Duration, response []byte, metrics domain.ModelResult, err error) {
 	host, path := observability.HTTPIdentity(endpoint)
+	operation := "chat.completions"
+	if strings.HasSuffix(path, "/responses") {
+		operation = "responses"
+	}
 	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{
-		Operation:           "chat.completions",
+		Operation:           operation,
 		Host:                host,
 		Path:                path,
 		Model:               strings.TrimSpace(model),
@@ -819,6 +981,14 @@ type llmSession struct {
 	baseURL string
 	model   string
 	apiKey  []byte
+	apiMode APIMode
+}
+
+func (s llmSession) endpoint() string {
+	if s.apiMode == APIModeResponses {
+		return s.baseURL + "/v1/responses"
+	}
+	return s.baseURL + "/v1/chat/completions"
 }
 
 func (s llmSession) close() {
@@ -835,8 +1005,15 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 		if model == "" {
 			model = ModelID
 		}
+		apiMode := c.apiMode
+		if apiMode == "" {
+			apiMode = APIModeChatCompletions
+		}
+		if apiMode != APIModeChatCompletions && apiMode != APIModeResponses {
+			return llmSession{}, fmt.Errorf("openai API mode is invalid")
+		}
 		key := []byte(c.staticAPIKey)
-		return llmSession{baseURL: baseURL, model: model, apiKey: key}, nil
+		return llmSession{baseURL: baseURL, model: model, apiKey: key, apiMode: apiMode}, nil
 	}
 	if strings.TrimSpace(projectID) == "" {
 		return llmSession{}, fmt.Errorf("openai config requires a project id")
@@ -870,7 +1047,15 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 	if model == "" {
 		return llmSession{}, fmt.Errorf("llm model is required")
 	}
-	return llmSession{baseURL: baseURL, model: model, apiKey: plaintext}, nil
+	apiMode := cfg.APIMode
+	if apiMode == "" {
+		apiMode = APIModeChatCompletions
+	}
+	if apiMode != APIModeChatCompletions && apiMode != APIModeResponses {
+		clearBytes(plaintext)
+		return llmSession{}, fmt.Errorf("llm API mode is invalid")
+	}
+	return llmSession{baseURL: baseURL, model: model, apiKey: plaintext, apiMode: apiMode}, nil
 }
 
 func clearBytes(value []byte) {

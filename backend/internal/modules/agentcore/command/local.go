@@ -88,6 +88,7 @@ type ProviderConfig struct {
 	APIKeyEnv      string                `json:"apiKeyEnv"`
 	Headers        map[string]string     `json:"headers"`
 	ResponseFormat openai.ResponseFormat `json:"responseFormat"`
+	APIMode        openai.APIMode        `json:"apiMode"`
 }
 
 type PolicyConfig struct {
@@ -349,7 +350,7 @@ func buildProvider(config ProviderConfig, options Options) (domain.ModelProvider
 		return nil, errors.New("configured OpenAI API key environment variable is unavailable")
 	}
 	key = ""
-	loader := envOpenAIBindingLoader{baseURL: config.BaseURL, model: config.Model, apiKeyEnv: config.APIKeyEnv, headers: cloneStringMap(config.Headers), responseFormat: config.ResponseFormat, env: options.Env}
+	loader := envOpenAIBindingLoader{baseURL: config.BaseURL, model: config.Model, apiKeyEnv: config.APIKeyEnv, headers: cloneStringMap(config.Headers), responseFormat: config.ResponseFormat, apiMode: config.APIMode, env: options.Env}
 	client, err := openai.NewClient(openai.Options{Bindings: loader, HTTPClient: options.HTTPClient, Logger: options.Logger})
 	if err != nil {
 		return nil, err
@@ -363,6 +364,7 @@ type envOpenAIBindingLoader struct {
 	apiKeyEnv      string
 	headers        map[string]string
 	responseFormat openai.ResponseFormat
+	apiMode        openai.APIMode
 	env            EnvLookup
 }
 
@@ -371,7 +373,7 @@ func (l envOpenAIBindingLoader) LoadBinding(_ context.Context, _ string) (openai
 	if !ok || key == "" {
 		return openai.Binding{}, errors.New("configured OpenAI API key environment variable is unavailable")
 	}
-	return openai.Binding{BaseURL: l.baseURL, Model: l.model, APIKey: []byte(key), Headers: cloneStringMap(l.headers), ResponseFormat: l.responseFormat}, nil
+	return openai.Binding{BaseURL: l.baseURL, Model: l.model, APIKey: []byte(key), Headers: cloneStringMap(l.headers), ResponseFormat: l.responseFormat, APIMode: l.apiMode}, nil
 }
 
 type boundProvider struct {
@@ -556,6 +558,9 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.Provider.ResponseFormat == "" {
 		config.Provider.ResponseFormat = openai.ResponseFormatNone
 	}
+	if config.Provider.APIMode == "" {
+		config.Provider.APIMode = openai.APIModeChatCompletions
+	}
 	config.Provider.Headers = cloneStringMap(config.Provider.Headers)
 
 	config.Policy.Mode = strings.TrimSpace(config.Policy.Mode)
@@ -670,6 +675,9 @@ func validateConfig(config Config) error {
 	}
 	if config.Provider.ResponseFormat != openai.ResponseFormatNone && config.Provider.ResponseFormat != openai.ResponseFormatJSONObject {
 		return errors.New("provider response format is invalid")
+	}
+	if config.Provider.APIMode != openai.APIModeChatCompletions && config.Provider.APIMode != openai.APIModeResponses {
+		return errors.New("provider API mode is invalid")
 	}
 	if len(config.Provider.Headers) > 64 {
 		return errors.New("provider headers are too large")

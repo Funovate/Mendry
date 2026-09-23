@@ -303,7 +303,7 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 			Config: []byte(`{"schemaVersion":1,"provider":"tencent-cls","region":"ap-shanghai","resource":"integration-logset"}`), Capabilities: []string{"push_ingestion"}, Enabled: true},
 		Trigger: projectdomain.Trigger{ID: "019ff544-405c-7d26-9f10-cb3fc579605c", Kind: "signed_webhook", SigningSecretID: &secretIDs[2],
 			Config: []byte(`{"schemaVersion":1,"eventTypes":["error"],"deduplicationKey":"fingerprint"}`), Enabled: true},
-		LLM: &projectdomain.LLMProvider{ID: "019ff544-405c-7d29-9f10-cb3fc579605c", Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretIDs[1], Model: "gpt-5.6"},
+		LLM: &projectdomain.LLMProvider{ID: "019ff544-405c-7d29-9f10-cb3fc579605c", Provider: "openai", BaseURL: "https://api.openai.com", CredentialSecretID: secretIDs[1], Model: "gpt-5.6", APIMode: projectdomain.LLMAPIModeChatCompletions},
 	})
 	if err != nil {
 		t.Fatalf("upsert project configuration: %v", err)

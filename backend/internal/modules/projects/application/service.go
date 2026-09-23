@@ -91,7 +91,7 @@ type GitRefLister interface {
 // 并用一句固定 hi 探测已选模型是否真能完成对话。
 type LLMModelLister interface {
 	ListModels(ctx context.Context, baseURL string, apiKey []byte) ([]string, error)
-	ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string) error
+	ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode) error
 }
 
 // ContainerProbeRequest 是 authenticated Docker inventory probe 的无命令请求。
@@ -134,7 +134,7 @@ type LogProbeManagerPort interface {
 }
 
 type LogRuleGenerator interface {
-	GenerateLogRule(context.Context, string, []byte, string, string, string) (domain.CustomRule, error)
+	GenerateLogRule(context.Context, string, []byte, string, domain.LLMAPIMode, string, string) (domain.CustomRule, error)
 }
 
 type LogRuleGenerationInput struct {
@@ -472,6 +472,7 @@ func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal aut
 	if err != nil {
 		return domain.LLMProvider{}, err
 	}
+	provider.APIMode = domain.NormalizeLLMAPIMode(provider.APIMode)
 	if err := domain.ValidateLLMProvider(provider); err != nil {
 		return domain.LLMProvider{}, ErrInvalidInput
 	}
@@ -528,6 +529,9 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 	project, err := s.resolveProject(ctx, principal, projectKey)
 	if err != nil {
 		return domain.Configuration{}, err
+	}
+	if configuration.LLM != nil {
+		configuration.LLM.APIMode = domain.NormalizeLLMAPIMode(configuration.LLM.APIMode)
 	}
 	if err := domain.ValidateConfiguration(configuration); err != nil {
 		return domain.Configuration{}, ErrInvalidInput
@@ -709,7 +713,7 @@ func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User,
 	return LLMModels{Models: models}, nil
 }
 
-func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, projectKey, baseURL, secretID, model string) error {
+func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, projectKey, baseURL, secretID, model string, apiMode domain.LLMAPIMode) error {
 	if s.llm == nil {
 		return fmt.Errorf("LLM model lister is required")
 	}
@@ -717,7 +721,8 @@ func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, p
 	if err != nil {
 		return err
 	}
-	if err := domain.ValidateLLMChatProbe(baseURL, secretID, model); err != nil {
+	apiMode = domain.NormalizeLLMAPIMode(apiMode)
+	if err := domain.ValidateLLMChatProbe(baseURL, secretID, model, apiMode); err != nil {
 		return ErrInvalidInput
 	}
 	encrypted, err := s.repository.GetEncryptedSecret(ctx, project.ID, secretID)
@@ -732,7 +737,7 @@ func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, p
 		return fmt.Errorf("decrypt project credential: %w", err)
 	}
 	defer clearBytes(plaintext)
-	if err := s.llm.ProbeChat(ctx, baseURL, plaintext, model); err != nil {
+	if err := s.llm.ProbeChat(ctx, baseURL, plaintext, model, apiMode); err != nil {
 		return ErrLLMUnreachable
 	}
 	return nil
@@ -764,7 +769,7 @@ func (s *Service) GenerateLogRule(ctx context.Context, principal authdomain.User
 		return domain.CustomRule{}, fmt.Errorf("decrypt project credential: %w", err)
 	}
 	defer clearBytes(plaintext)
-	rule, err := generator.GenerateLogRule(ctx, draft.LLM.BaseURL, plaintext, draft.LLM.Model, intent, sample)
+	rule, err := generator.GenerateLogRule(ctx, draft.LLM.BaseURL, plaintext, draft.LLM.Model, draft.LLM.APIMode, intent, sample)
 	if err != nil {
 		return domain.CustomRule{}, ErrLLMUnreachable
 	}

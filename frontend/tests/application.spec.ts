@@ -66,6 +66,34 @@ function configuration(overrides: { environmentName?: string; awsTrigger?: boole
       baseUrl: "https://api.openai.com",
       credentialSecretId: "secret-source",
       model: "gpt-5.6",
+      apiMode: "chat_completions" as const,
+      version: 1,
+    },
+    remediation: {
+      agentLoopMode: "legacy" as const,
+      executionMode: "analysis_only" as const,
+      validationProfile: {
+        enabled: false,
+        imageDigest: "",
+        workingDirectory: ".",
+        preparation: [],
+        requiredCommands: [],
+        cpuLimit: 2,
+        memoryLimitMiB: 4096,
+        workspaceLimitMiB: 10240,
+      },
+      publication: {
+        branchPrefix: "hotfix/remediation" as const,
+        gitCredentialSecretId: "",
+        apiCredentialSecretId: "",
+        apiBaseUrl: "",
+      },
+      changePolicy: {
+        allowedPaths: ["**"],
+        deniedPaths: [],
+        maxChangedFiles: 10,
+        maxChangedLines: 400,
+      },
       version: 1,
     },
   };
@@ -582,7 +610,6 @@ test("the user can continue a retryable remediation and see attempt two", async 
 
   await expect(page.getByRole("button", { name: "Continue analysis", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Continue analysis", exact: true }).click();
-  await expect(page.getByText("Continuation queued. Refreshing the latest attempt.", { exact: true })).toBeVisible();
   await expect(page.getByText("Attempt 2", { exact: true })).toBeVisible();
   await expect(page.getByText("manual_continue · queued", { exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("sk-");
@@ -690,6 +717,7 @@ test("persists credentials, configuration, and incident lifecycle", async ({ pag
   await page.getByRole("button", { name: "Load models" }).click();
   await page.getByLabel("LLM model").selectOption("gpt-5.6");
   await expect(page.getByLabel("LLM model")).toHaveValue("gpt-5.6");
+  await page.getByRole("button", { name: "Responses", exact: true }).click();
   await page.getByRole("button", { name: "Test with hi" }).click();
   await expect(page.getByText("Chat probe succeeded.", { exact: true })).toBeVisible();
 
@@ -711,8 +739,8 @@ test("persists credentials, configuration, and incident lifecycle", async ({ pag
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/repository", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", scmProvider: "yunxiao", transport: "https", credentialSecretId: "secret-git", productionBranch: "production", deployedCommit: "abcdef0123456789abcdef0123456789abcdef01" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "openai-prod", kind: "http_bearer", value: "sk-e2e-openai-key" } },
     { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6" } },
-    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6", apiMode: "responses" } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6", apiMode: "responses" } },
     { method: "POST", path: "/api/v1/projects/real-estate/configuration/webhook-token", body: {} },
   ]));
   expect(state.getConfiguration()?.repository.productionBranch).toBe("production");

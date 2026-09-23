@@ -235,6 +235,58 @@ func TestCompleteSendsToolsAndParsesNativeToolCalls(t *testing.T) {
 	}
 }
 
+func TestCompleteSendsResponsesToolsAndParsesFunctionCalls(t *testing.T) {
+	client, err := openai.NewClient(openai.Options{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Path != "/v1/responses" {
+				t.Fatalf("path = %q", request.URL.Path)
+			}
+			var payload map[string]interface{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			if payload["max_output_tokens"] != float64(128) {
+				t.Fatalf("max_output_tokens = %#v", payload["max_output_tokens"])
+			}
+			text := payload["text"].(map[string]interface{})
+			format := text["format"].(map[string]interface{})
+			if format["type"] != "json_object" {
+				t.Fatalf("text format = %#v", text)
+			}
+			tools := payload["tools"].([]interface{})
+			tool := tools[0].(map[string]interface{})
+			if tool["name"] != "repository_read_file" || tool["type"] != "function" || tool["function"] != nil {
+				t.Fatalf("responses tool = %#v", tool)
+			}
+			input := payload["input"].([]interface{})
+			if len(input) != 3 || input[1].(map[string]interface{})["type"] != "function_call" || input[2].(map[string]interface{})["content"] != "incremental user" {
+				t.Fatalf("responses input = %#v", input)
+			}
+			responseBody := `{"status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"repository_read_file","arguments":"{\"path\":\"main.go\"}"}],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10,"input_tokens_details":{"cached_tokens":3}}}`
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responseBody)), Request: request}, nil
+		})},
+		StaticAPIKey: testAPIKey,
+		APIMode:      openai.APIModeResponses,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	result, err := client.Complete(context.Background(), domain.ModelTurn{
+		ProjectID: testProjectID, SystemPrompt: "sys", UserMessage: "fallback", Continuation: "incremental user", MaxTokens: 128,
+		Messages: []domain.ModelMessage{{Role: "assistant", ToolCalls: []domain.ToolCall{{ID: "call_0", Name: "repository.read_file", Arguments: map[string]interface{}{"path": "previous.go"}}}}},
+		Tools:    []domain.ToolDefinition{{Name: "repository.read_file", Description: "Read a file.", Parameters: map[string]interface{}{"type": "object", "properties": map[string]interface{}{"path": map[string]interface{}{"type": "string"}}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ID != "call_1" || result.ToolCalls[0].Name != "repository.read_file" || result.ToolCalls[0].Arguments["path"] != "main.go" {
+		t.Fatalf("responses tool calls = %#v", result.ToolCalls)
+	}
+	if result.UsageTokensIn != 8 || result.UsageTokensOut != 2 || result.UsageTokens != 10 || result.CacheHitTokens != 3 || result.CacheMissTokens != 5 {
+		t.Fatalf("responses usage = %#v", result)
+	}
+}
+
 func TestCompleteNormalizesCacheUsageShapes(t *testing.T) {
 	tests := []struct {
 		name         string

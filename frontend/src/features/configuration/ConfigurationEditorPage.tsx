@@ -100,6 +100,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [llmBaseUrl, setLlmBaseUrl] = useState(current.llm?.baseUrl ?? "https://api.openai.com");
   const [llmCredentialId, setLlmCredentialId] = useState(current.llm?.credentialSecretId ?? "");
   const [llmModel, setLlmModel] = useState(current.llm?.model ?? "");
+  const [llmAPIMode, setLlmAPIMode] = useState<"chat_completions" | "responses">(current.llm?.apiMode ?? "chat_completions");
   const [llmModels, setLlmModels] = useState<string[]>(current.llm?.model ? [current.llm.model] : []);
   const [llmChatReady, setLlmChatReady] = useState(false);
   const [remediationPolicy, setRemediationPolicy] = useState<NonNullable<ProjectConfigurationDraft["remediation"]>>(current.remediation ?? {
@@ -141,7 +142,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression: "", customRules, webhookProvider, awsTopicArn }),
     enabled: current.trigger?.enabled ?? true,
   });
-  const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() });
+  const buildLLMPayload = () => ({ provider: "openai" as const, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode });
   const buildRemediationPayload = () => {
     const payload = { ...remediationPolicy };
     delete (payload as { version?: unknown }).version;
@@ -200,7 +201,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     },
   });
   const probeLLMChat = useMutation({
-    mutationFn: (input: { baseUrl: string; credentialSecretId: string; model: string }) => api.probeLLMChat(project.key, input),
+    mutationFn: (input: { baseUrl: string; credentialSecretId: string; model: string; apiMode: "chat_completions" | "responses" }) => api.probeLLMChat(project.key, input),
     onSuccess: () => setLlmChatReady(true),
   });
   const saveRepository = useMutation({
@@ -405,9 +406,10 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         baseUrl={llmBaseUrl} setBaseUrl={(value) => { setLlmBaseUrl(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
         credentialId={llmCredentialId} setCredentialId={(value) => { setLlmCredentialId(value); setLlmModels(llmModel ? [llmModel] : []); setLlmChatReady(false); }}
         model={llmModel} setModel={(value) => { setLlmModel(value); setLlmChatReady(false); }} models={llmModels}
+        apiMode={llmAPIMode} setAPIMode={(value) => { setLlmAPIMode(value); setLlmChatReady(false); }}
         onLoadModels={() => { if (llmCredentialId) probeLLMModels.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId }); }}
         loadingModels={probeLLMModels.isPending} loadModelsError={probeLLMModels.error}
-        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim() }); }}
+        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode }); }}
         testingChat={probeLLMChat.isPending} testChatError={probeLLMChat.error} chatReady={llmChatReady}
         onSave={() => saveLLM.mutate()} saving={saveLLM.isPending} canSave={Boolean(llmCredentialId && llmModel.trim() && llmChatReady)} saveError={saveLLM.error}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}
