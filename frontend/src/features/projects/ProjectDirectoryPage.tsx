@@ -77,7 +77,6 @@ export function ProjectDirectoryPage() {
         </div>
         <header>
           <h1>Switch projects</h1>
-          <p className="project-directory-subtitle">Select an active workspace to manage incidents and remediation workflows.</p>
         </header>
         <div className="project-list">
           {projects.data.items.map((project) => (
