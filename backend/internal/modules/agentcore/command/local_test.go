@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"mendry/backend/internal/modules/agentcore/adapter/openai"
 	"mendry/backend/internal/modules/agentcore/domain"
 )
 
@@ -261,4 +262,28 @@ func ExampleFixtureProvider() {
 	result, _ := NewFixtureProvider().Complete(context.Background(), domain.ModelTurn{UserMessage: "report"})
 	fmt.Println(result.Provider, result.Content != "")
 	// Output: fixture true
+}
+
+func TestNormalizeConfigAppliesAnthropicDefaults(t *testing.T) {
+	config := Config{SchemaVersion: 1, Profile: ProfileConfig{Name: "report", Version: "v1", Completion: testCompletion(domain.CompletionSolutionDelivered, map[string]any{"artifactType": "report.summary"}), MaxTokens: 32}, Provider: ProviderConfig{Mode: "anthropic"}, Budgets: BudgetConfig{MaxSteps: 4}}
+	normalized, err := normalizeConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := normalized.Provider
+	if provider.BaseURL != "https://api.anthropic.com" || provider.Model != anthropicModelID || provider.APIKeyEnv != "ANTHROPIC_API_KEY" || provider.APIMode != openai.APIModeMessages {
+		t.Fatalf("anthropic defaults = %+v", provider)
+	}
+	if err := validateConfig(normalized); err != nil {
+		t.Fatalf("validateConfig() error = %v", err)
+	}
+	normalized.Provider.APIMode = openai.APIModeResponses
+	if err := validateConfig(normalized); err == nil {
+		t.Fatal("anthropic provider accepted the responses API mode")
+	}
+	normalized.Provider.Mode = "openai"
+	normalized.Provider.APIMode = openai.APIModeMessages
+	if err := validateConfig(normalized); err == nil {
+		t.Fatal("openai provider accepted the messages API mode")
+	}
 }

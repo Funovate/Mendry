@@ -98,7 +98,7 @@ type Trigger struct {
 	IngressTokenNonce      []byte
 }
 
-// LLMProvider 是项目唯一的 OpenAI 兼容模型接入点。
+// LLMProvider 是项目唯一的模型接入点（OpenAI 兼容或 Anthropic Messages）。
 // API key 只以同项目 http_bearer 凭据引用存在，不进入本结构。
 type LLMProvider struct {
 	ID                 string
@@ -115,6 +115,12 @@ type LLMAPIMode string
 const (
 	LLMAPIModeChatCompletions LLMAPIMode = "chat_completions"
 	LLMAPIModeResponses       LLMAPIMode = "responses"
+	LLMAPIModeMessages        LLMAPIMode = "messages"
+)
+
+const (
+	LLMProviderOpenAI    = "openai"
+	LLMProviderAnthropic = "anthropic"
 )
 
 type AgentLoopMode string
@@ -420,18 +426,35 @@ func ValidateSecret(secret Secret, value []byte) error {
 	return nil
 }
 
-func NormalizeLLMAPIMode(apiMode LLMAPIMode) LLMAPIMode {
-	if apiMode == "" {
-		return LLMAPIModeChatCompletions
+// NormalizeLLMAPIMode 为 provider 补齐默认协议：anthropic 只有 messages，
+// openai 缺省为 chat_completions。显式传入的不匹配组合保持原样交给校验拒绝。
+func NormalizeLLMAPIMode(provider string, apiMode LLMAPIMode) LLMAPIMode {
+	if apiMode != "" {
+		return apiMode
 	}
-	return apiMode
+	if provider == LLMProviderAnthropic {
+		return LLMAPIModeMessages
+	}
+	return LLMAPIModeChatCompletions
+}
+
+// ValidLLMAPIMode 报告 provider 与协议组合是否受支持。
+func ValidLLMAPIMode(provider string, apiMode LLMAPIMode) bool {
+	switch provider {
+	case LLMProviderOpenAI:
+		return apiMode == LLMAPIModeChatCompletions || apiMode == LLMAPIModeResponses
+	case LLMProviderAnthropic:
+		return apiMode == LLMAPIModeMessages
+	default:
+		return false
+	}
 }
 
 func ValidateLLMProvider(provider LLMProvider) error {
-	apiMode := NormalizeLLMAPIMode(provider.APIMode)
-	if !oneOf(provider.Provider, "openai") || !validHTTPURL(provider.BaseURL) || !bounded(provider.BaseURL, 1, 2048) ||
+	apiMode := NormalizeLLMAPIMode(provider.Provider, provider.APIMode)
+	if !validHTTPURL(provider.BaseURL) || !bounded(provider.BaseURL, 1, 2048) ||
 		!bounded(provider.Model, 1, 200) || strings.ContainsAny(provider.Model, " \t\r\n") ||
-		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses) {
+		!ValidLLMAPIMode(provider.Provider, apiMode) {
 		return fmt.Errorf("LLM provider configuration is invalid")
 	}
 	if err := validateRequiredUUIDv7(provider.CredentialSecretID); err != nil {
@@ -451,9 +474,8 @@ func ValidateLLMChatProbe(baseURL, secretID, model string, apiMode LLMAPIMode) e
 	if err := ValidateLLMModelsProbe(baseURL, secretID); err != nil {
 		return err
 	}
-	apiMode = NormalizeLLMAPIMode(apiMode)
 	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") ||
-		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses) {
+		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses && apiMode != LLMAPIModeMessages) {
 		return fmt.Errorf("LLM model is invalid")
 	}
 	return nil

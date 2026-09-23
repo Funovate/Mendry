@@ -1,6 +1,6 @@
 ---
 title: 事故应用 LLM 提供方
-description: 配置可选 OpenAI-compatible 事故分析，同时不扩大模型权限或削弱确定性运行能力。
+description: 配置可选 OpenAI-compatible 或 Anthropic 事故分析，同时不扩大模型权限或削弱确定性运行能力。
 availability: preview
 translationKey: llm-providers
 sources:
@@ -13,18 +13,22 @@ sources:
 
 本页记录当前事故应用中的 project-scoped provider 行为，不是 Local Harness 源码预览或 planned 通用 Service 的 binding 格式。中立 core 只依赖 `ModelProvider` 与 opaque turn binding；endpoint、model 与 credential 由具体 adapter 和可信 composition 解析。
 
-Mendry 支持项目范围内的 OpenAI-compatible provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
+Mendry 支持项目范围内的 OpenAI-compatible 与 Anthropic provider 配置。Provider 是可选配置；Webhook classifier 调用失败时会退回确定性归一化。在启用相关模式时，remediation model turn 需要有效的项目 provider 配置。
 
 ## 配置
 
-1. 创建 `http_bearer` 项目凭据。
-2. 保存 provider `openai`、兼容 HTTPS 的 `baseUrl`、credential ID、model ID 与 API 模式：
-   - `chat_completions` 调用 `/v1/chat/completions`。
-   - `responses` 调用 `/v1/responses`。
+1. 创建保存 provider API key 的 `http_bearer` 项目凭据。
+2. 保存 provider、兼容 HTTPS 的 `baseUrl`、credential ID、model ID 与 API 模式：
+   - Provider `openai`（OpenAI-compatible）支持两种 API 模式：
+     - `chat_completions` 调用 `/v1/chat/completions`。
+     - `responses` 调用 `/v1/responses`。
+   - Provider `anthropic` 固定使用 API 模式 `messages`，调用 Anthropic Messages API `/v1/messages`。默认 `baseUrl` 为 `https://api.anthropic.com`，model ID 形如 `claude-sonnet-5` 或 `claude-opus-5-5`。
 3. 通过项目 probe 端点列出 model，并选择提供方返回的 ID。
 4. 使用所选 API 模式运行有界连接 probe，再保存操作配置。
 
-已有 provider 记录默认使用 `chat_completions`。连接 probe、日志规则生成和 remediation model turn 会一致使用所选模式；两个模式共享 `/v1/models` 模型发现调用。
+已有 provider 记录默认使用 `chat_completions`。连接 probe、日志规则生成和 remediation model turn 会一致使用所选模式；所有模式都通过 `/v1/models` 发现模型。
+
+对 Anthropic，已保存的凭据以 `x-api-key` 请求头发送，并附带 `anthropic-version: 2023-06-01`，而不是 bearer token。Messages API 没有 JSON object 响应模式，因此 Mendry 会指示模型只回复一个 JSON 对象，并在校验回复前去除 markdown 代码围栏。不发送 `temperature` 等采样参数。回复中包含 tool call 时，其前面的文字会被丢弃。
 
 API key 只写不读。Provider 读取返回配置 metadata，不返回 secret。
 

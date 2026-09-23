@@ -126,7 +126,7 @@ func (l *projectRuntimeLoaders) ResolveSourceCapability(ctx context.Context, pro
 	return snapshot, nil
 }
 
-// LoadLLMProvider 返回已保存的 OpenAI 兼容接入点，不含明文 API key。
+// LoadLLMProvider 返回已保存的模型接入点（OpenAI 兼容或 Anthropic），不含明文 API key。
 func (l *projectRuntimeLoaders) LoadLLMProvider(ctx context.Context, projectID string) (remediationopenai.ProviderConfig, error) {
 	configuration, err := l.repository.GetConfiguration(ctx, projectID)
 	if err != nil {

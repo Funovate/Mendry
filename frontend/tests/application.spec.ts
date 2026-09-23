@@ -479,7 +479,8 @@ async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (path === "/api/v1/projects/real-estate/llm/models" && method === "POST") {
       writes.push({ method, path, body });
-      return json({ models: ["gpt-4.1", "gpt-5.6"] });
+      const anthropic = (body as { provider?: string } | null)?.provider === "anthropic";
+      return json({ models: anthropic ? ["claude-opus-5-5", "claude-sonnet-5"] : ["gpt-4.1", "gpt-5.6"] });
     }
     if (path === "/api/v1/projects/real-estate/llm/chat" && method === "POST") {
       writes.push({ method, path, body });
@@ -738,8 +739,8 @@ test("persists credentials, configuration, and incident lifecycle", async ({ pag
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/trigger", body: { kind: "signed_webhook", signingSecretId: null, config: { schemaVersion: 2, provider: "generic", eventTypes: ["alarm"], deduplicationKey: "title" }, enabled: true } },
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/repository", body: { remoteUrl: "https://git.example.internal/platform/real-estate-api.git", scmProvider: "yunxiao", transport: "https", credentialSecretId: "secret-git", productionBranch: "production", deployedCommit: "abcdef0123456789abcdef0123456789abcdef01" } },
     { method: "POST", path: "/api/v1/projects/real-estate/secrets", body: { name: "openai-prod", kind: "http_bearer", value: "sk-e2e-openai-key" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6", apiMode: "responses" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6", apiMode: "responses" } },
     { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "openai", baseUrl: "https://api.openai.com", credentialSecretId: "secret-openai-prod", model: "gpt-5.6", apiMode: "responses" } },
     { method: "POST", path: "/api/v1/projects/real-estate/configuration/webhook-token", body: {} },
   ]));
@@ -749,6 +750,29 @@ test("persists credentials, configuration, and incident lifecycle", async ({ pag
   const triggerWrite = state.writes.find((write) => write.path.endsWith("/configuration/trigger"));
   expect(triggerWrite?.body).not.toHaveProperty("llm");
   expect(triggerWrite?.body).not.toHaveProperty(["trigger", "name"]);
+});
+
+test("configures Anthropic as the LLM provider", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.goto("/projects/real-estate/configuration/edit");
+  await page.getByRole("tab", { name: "LLM provider" }).click();
+
+  await expect(page.getByRole("group", { name: "LLM API" })).toBeVisible();
+  await page.getByRole("button", { name: "Anthropic", exact: true }).click();
+  await expect(page.getByLabel("LLM base URL")).toHaveValue("https://api.anthropic.com");
+  await expect(page.getByRole("group", { name: "LLM API" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load models" }).click();
+  await page.getByLabel("LLM model").selectOption("claude-sonnet-5");
+  await page.getByRole("button", { name: "Test with hi" }).click();
+  await expect(page.getByText("Chat probe succeeded.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Save LLM provider" }).click();
+  await expect.poll(() => state.getConfiguration()?.llm?.provider).toBe("anthropic");
+
+  expect(state.writes).toEqual(expect.arrayContaining([
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages" } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages" } },
+  ]));
 });
 
 test("round-trips an existing AWS CloudWatch trigger through edit and save", async ({ page }) => {

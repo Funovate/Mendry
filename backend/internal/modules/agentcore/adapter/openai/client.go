@@ -44,6 +44,8 @@ const (
 	maxMessageBytes      = 64 << 10
 	maxHistoryItems      = 256
 	maxHistoryBytes      = 256 << 10
+	anthropicVersion     = "2023-06-01"
+	statusOverloaded     = 529
 	initialBackoff       = 250 * time.Millisecond
 	maxBackoff           = 2 * time.Second
 )
@@ -67,6 +69,8 @@ type APIMode string
 const (
 	APIModeChatCompletions APIMode = "chat_completions"
 	APIModeResponses       APIMode = "responses"
+	// APIModeMessages 使用 Anthropic Messages API（/v1/messages）。
+	APIModeMessages APIMode = "messages"
 )
 
 // Binding 是 composition 注入的可信 provider 连接信息。
@@ -408,7 +412,7 @@ func (c *Client) Complete(ctx context.Context, turn domain.ModelTurn) (domain.Mo
 	defer clearBinding(&binding)
 
 	tools, names, schemaBytes, err := buildTools(turn.Tools)
-	base := domain.ModelResult{Provider: "openai", Model: binding.Model, ToolCount: len(tools), ToolSchemaBytes: schemaBytes}
+	base := domain.ModelResult{Provider: binding.provider(), Model: binding.Model, ToolCount: len(tools), ToolSchemaBytes: schemaBytes}
 	if err != nil {
 		return base, fmt.Errorf("encode openai tools: %w", err)
 	}
@@ -439,7 +443,7 @@ func (c *Client) Complete(ctx context.Context, turn domain.ModelTurn) (domain.Mo
 }
 
 func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn domain.ModelTurn, maxTokens int, tools []chatTool, names providerToolNames, schemaBytes int64, messages []chatMessage) (domain.ModelResult, error) {
-	result := domain.ModelResult{Provider: "openai", Model: binding.Model, ModelCalls: 1, ToolCount: len(tools), ToolSchemaBytes: schemaBytes}
+	result := domain.ModelResult{Provider: binding.provider(), Model: binding.Model, ModelCalls: 1, ToolCount: len(tools), ToolSchemaBytes: schemaBytes}
 	request := chatRequest{Model: binding.Model, Temperature: turn.Temperature, MaxTokens: maxTokens, Messages: messages, Tools: tools}
 	if binding.ResponseFormat == ResponseFormatJSONObject {
 		request.ResponseFormat = &responseFormat{Type: string(ResponseFormatJSONObject)}
@@ -452,6 +456,13 @@ func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn doma
 		}
 		requestPayload = responses
 	}
+	if binding.APIMode == APIModeMessages {
+		anthropic, buildErr := buildMessagesRequest(binding.Model, maxTokens, messages, tools, binding.ResponseFormat)
+		if buildErr != nil {
+			return result, buildErr
+		}
+		requestPayload = anthropic
+	}
 	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		return result, fmt.Errorf("encode openai request: %w", err)
@@ -462,9 +473,12 @@ func (c *Client) completeAttempt(ctx context.Context, binding Binding, turn doma
 		return result, err
 	}
 	var decoded chatResponse
-	if binding.APIMode == APIModeResponses {
+	switch binding.APIMode {
+	case APIModeResponses:
 		decoded, err = decodeResponsesResponse(body)
-	} else {
+	case APIModeMessages:
+		decoded, err = decodeMessagesResponse(body, binding.ResponseFormat)
+	default:
 		err = json.Unmarshal(body, &decoded)
 	}
 	if err != nil {
@@ -522,7 +536,7 @@ func (c *Client) doRequest(ctx context.Context, binding Binding, payload []byte,
 		for name, value := range binding.Headers {
 			request.Header.Set(name, value)
 		}
-		request.Header.Set("Authorization", "Bearer "+string(binding.APIKey))
+		binding.setAuth(request)
 		request.Header.Set("Content-Type", "application/json")
 		started := time.Now()
 		response, err := c.http.Do(request)
@@ -1062,10 +1076,31 @@ func mergeResults(previous, current domain.ModelResult) domain.ModelResult {
 }
 
 func (binding Binding) endpoint() string {
-	if binding.APIMode == APIModeResponses {
+	switch binding.APIMode {
+	case APIModeResponses:
 		return binding.BaseURL + "/v1/responses"
+	case APIModeMessages:
+		return binding.BaseURL + "/v1/messages"
+	default:
+		return binding.BaseURL + "/v1/chat/completions"
 	}
-	return binding.BaseURL + "/v1/chat/completions"
+}
+
+func (binding Binding) provider() string {
+	if binding.APIMode == APIModeMessages {
+		return "anthropic"
+	}
+	return "openai"
+}
+
+// setAuth 按协议注入凭据：Anthropic 使用 x-api-key，OpenAI 兼容端点使用 Bearer。
+func (binding Binding) setAuth(request *http.Request) {
+	if binding.APIMode == APIModeMessages {
+		request.Header.Set("x-api-key", string(binding.APIKey))
+		request.Header.Set("anthropic-version", anthropicVersion)
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+string(binding.APIKey))
 }
 
 func normalizeBinding(binding Binding) (Binding, error) {
@@ -1115,14 +1150,14 @@ func validateBinding(binding Binding) error {
 	if binding.ResponseFormat != "" && binding.ResponseFormat != ResponseFormatNone && binding.ResponseFormat != ResponseFormatJSONObject {
 		return errors.New("response format is invalid")
 	}
-	if binding.APIMode != APIModeChatCompletions && binding.APIMode != APIModeResponses {
+	if binding.APIMode != APIModeChatCompletions && binding.APIMode != APIModeResponses && binding.APIMode != APIModeMessages {
 		return errors.New("API mode is invalid")
 	}
 	for name, value := range binding.Headers {
 		if strings.TrimSpace(name) == "" || !utf8.ValidString(name) || !utf8.ValidString(value) || strings.ContainsAny(name+value, "\r\n") || len(name) > 128 || len(value) > 4096 {
 			return errors.New("header binding is invalid")
 		}
-		if strings.EqualFold(name, "authorization") || strings.EqualFold(name, "cookie") {
+		if strings.EqualFold(name, "authorization") || strings.EqualFold(name, "x-api-key") || strings.EqualFold(name, "cookie") {
 			return errors.New("credential headers must use APIKey")
 		}
 	}
@@ -1158,10 +1193,13 @@ func clearBinding(binding *Binding) {
 func (c *Client) logRequest(ctx context.Context, binding Binding, request []byte, status int, duration time.Duration, response []byte, metrics domain.ModelResult, err error) {
 	host, path := observability.HTTPIdentity(binding.endpoint())
 	operation := "chat.completions"
-	if binding.APIMode == APIModeResponses {
+	switch binding.APIMode {
+	case APIModeResponses:
 		operation = "responses"
+	case APIModeMessages:
+		operation = "messages"
 	}
-	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{Operation: operation, Host: host, Path: path, Model: binding.Model, Status: status, Duration: duration, Request: request, Response: response, RequestBytes: metrics.RequestBytes, ToolCount: metrics.ToolCount, ToolSchemaBytes: metrics.ToolSchemaBytes, CacheTokensReported: metrics.CacheTokensReported, CacheHitTokens: metrics.CacheHitTokens, CacheMissTokens: metrics.CacheMissTokens, Err: err})
+	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{Provider: binding.provider(), Operation: operation, Host: host, Path: path, Model: binding.Model, Status: status, Duration: duration, Request: request, Response: response, RequestBytes: metrics.RequestBytes, ToolCount: metrics.ToolCount, ToolSchemaBytes: metrics.ToolSchemaBytes, CacheTokensReported: metrics.CacheTokensReported, CacheHitTokens: metrics.CacheHitTokens, CacheMissTokens: metrics.CacheMissTokens, Err: err})
 }
 
 func classifyTransport(ctx context.Context, err error) error {
@@ -1190,7 +1228,7 @@ func retryableTransport(ctx context.Context, err error) bool {
 
 func retryableStatus(status int) bool {
 	switch status {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusOverloaded:
 		return true
 	default:
 		return false

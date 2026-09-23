@@ -23,8 +23,14 @@ import (
 
 const (
 	// ModelID 是测试和缺省展示用的 OpenAI 兼容模型标识。
-	ModelID                  = "gpt-5.6"
-	providerName             = "openai"
+	ModelID               = "gpt-5.6"
+	providerName          = "openai"
+	anthropicProviderName = "anthropic"
+	anthropicVersion      = "2023-06-01"
+	// messagesDefaultMaxTokens 是 Anthropic 必填 max_tokens 在轮次未指定上限时的取值。
+	messagesDefaultMaxTokens = 8192
+	// statusOverloaded 是 Anthropic 过载时返回的非标准状态码。
+	statusOverloaded         = 529
 	defaultBaseURL           = "https://api.openai.com"
 	defaultTimeout           = 5 * time.Minute
 	maxResponseBytes         = 1 << 20
@@ -51,7 +57,13 @@ type APIMode string
 const (
 	APIModeChatCompletions APIMode = "chat_completions"
 	APIModeResponses       APIMode = "responses"
+	// APIModeMessages 使用 Anthropic Messages API（/v1/messages）。
+	APIModeMessages APIMode = "messages"
 )
+
+func validAPIMode(mode APIMode) bool {
+	return mode == APIModeChatCompletions || mode == APIModeResponses || mode == APIModeMessages
+}
 
 // ProviderConfig 是适配器读取的无凭据 LLM 配置。
 type ProviderConfig struct {
@@ -382,7 +394,7 @@ func (c *Client) Complete(ctx context.Context, req domain.ModelTurn) (domain.Mod
 		return domain.ModelResult{}, fmt.Errorf("encode openai tools: %w", err)
 	}
 	baseResult := domain.ModelResult{
-		Provider: providerName, Model: session.model,
+		Provider: session.provider(), Model: session.model,
 		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
 	messages, err := buildChatMessages(req, toolNames)
@@ -420,7 +432,7 @@ func (c *Client) completeWithTokens(
 	messages []chatMessage,
 ) (domain.ModelResult, error) {
 	result := domain.ModelResult{
-		Provider: providerName, Model: session.model,
+		Provider: session.provider(), Model: session.model,
 		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
 	var requestPayload any = chatRequest{
@@ -438,6 +450,13 @@ func (c *Client) completeWithTokens(
 		}
 		requestPayload = responses
 	}
+	if session.apiMode == APIModeMessages {
+		anthropic, buildErr := buildMessagesRequest(session.model, maxTokens, messages, tools)
+		if buildErr != nil {
+			return result, buildErr
+		}
+		requestPayload = anthropic
+	}
 	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		return result, fmt.Errorf("encode openai request: %w", err)
@@ -449,12 +468,15 @@ func (c *Client) completeWithTokens(
 		return result, err
 	}
 	logResult := func(callErr error) {
-		c.logRequest(ctx, session.endpoint(), session.model, payload, status, elapsed, body, result, callErr)
+		c.logRequest(ctx, session.provider(), session.endpoint(), session.model, payload, status, elapsed, body, result, callErr)
 	}
 	var decoded chatResponse
-	if session.apiMode == APIModeResponses {
+	switch session.apiMode {
+	case APIModeResponses:
 		decoded, err = decodeResponsesResponse(body)
-	} else {
+	case APIModeMessages:
+		decoded, err = decodeMessagesResponse(body)
+	default:
 		err = json.Unmarshal(body, &decoded)
 	}
 	if err != nil {
@@ -671,7 +693,7 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("create openai request: %w", err)
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+string(session.apiKey))
+		session.setAuth(httpReq)
 		httpReq.Header.Set("Content-Type", "application/json")
 
 		started := time.Now()
@@ -679,7 +701,7 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		elapsed := time.Since(started)
 		if err != nil {
 			wrapped := fmt.Errorf("call openai: %w", classifyOpenAITransportFailure(ctx, err))
-			c.logRequest(ctx, endpoint, session.model, payload, 0, elapsed, nil, metrics, wrapped)
+			c.logRequest(ctx, session.provider(), endpoint, session.model, payload, 0, elapsed, nil, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, err) {
 				return nil, 0, elapsed, wrapped
 			}
@@ -693,7 +715,7 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		_ = resp.Body.Close()
 		if readErr != nil {
 			wrapped := fmt.Errorf("read openai response: %w", classifyOpenAITransportFailure(ctx, readErr))
-			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
+			c.logRequest(ctx, session.provider(), endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAITransport(ctx, readErr) {
 				return nil, resp.StatusCode, elapsed, wrapped
 			}
@@ -704,12 +726,12 @@ func (c *Client) doChatCompletion(ctx context.Context, session llmSession, paylo
 		}
 		if int64(len(body)) > maxResponseBytes {
 			wrapped := fmt.Errorf("openai response exceeded %d bytes", maxResponseBytes)
-			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body[:maxResponseBytes], metrics, wrapped)
+			c.logRequest(ctx, session.provider(), endpoint, session.model, payload, resp.StatusCode, elapsed, body[:maxResponseBytes], metrics, wrapped)
 			return nil, resp.StatusCode, elapsed, wrapped
 		}
 		if resp.StatusCode != http.StatusOK {
 			wrapped := fmt.Errorf("openai returned status %d: %w", resp.StatusCode, openAIStatusFailure(resp.StatusCode))
-			c.logRequest(ctx, endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
+			c.logRequest(ctx, session.provider(), endpoint, session.model, payload, resp.StatusCode, elapsed, body, metrics, wrapped)
 			if attempt == maxRetryAttempts || !retryableOpenAIStatus(resp.StatusCode) {
 				return nil, resp.StatusCode, elapsed, wrapped
 			}
@@ -738,7 +760,7 @@ func retryableOpenAIStatus(status int) bool {
 	switch status {
 	case http.StatusRequestTimeout, http.StatusTooManyRequests,
 		http.StatusInternalServerError, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusOverloaded:
 		return true
 	default:
 		return false
@@ -773,7 +795,7 @@ func openAIStatusFailure(status int) *domain.ProviderRuntimeError {
 		code, retryable = "provider_rate_limit", true
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		code, retryable = "provider_timeout", true
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, statusOverloaded:
 		code, retryable = "provider_http_5xx", true
 	}
 	return &domain.ProviderRuntimeError{Code: code, Retryable: retryable}
@@ -952,13 +974,16 @@ func validateToolSchemaValue(value any, depth int) error {
 	return nil
 }
 
-func (c *Client) logRequest(ctx context.Context, endpoint, model string, request []byte, status int, duration time.Duration, response []byte, metrics domain.ModelResult, err error) {
+func (c *Client) logRequest(ctx context.Context, provider, endpoint, model string, request []byte, status int, duration time.Duration, response []byte, metrics domain.ModelResult, err error) {
 	host, path := observability.HTTPIdentity(endpoint)
 	operation := "chat.completions"
 	if strings.HasSuffix(path, "/responses") {
 		operation = "responses"
+	} else if strings.HasSuffix(path, "/messages") {
+		operation = "messages"
 	}
 	observability.LogLLMRequest(ctx, c.logger, observability.LLMRequest{
+		Provider:            provider,
 		Operation:           operation,
 		Host:                host,
 		Path:                path,
@@ -985,10 +1010,31 @@ type llmSession struct {
 }
 
 func (s llmSession) endpoint() string {
-	if s.apiMode == APIModeResponses {
+	switch s.apiMode {
+	case APIModeResponses:
 		return s.baseURL + "/v1/responses"
+	case APIModeMessages:
+		return s.baseURL + "/v1/messages"
+	default:
+		return s.baseURL + "/v1/chat/completions"
 	}
-	return s.baseURL + "/v1/chat/completions"
+}
+
+func (s llmSession) provider() string {
+	if s.apiMode == APIModeMessages {
+		return anthropicProviderName
+	}
+	return providerName
+}
+
+// setAuth 按协议注入凭据：Anthropic 使用 x-api-key，OpenAI 兼容端点使用 Bearer。
+func (s llmSession) setAuth(request *http.Request) {
+	if s.apiMode == APIModeMessages {
+		request.Header.Set("x-api-key", string(s.apiKey))
+		request.Header.Set("anthropic-version", anthropicVersion)
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+string(s.apiKey))
 }
 
 func (s llmSession) close() {
@@ -1009,7 +1055,7 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 		if apiMode == "" {
 			apiMode = APIModeChatCompletions
 		}
-		if apiMode != APIModeChatCompletions && apiMode != APIModeResponses {
+		if !validAPIMode(apiMode) {
 			return llmSession{}, fmt.Errorf("openai API mode is invalid")
 		}
 		key := []byte(c.staticAPIKey)
@@ -1051,7 +1097,7 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 	if apiMode == "" {
 		apiMode = APIModeChatCompletions
 	}
-	if apiMode != APIModeChatCompletions && apiMode != APIModeResponses {
+	if !validAPIMode(apiMode) {
 		clearBytes(plaintext)
 		return llmSession{}, fmt.Errorf("llm API mode is invalid")
 	}

@@ -90,7 +90,7 @@ type GitRefLister interface {
 // LLMModelLister 用解密后的 bearer 列出 OpenAI 兼容 /v1/models，
 // 并用一句固定 hi 探测已选模型是否真能完成对话。
 type LLMModelLister interface {
-	ListModels(ctx context.Context, baseURL string, apiKey []byte) ([]string, error)
+	ListModels(ctx context.Context, baseURL string, apiKey []byte, apiMode domain.LLMAPIMode) ([]string, error)
 	ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode) error
 }
 
@@ -472,7 +472,7 @@ func (s *Service) PutConfigurationLLMProvider(ctx context.Context, principal aut
 	if err != nil {
 		return domain.LLMProvider{}, err
 	}
-	provider.APIMode = domain.NormalizeLLMAPIMode(provider.APIMode)
+	provider.APIMode = domain.NormalizeLLMAPIMode(provider.Provider, provider.APIMode)
 	if err := domain.ValidateLLMProvider(provider); err != nil {
 		return domain.LLMProvider{}, ErrInvalidInput
 	}
@@ -531,7 +531,7 @@ func (s *Service) PutConfiguration(ctx context.Context, principal authdomain.Use
 		return domain.Configuration{}, err
 	}
 	if configuration.LLM != nil {
-		configuration.LLM.APIMode = domain.NormalizeLLMAPIMode(configuration.LLM.APIMode)
+		configuration.LLM.APIMode = domain.NormalizeLLMAPIMode(configuration.LLM.Provider, configuration.LLM.APIMode)
 	}
 	if err := domain.ValidateConfiguration(configuration); err != nil {
 		return domain.Configuration{}, ErrInvalidInput
@@ -683,7 +683,7 @@ func (s *Service) ProbeSSHContainers(ctx context.Context, principal authdomain.U
 	return append([]domain.DockerContainer(nil), containers...), nil
 }
 
-func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User, projectKey, baseURL, secretID string) (LLMModels, error) {
+func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User, projectKey, baseURL, secretID string, apiMode domain.LLMAPIMode) (LLMModels, error) {
 	if s.llm == nil {
 		return LLMModels{}, fmt.Errorf("LLM model lister is required")
 	}
@@ -706,7 +706,7 @@ func (s *Service) ProbeLLMModels(ctx context.Context, principal authdomain.User,
 		return LLMModels{}, fmt.Errorf("decrypt project credential: %w", err)
 	}
 	defer clearBytes(plaintext)
-	models, err := s.llm.ListModels(ctx, baseURL, plaintext)
+	models, err := s.llm.ListModels(ctx, baseURL, plaintext, domain.NormalizeLLMAPIMode(domain.LLMProviderOpenAI, apiMode))
 	if err != nil {
 		return LLMModels{}, ErrLLMUnreachable
 	}
@@ -721,7 +721,7 @@ func (s *Service) ProbeLLMChat(ctx context.Context, principal authdomain.User, p
 	if err != nil {
 		return err
 	}
-	apiMode = domain.NormalizeLLMAPIMode(apiMode)
+	apiMode = domain.NormalizeLLMAPIMode(domain.LLMProviderOpenAI, apiMode)
 	if err := domain.ValidateLLMChatProbe(baseURL, secretID, model, apiMode); err != nil {
 		return ErrInvalidInput
 	}

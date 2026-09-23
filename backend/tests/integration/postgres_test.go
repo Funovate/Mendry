@@ -353,6 +353,26 @@ func assertMVPQueries(t *testing.T, ctx context.Context, pool *postgres.Pool) {
 		reloadedAfterSync.Trigger.SigningSecretID == nil || *reloadedAfterSync.Trigger.SigningSecretID != secretIDs[2] {
 		t.Fatalf("synchronized environment or references = %#v, %v", reloadedAfterSync, err)
 	}
+	anthropicLLM, err := projectRepository.UpsertLLMProvider(ctx, project.ID, projectdomain.LLMProvider{
+		ID: reloadedAfterSync.LLM.ID, Provider: "anthropic", BaseURL: "https://api.anthropic.com", CredentialSecretID: secretIDs[1],
+		Model: "claude-sonnet-5", APIMode: projectdomain.LLMAPIModeMessages,
+	})
+	if err != nil || anthropicLLM.Provider != "anthropic" || anthropicLLM.APIMode != projectdomain.LLMAPIModeMessages {
+		t.Fatalf("upsert anthropic LLM provider = %#v, %v", anthropicLLM, err)
+	}
+	if reloadedAnthropic, err := projectRepository.GetConfiguration(ctx, project.ID); err != nil || reloadedAnthropic.LLM == nil ||
+		reloadedAnthropic.LLM.Provider != "anthropic" || reloadedAnthropic.LLM.APIMode != projectdomain.LLMAPIModeMessages {
+		t.Fatalf("reloaded anthropic LLM provider = %#v, %v", reloadedAnthropic.LLM, err)
+	}
+	if _, err := projectRepository.UpsertLLMProvider(ctx, project.ID, projectdomain.LLMProvider{
+		ID: reloadedAfterSync.LLM.ID, Provider: "anthropic", BaseURL: "https://api.anthropic.com", CredentialSecretID: secretIDs[1],
+		Model: "claude-sonnet-5", APIMode: projectdomain.LLMAPIModeResponses,
+	}); err == nil {
+		t.Fatal("database accepted anthropic with the responses API mode")
+	}
+	if _, err := projectRepository.UpsertLLMProvider(ctx, project.ID, *reloadedAfterSync.LLM); err != nil {
+		t.Fatalf("restore openai LLM provider: %v", err)
+	}
 
 	loadedSecret, err := projectRepository.GetEncryptedSecret(ctx, project.ID, secretIDs[0])
 	if err != nil {
