@@ -17,7 +17,7 @@
   position: relative;
   isolation: isolate;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px 24px;
@@ -1607,16 +1607,28 @@
   }
 }
 
-@container (max-width: 680px) {
+/* Stack the side panel under the heading at a fixed breakpoint rather than
+   letting flex-wrap decide; otherwise the right-aligned status control floats
+   in the middle of a narrow wrapped box. */
+@container (max-width: 900px) {
+  .app-shell .incident-workspace .detail-header {
+    flex-wrap: wrap;
+  }
+  .app-shell .incident-workspace .detail-heading {
+    flex-basis: 100%;
+  }
   .incident-header-side {
     flex: 1 1 100%;
-    flex-direction: row;
-    align-items: flex-end;
+    flex-direction: row-reverse;
+    align-items: center;
     min-width: 0;
   }
   .incident-timestamps {
     width: min(360px, 100%);
   }
+}
+
+@container (max-width: 680px) {
   .remediation-context {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1631,9 +1643,6 @@
 @container (max-width: 540px) {
   .diagnosis-visual-summary {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .app-shell .incident-workspace .detail-heading {
-    flex-basis: 100%;
   }
   .incident-header-side {
     flex-direction: column;

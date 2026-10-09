@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, messageFromError, type DockerContainer, type ListResult, type LLMAPIMode, type LLMProviderName, type LogProbeStatus, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
+import { api, messageFromError, type DockerContainer, type ListResult, type LLMAPIMode, type LLMProviderName, type LLMReasoningEffort, type LogProbeStatus, type ProjectConfigurationDraft, type ProjectSecret, type RepositoryRefs, type SourceKind, type TriggerKind } from "../../api";
 import { useCurrentProject } from "../../app/context";
 import { queryKeys } from "../../app/query";
 import { LoadingState, PageError } from "../../shared/ui";
@@ -102,6 +102,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
   const [llmModel, setLlmModel] = useState(current.llm?.model ?? "");
   const [llmProvider, setLlmProvider] = useState<LLMProviderName>(current.llm?.provider ?? "openai");
   const [llmAPIMode, setLlmAPIMode] = useState<LLMAPIMode>(current.llm?.apiMode ?? "chat_completions");
+  const [llmReasoningEffort, setLlmReasoningEffort] = useState<LLMReasoningEffort>(current.llm?.reasoningEffort ?? "default");
   const [llmModels, setLlmModels] = useState<string[]>(current.llm?.model ? [current.llm.model] : []);
   const [llmChatReady, setLlmChatReady] = useState(false);
   const [remediationPolicy, setRemediationPolicy] = useState<NonNullable<ProjectConfigurationDraft["remediation"]>>(current.remediation ?? {
@@ -143,7 +144,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     config: buildTriggerConfig(triggerKind, { eventTypes: "alarm", deduplicationKey: "title", groupingWindowSeconds, matchExpression: "", customRules, webhookProvider, awsTopicArn }),
     enabled: current.trigger?.enabled ?? true,
   });
-  const buildLLMPayload = () => ({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode });
+  const buildLLMPayload = () => ({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode, reasoningEffort: llmReasoningEffort });
   const buildRemediationPayload = () => {
     const payload = { ...remediationPolicy };
     delete (payload as { version?: unknown }).version;
@@ -202,7 +203,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
     },
   });
   const probeLLMChat = useMutation({
-    mutationFn: (input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode }) => api.probeLLMChat(project.key, input),
+    mutationFn: (input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode; reasoningEffort: LLMReasoningEffort }) => api.probeLLMChat(project.key, input),
     onSuccess: () => setLlmChatReady(true),
   });
   const saveRepository = useMutation({
@@ -354,7 +355,7 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
         onSelectBranch={(name, commit) => { setProductionBranch(name); setDeployedCommit(commit); setBaselineReady(true); }}
         onReadRemote={() => { if (repositorySecretId) probeRepository.mutate({ remoteUrl: remoteUrl.trim(), transport, credentialSecretId: repositorySecretId }); }}
         readingRemote={probeRepository.isPending} readRemoteError={probeRepository.error}
-        onSave={() => saveRepository.mutate()} saving={saveRepository.isPending} canSave={Boolean(repositorySecretId && baselineReady)} saveError={saveRepository.error}
+        onSave={() => saveRepository.mutate()} saving={saveRepository.isPending} canSave={Boolean(repositorySecretId && baselineReady)} saved={saveRepository.isSuccess} saveError={saveRepository.error}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}
         updateCredential={updateCredential} updatingCredential={updateSecret.isPending} updateCredentialError={updateSecret.error}
       />}
@@ -418,9 +419,10 @@ function ConfigurationWizard({ current, secrets, onCancel }: { current: ProjectC
           setLlmChatReady(false);
         }}
         apiMode={llmAPIMode} setAPIMode={(value) => { setLlmAPIMode(value); setLlmChatReady(false); }}
+        reasoningEffort={llmReasoningEffort} setReasoningEffort={(value) => { setLlmReasoningEffort(value); setLlmChatReady(false); }}
         onLoadModels={() => { if (llmCredentialId) probeLLMModels.mutate({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId }); }}
         loadingModels={probeLLMModels.isPending} loadModelsError={probeLLMModels.error}
-        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode }); }}
+        onTestChat={() => { if (llmCredentialId && llmModel.trim()) probeLLMChat.mutate({ provider: llmProvider, baseUrl: llmBaseUrl.trim(), credentialSecretId: llmCredentialId, model: llmModel.trim(), apiMode: llmAPIMode, reasoningEffort: llmReasoningEffort }); }}
         testingChat={probeLLMChat.isPending} testChatError={probeLLMChat.error} chatReady={llmChatReady}
         onSave={() => saveLLM.mutate()} saving={saveLLM.isPending} canSave={Boolean(llmCredentialId && llmModel.trim() && llmChatReady)} saveError={saveLLM.error}
         knownSecrets={knownSecrets} createCredential={createCredential} creatingCredential={createSecret.isPending} createCredentialError={createSecret.error}

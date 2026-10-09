@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 28 {
-		t.Fatalf("migration count = %d, want 28", len(migrations))
+	if len(migrations) != 29 {
+		t.Fatalf("migration count = %d, want 29", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {
@@ -411,6 +411,12 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 		!strings.Contains(anthropic.SQL, "CHECK (api_mode IN ('chat_completions', 'responses', 'messages'))") ||
 		!strings.Contains(anthropic.SQL, "CHECK ((provider = 'anthropic') = (api_mode = 'messages'))") {
 		t.Fatal("migration 000028 must allow the anthropic provider only with the messages API mode")
+	}
+	reasoningEffort := migrations[28]
+	if reasoningEffort.Name != "llm_reasoning_effort" ||
+		!strings.Contains(reasoningEffort.SQL, "reasoning_effort text NOT NULL DEFAULT 'default'") ||
+		!strings.Contains(reasoningEffort.SQL, "CHECK (reasoning_effort IN ('default', 'low', 'medium', 'high'))") {
+		t.Fatal("migration 000029 must add a backward-compatible constrained LLM reasoning effort")
 	}
 	requiredAutoHotfixPolicy := []string{
 		"remediation_execution_mode",

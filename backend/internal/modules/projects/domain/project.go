@@ -107,10 +107,20 @@ type LLMProvider struct {
 	CredentialSecretID string
 	Model              string
 	APIMode            LLMAPIMode
+	ReasoningEffort    LLMReasoningEffort
 	Version            int64
 }
 
 type LLMAPIMode string
+
+type LLMReasoningEffort string
+
+const (
+	LLMReasoningEffortDefault LLMReasoningEffort = "default"
+	LLMReasoningEffortLow     LLMReasoningEffort = "low"
+	LLMReasoningEffortMedium  LLMReasoningEffort = "medium"
+	LLMReasoningEffortHigh    LLMReasoningEffort = "high"
+)
 
 const (
 	LLMAPIModeChatCompletions LLMAPIMode = "chat_completions"
@@ -450,11 +460,27 @@ func ValidLLMAPIMode(provider string, apiMode LLMAPIMode) bool {
 	}
 }
 
+func NormalizeLLMReasoningEffort(effort LLMReasoningEffort) LLMReasoningEffort {
+	if effort == "" {
+		return LLMReasoningEffortDefault
+	}
+	return effort
+}
+
+func ValidLLMReasoningEffort(effort LLMReasoningEffort) bool {
+	switch NormalizeLLMReasoningEffort(effort) {
+	case LLMReasoningEffortDefault, LLMReasoningEffortLow, LLMReasoningEffortMedium, LLMReasoningEffortHigh:
+		return true
+	default:
+		return false
+	}
+}
+
 func ValidateLLMProvider(provider LLMProvider) error {
 	apiMode := NormalizeLLMAPIMode(provider.Provider, provider.APIMode)
 	if !validHTTPURL(provider.BaseURL) || !bounded(provider.BaseURL, 1, 2048) ||
 		!bounded(provider.Model, 1, 200) || strings.ContainsAny(provider.Model, " \t\r\n") ||
-		!ValidLLMAPIMode(provider.Provider, apiMode) {
+		!ValidLLMAPIMode(provider.Provider, apiMode) || !ValidLLMReasoningEffort(provider.ReasoningEffort) {
 		return fmt.Errorf("LLM provider configuration is invalid")
 	}
 	if err := validateRequiredUUIDv7(provider.CredentialSecretID); err != nil {
@@ -470,11 +496,11 @@ func ValidateLLMModelsProbe(baseURL, secretID string) error {
 	return validateRequiredUUIDv7(secretID)
 }
 
-func ValidateLLMChatProbe(baseURL, secretID, model string, apiMode LLMAPIMode) error {
+func ValidateLLMChatProbe(baseURL, secretID, model string, apiMode LLMAPIMode, reasoningEffort LLMReasoningEffort) error {
 	if err := ValidateLLMModelsProbe(baseURL, secretID); err != nil {
 		return err
 	}
-	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") ||
+	if !bounded(model, 1, 200) || strings.ContainsAny(model, " \t\r\n") || !ValidLLMReasoningEffort(reasoningEffort) ||
 		(apiMode != LLMAPIModeChatCompletions && apiMode != LLMAPIModeResponses && apiMode != LLMAPIModeMessages) {
 		return fmt.Errorf("LLM model is invalid")
 	}

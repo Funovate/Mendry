@@ -763,6 +763,7 @@ test("configures Anthropic as the LLM provider", async ({ page }) => {
   await expect(page.getByRole("group", { name: "LLM API" })).toHaveCount(0);
   await page.getByRole("button", { name: "Load models" }).click();
   await page.getByLabel("LLM model").selectOption("claude-sonnet-5");
+  await page.getByLabel("LLM reasoning effort").selectOption("high");
   await page.getByRole("button", { name: "Test with hi" }).click();
   await expect(page.getByText("Chat probe succeeded.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Save LLM provider" }).click();
@@ -770,8 +771,8 @@ test("configures Anthropic as the LLM provider", async ({ page }) => {
 
   expect(state.writes).toEqual(expect.arrayContaining([
     { method: "POST", path: "/api/v1/projects/real-estate/llm/models", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source" } },
-    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages" } },
-    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages" } },
+    { method: "POST", path: "/api/v1/projects/real-estate/llm/chat", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages", reasoningEffort: "high" } },
+    { method: "PUT", path: "/api/v1/projects/real-estate/configuration/llm", body: { provider: "anthropic", baseUrl: "https://api.anthropic.com", credentialSecretId: "secret-source", model: "claude-sonnet-5", apiMode: "messages", reasoningEffort: "high" } },
   ]));
 });
 

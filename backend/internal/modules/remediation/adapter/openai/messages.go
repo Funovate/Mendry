@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 )
 
 // messagesJSONInstruction 替代 Anthropic 缺失的 json_object 模式；最终回复仍由调用方按 JSON 校验。
@@ -12,11 +14,16 @@ const messagesJSONInstruction = "When you reply without calling a tool, respond 
 // messagesRequest 是 Anthropic Messages API 请求。system 为顶层字段，
 // 采样参数不发送，因为较新的 Claude 模型拒绝非默认 temperature。
 type messagesRequest struct {
-	Model     string               `json:"model"`
-	MaxTokens int                  `json:"max_tokens"`
-	System    []messagesTextBlock  `json:"system,omitempty"`
-	Messages  []messagesTurn       `json:"messages"`
-	Tools     []messagesToolSchema `json:"tools,omitempty"`
+	Model        string                `json:"model"`
+	MaxTokens    int                   `json:"max_tokens"`
+	System       []messagesTextBlock   `json:"system,omitempty"`
+	Messages     []messagesTurn        `json:"messages"`
+	Tools        []messagesToolSchema  `json:"tools,omitempty"`
+	OutputConfig *messagesOutputConfig `json:"output_config,omitempty"`
+}
+
+type messagesOutputConfig struct {
+	Effort projectdomain.LLMReasoningEffort `json:"effort"`
 }
 
 type messagesTextBlock struct {

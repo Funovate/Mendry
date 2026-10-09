@@ -152,6 +152,10 @@ export function ReviewStep({ configuration, inboundUrl }: { configuration: Proje
               <span>Model</span>
               <code>{configuration.llm?.model ?? "Not configured"}</code>
             </div>
+            <div className="review-row">
+              <span>Reasoning effort</span>
+              <strong>{configuration.llm?.reasoningEffort ?? "default"}</strong>
+            </div>
           </div>
         </div>
       </div>

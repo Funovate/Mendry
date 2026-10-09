@@ -107,8 +107,10 @@ const triggerSchema = z.object({
 
 const llmProviderNameSchema = z.enum(["openai", "anthropic"]);
 const llmAPIModeSchema = z.enum(["chat_completions", "responses", "messages"]);
+const llmReasoningEffortSchema = z.enum(["default", "low", "medium", "high"]);
 export type LLMProviderName = z.infer<typeof llmProviderNameSchema>;
 export type LLMAPIMode = z.infer<typeof llmAPIModeSchema>;
+export type LLMReasoningEffort = z.infer<typeof llmReasoningEffortSchema>;
 
 const llmProviderSchema = z.object({
   id: z.string().optional(),
@@ -117,6 +119,7 @@ const llmProviderSchema = z.object({
   credentialSecretId: z.string(),
   model: z.string(),
   apiMode: llmAPIModeSchema,
+  reasoningEffort: llmReasoningEffortSchema.default("default"),
   version: z.number().optional(),
 });
 
@@ -605,7 +608,7 @@ export const api = {
     requestData(projectPath(projectKey, "/configuration/source/ssh/log-files"), sshLogFilesSchema, { method: "POST", body: JSON.stringify(input) }),
   probeLLMModels: (projectKey: string, input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string }) =>
     requestData(projectPath(projectKey, "/llm/models"), llmModelsSchema, { method: "POST", body: JSON.stringify(input) }),
-  probeLLMChat: (projectKey: string, input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode }) =>
+  probeLLMChat: (projectKey: string, input: { provider: LLMProviderName; baseUrl: string; credentialSecretId: string; model: string; apiMode: LLMAPIMode; reasoningEffort: LLMReasoningEffort }) =>
     requestData(projectPath(projectKey, "/llm/chat"), llmChatProbeSchema, { method: "POST", body: JSON.stringify(input) }),
   getConfiguration: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration"), projectConfigurationSchema, { signal }),
   getConfigurationDraft: (projectKey: string, signal?: AbortSignal) => requestData(projectPath(projectKey, "/configuration/draft"), projectConfigurationDraftSchema, { signal }),
