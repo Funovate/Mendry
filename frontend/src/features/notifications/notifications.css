@@ -536,6 +536,24 @@
   border: 1px solid #cbebd4;
 }
 
+.platform-badge.platform-slack {
+  background: #f6eef6;
+  color: #611f69;
+  border: 1px solid #e8d3e9;
+}
+
+.platform-badge.platform-discord {
+  background: #eef0fd;
+  color: #4752c4;
+  border: 1px solid #d5d9fa;
+}
+
+.platform-badge.platform-whatsapp {
+  background: #ecf9f1;
+  color: #128c4b;
+  border: 1px solid #c8eed8;
+}
+
 .platform-icon-svg {
   flex-shrink: 0;
 }

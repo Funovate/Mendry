@@ -1,6 +1,6 @@
 ---
 title: 项目通知
-description: 配置 Telegram、飞书和企业微信渠道，接收事故触发与 AI 处理结果，并排查投递失败。
+description: 配置 Telegram、飞书、企业微信、Slack、Discord 和 WhatsApp 渠道，接收事故触发与 AI 处理结果，并排查投递失败。
 availability: available
 translationKey: notifications
 sources:
@@ -15,7 +15,7 @@ sources:
 
 **可用性：available**
 
-事故应用支持向 Telegram Bot、飞书自定义机器人和企业微信群机器人发送项目通知。每个项目可以配置多个渠道，包括多个 Telegram Bot / Chat 组合。该能力运行在现有 API 进程中，不代表通用 Harness 任务队列已经可用。
+事故应用支持向 Telegram Bot、飞书自定义机器人、企业微信群机器人、Slack Incoming Webhook、Discord Webhook 和 WhatsApp（Meta Cloud API）发送项目通知。每个项目可以配置多个渠道，包括多个 Telegram Bot / Chat 组合。该能力运行在现有 API 进程中，不代表通用 Harness 任务队列已经可用。
 
 ## 配置通知渠道
 
@@ -29,8 +29,11 @@ sources:
 | Telegram（`telegram`） | Bot token（`botToken`）和 Chat ID（`chatId`） | 无                          |
 | 飞书（`feishu`）       | 自定义机器人 Webhook URL（`webhookUrl`）      | 签名密钥（`signingSecret`） |
 | 企业微信（`wecom`）    | 群机器人 Webhook URL（`webhookUrl`）          | 无                          |
+| Slack（`slack`）       | Incoming Webhook URL（`webhookUrl`）          | 无                          |
+| Discord（`discord`）   | 频道 Webhook URL（`webhookUrl`）              | 无                          |
+| WhatsApp（`whatsapp`） | Access token（`botToken`）、Phone number ID（`phoneNumberId`）、接收方 E.164 号码（`chatId`） | 无 |
 
-仅支持 `api.telegram.org`、`open.feishu.cn` 和 `qyapi.weixin.qq.com` 上的 HTTPS 端点。飞书和企业微信 URL 必须使用对应平台的机器人接口路径，不支持自定义主机、显式端口、重定向或代理。
+仅支持 `api.telegram.org`、`open.feishu.cn`、`qyapi.weixin.qq.com`、`hooks.slack.com`、`discord.com` 和 `graph.facebook.com` 上的 HTTPS 端点。WhatsApp 自由文本消息仅在接收方最近一次向企业号码发消息后的 24 小时内送达。飞书和企业微信 URL 必须使用对应平台的机器人接口路径，不支持自定义主机、显式端口、重定向或代理。
 
 创建后不能更换渠道平台。编辑渠道时可以保留已保存凭据，也可以勾选 **Replace credentials** 替换凭据；API 更新时省略 `credentials` 即表示保留。凭据以加密形式存储，读取渠道的响应不会返回秘密值。
 

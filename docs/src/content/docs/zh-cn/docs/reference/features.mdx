@@ -23,7 +23,7 @@ sources:
 | ---------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | 项目与配置 | `/projects/:key/configuration/edit`          | 配置 Git、Source、Trigger、LLM、Automatic hotfix 和 Review。各配置步骤独立保存。                                  |
 | SSH 日志监控 | Collection source → SSH / Host process；Trigger → Managed log probe | 浏览远端日志文件，配置手工或 AI 生成的规则，安装或更新探针、查询状态及卸载。 |
-| 项目通知   | `/projects/:key/configuration/notifications` | 配置多个 Telegram、飞书或企业微信渠道，发送测试消息，查看最近 100 条投递记录并重试符合条件的失败任务。            |
+| 项目通知   | `/projects/:key/configuration/notifications` | 配置多个 Telegram、飞书、企业微信、Slack、Discord 或 WhatsApp 渠道，发送测试消息，查看最近 100 条投递记录并重试符合条件的失败任务。            |
 | 事件流     | `/projects/:key/observations`                | 查看 Observation，按等级或 message/service/source 筛选当前页，并手动刷新。                                        |
 | 事故列表   | 项目导航中的 Incidents                       | 增量加载事故、检查证据，人工设置 Open、Recovered 或 Closed。                                                      |
 | 调查与修复 | `/projects/:key/incidents/:id`               | 查看诊断、引用、计划、候选 Diff、尝试记录、恢复信息及已有的 Hotfix delivery。操作是否可用取决于服务端状态与策略。 |

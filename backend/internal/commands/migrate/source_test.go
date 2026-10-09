@@ -46,8 +46,8 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	if len(migrations) != 29 {
-		t.Fatalf("migration count = %d, want 29", len(migrations))
+	if len(migrations) != 30 {
+		t.Fatalf("migration count = %d, want 30", len(migrations))
 	}
 	for index, migration := range migrations {
 		if migration.Version != int64(index+1) {
@@ -417,6 +417,11 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 		!strings.Contains(reasoningEffort.SQL, "reasoning_effort text NOT NULL DEFAULT 'default'") ||
 		!strings.Contains(reasoningEffort.SQL, "CHECK (reasoning_effort IN ('default', 'low', 'medium', 'high'))") {
 		t.Fatal("migration 000029 must add a backward-compatible constrained LLM reasoning effort")
+	}
+	notificationPlatforms := migrations[29]
+	if notificationPlatforms.Name != "notification_more_platforms" ||
+		!strings.Contains(notificationPlatforms.SQL, "CHECK (platform IN ('telegram', 'feishu', 'wecom', 'slack', 'discord', 'whatsapp'))") {
+		t.Fatal("migration 000030 must allow slack, discord, and whatsapp notification channels")
 	}
 	requiredAutoHotfixPolicy := []string{
 		"remediation_execution_mode",

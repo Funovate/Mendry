@@ -1,6 +1,6 @@
 # Project Notifications
 
-The API process delivers project-scoped notifications to Telegram bots, Feishu custom bots, and WeCom group bots. Each project can configure multiple channels, including multiple Telegram bot/chat pairs.
+The API process delivers project-scoped notifications to Telegram bots, Feishu custom bots, WeCom group bots, Slack incoming webhooks, Discord webhooks, and WhatsApp (Meta Cloud API). Each project can configure multiple channels, including multiple Telegram bot/chat pairs.
 
 ## Deployment
 
@@ -27,7 +27,7 @@ Delivery is **at least once**. A platform may accept a message before its HTTP r
 
 Credentials are encrypted with AES-GCM, bound to project ID, channel ID, and a notification-specific credential context. Read DTOs never expose bot tokens, chat IDs, webhook URLs, signing secrets, ciphertext, or nonces. Platform errors are stable classifications rather than credential-bearing network URLs or response bodies. Incoming credential objects are covered by the existing request snapshot redaction.
 
-Only HTTPS to `api.telegram.org`, `open.feishu.cn`, and `qyapi.weixin.qq.com` is supported. Webhook paths are restricted to the platform's bot endpoint. Custom hosts, explicit ports, userinfo, fragments, encoded path variants, duplicate WeCom keys, proxies, and redirects are rejected or disabled. Feishu signing secrets are optional.
+Only HTTPS to `api.telegram.org`, `open.feishu.cn`, `qyapi.weixin.qq.com`, `hooks.slack.com`, `discord.com`, and `graph.facebook.com` is supported. Webhook paths are restricted to the platform's bot endpoint. Custom hosts, explicit ports, userinfo, fragments, encoded path variants, duplicate WeCom keys, proxies, and redirects are rejected or disabled. Feishu signing secrets are optional.
 
 ## API And UI
 
@@ -45,7 +45,7 @@ All endpoints are under `/api/v1/projects/{projectKey}/notifications`, require t
 | GET | `/deliveries` | Most recent 100 deliveries |
 | POST | `/deliveries/{deliveryId}/retry` | Requeue a failed delivery only for a current enabled channel; `{ "queued": true }`, otherwise HTTP 409 |
 
-Channel input uses `name`, `platform` (`telegram`, `feishu`, `wecom`), `enabled`, and optional `credentials`. Creation requires credentials. Telegram credentials use `botToken` and `chatId`; Feishu/WeCom credentials use `webhookUrl`, with optional `signingSecret` for Feishu. Platform is immutable on update. Responses use the project's standard success/list envelopes. Delivery `state` is one of `pending`, `sending`, `delivered`, `failed`, or `cancelled`.
+Channel input uses `name`, `platform` (`telegram`, `feishu`, `wecom`, `slack`, `discord`, `whatsapp`), `enabled`, and optional `credentials`. Creation requires credentials. Telegram credentials use `botToken` and `chatId`; WhatsApp credentials use `botToken` (Cloud API access token), `phoneNumberId`, and `chatId` (recipient E.164 number); Feishu/WeCom/Slack/Discord credentials use `webhookUrl`, with optional `signingSecret` for Feishu. WhatsApp free-form text is only delivered inside the recipient's 24-hour customer-service window. Platform is immutable on update. Responses use the project's standard success/list envelopes. Delivery `state` is one of `pending`, `sending`, `delivered`, `failed`, or `cancelled`.
 
 ## Validation
 

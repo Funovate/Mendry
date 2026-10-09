@@ -689,7 +689,7 @@ export const api = {
 };
 
 const notificationChannelSchema = z.object({
-  id: z.string(), name: z.string(), platform: z.enum(["telegram", "feishu", "wecom"]),
+  id: z.string(), name: z.string(), platform: z.enum(["telegram", "feishu", "wecom", "slack", "discord", "whatsapp"]),
   enabled: z.boolean(), hasCredentials: z.boolean(), createdAt: z.string(), updatedAt: z.string(),
 });
 const notificationDeliverySchema = z.object({
@@ -702,7 +702,7 @@ export type NotificationChannel = z.infer<typeof notificationChannelSchema>;
 export type NotificationDelivery = z.infer<typeof notificationDeliverySchema>;
 export type NotificationChannelInput = {
   name: string; platform: NotificationChannel["platform"]; enabled: boolean;
-  credentials?: { botToken?: string; chatId?: string; webhookUrl?: string; signingSecret?: string };
+  credentials?: { botToken?: string; chatId?: string; webhookUrl?: string; signingSecret?: string; phoneNumberId?: string };
 };
 export const notificationApi = {
   listChannels: (key: string, signal?: AbortSignal) => requestList(projectPath(key, "/notifications/channels"), notificationChannelSchema, { signal }),

@@ -101,7 +101,7 @@ Provider 限制、发送端设置、轮换与投递行为见[签名 Webhook](/zh
 
 ### 项目通知
 
-每个项目还可以保存多个通知渠道，在 **Configuration → Notifications** 中独立配置。支持的平台为 `telegram`、`feishu` 和 `wecom`。渠道包含名称、启用状态与加密的平台凭据，不使用共享 Secret ID 配置表单。
+每个项目还可以保存多个通知渠道，在 **Configuration → Notifications** 中独立配置。支持的平台为 `telegram`、`feishu`、`wecom`、`slack`、`discord` 和 `whatsapp`。渠道包含名称、启用状态与加密的平台凭据，不使用共享 Secret ID 配置表单。
 
 部署包含通知功能的 API 前，需要应用迁移 `000025_notifications`。通知复用 `MENDRY_ENCRYPTION_KEY` 加密凭据，并使用 `MENDRY_PUBLIC_URL` 生成事故链接，无需新增消息代理或环境变量。凭据填写、事件条件、投递状态与重试行为见[项目通知](/zh-cn/docs/guides/notifications/)。
 
