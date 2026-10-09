@@ -484,8 +484,8 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
           <div className="remediation-main">
 
           {review.recovery && review.recovery.active && (
-            <aside className="remediation-recovery" role="status" aria-label="Recovering / 自动恢复中">
-              <h3>Recovering · 自动恢复中</h3>
+            <aside className="remediation-recovery" role="status" aria-label="Recovering">
+              <h3>Recovering</h3>
               <p className="remediation-recovery-phase">
                 Phase <strong>{review.checkpoint?.phase || review.status}</strong>
                 {review.checkpoint && <> · checkpoint <strong>{review.checkpoint.sequence}</strong> ({formatCheckpointAge(review.checkpoint.updatedAt)})</>}
@@ -513,12 +513,12 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
           )}
 
           {review.status === "blocked_manual_review" && review.manualSuggestion.trim() !== "" && (
-            <aside className="remediation-manual-suggestion" aria-label="人工修复建议 / Manual fix suggestion">
-              <h3>人工修复建议 / Manual fix suggestion</h3>
+            <aside className="remediation-manual-suggestion" aria-label="Manual fix suggestion">
+              <h3>Manual fix suggestion</h3>
               <p>{review.manualSuggestion}</p>
               {review.diagnosis && review.diagnosis.missingEvidence.length > 0 && (
                 <div className="remediation-missing-evidence">
-                  <h4>缺失证据</h4>
+                  <h4>Missing evidence</h4>
                   <ul>
                     {review.diagnosis.missingEvidence.map((evidence) => <li key={evidence}>{evidence}</li>)}
                   </ul>

@@ -598,9 +598,9 @@ test("highlights the manual fix suggestion for blocked remediation", async ({ pa
   await mockApi(page, { remediationMode: "blocked" });
   await page.goto("/projects/real-estate/incidents/INC-2048");
 
-  await expect(page.getByRole("heading", { name: "人工修复建议 / Manual fix suggestion", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Manual fix suggestion", exact: true })).toBeVisible();
   await expect(page.getByText("Collect runtime logs around the alert window and review the provider path before applying a change.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "缺失证据", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Missing evidence", exact: true })).toBeVisible();
   await expect(page.getByText("runtime logs", { exact: true })).toBeVisible();
   await expect(page.getByText("provider detail", { exact: true })).toBeVisible();
 });
