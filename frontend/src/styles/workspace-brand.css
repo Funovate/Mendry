@@ -484,9 +484,9 @@
 }
 
 .status-pill.open {
-  color: #a26922;
-  background: #faf0de;
-  border: 1px solid #edd4b2;
+  color: #8a2f35;
+  background: #fbf1f1;
+  border: 1px solid #efd2d3;
 }
 
 .status-pill.recovered {
@@ -502,9 +502,9 @@
 }
 
 .status-pill.p2 {
-  color: #b06018;
-  background: #fdf0e6;
-  border: 1px solid #f6d2b8;
+  color: #7b541d;
+  background: #fbf5ea;
+  border: 1px solid #ecdbbd;
 }
 
 .status-pill.info {

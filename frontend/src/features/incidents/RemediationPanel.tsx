@@ -43,6 +43,16 @@ function formatBudgetAmount(amount: Record<string, number> | undefined): string 
   return parts.join(" · ");
 }
 
+function confidenceTone(confidence: number): "low" | "medium" | "high" {
+  if (confidence < 0.4) return "low";
+  return confidence < 0.7 ? "medium" : "high";
+}
+
+function fixabilityTone(fixability: string): "success" | "warning" | "neutral" {
+  if (fixability === "code_fixable" || fixability === "no_change_needed") return "success";
+  return fixability === "insufficient_evidence" || fixability === "unsafe_to_automate" ? "warning" : "neutral";
+}
+
 function formatCheckpointAge(updatedAt: string): string {
   const updated = Date.parse(updatedAt);
   if (Number.isNaN(updated)) return "unknown";
@@ -359,7 +369,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
         <div className="remediation-review">
           <header className="remediation-summary-bar">
             <h2><Waypoints size={20} aria-hidden="true" />Remediation review</h2>
-            <span className="remediation-state-label">{review.status.replaceAll("_", " ")}</span>
+            <span className={`remediation-state-label is-${guidance?.badgeTone ?? "running"}`}>{review.status.replaceAll("_", " ")}</span>
             <div className="remediation-actions">
               {review.continuationAvailable && canWrite && (
                 <button className="primary-button" type="button" disabled={continueRemediation.isPending || continuationBlocked} onClick={continueFromReview}>
@@ -534,7 +544,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
                   <h3 id="remediation-diagnosis-heading"><ScanSearch size={18} aria-hidden="true" />Diagnosis</h3>
                   <div className="diagnosis-heading-badges">
                     {review.diagnosis?.fixability && (
-                      <span className="diagnosis-fixability-badge">
+                      <span className={`diagnosis-fixability-badge is-${fixabilityTone(review.diagnosis.fixability)}`}>
                         <Wrench size={12} aria-hidden="true" />
                         {review.diagnosis.fixability.replaceAll("_", " ")}
                       </span>
@@ -546,7 +556,7 @@ export function RemediationPanel({ projectKey, incidentId, generation, fingerpri
               {review.diagnosis ? (
                 <>
                   <div className="diagnosis-visual-summary">
-                    <div className="diagnosis-kpi-card">
+                    <div className={`diagnosis-kpi-card is-confidence-${confidenceTone(review.diagnosis.confidence)}`}>
                       <div className="diagnosis-kpi-head">
                         <Activity size={14} className="kpi-icon" aria-hidden="true" />
                         <span className="kpi-label">Diagnosis confidence</span>

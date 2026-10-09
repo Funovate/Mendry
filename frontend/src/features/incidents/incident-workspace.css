@@ -6,6 +6,23 @@
 .app-shell .incident-workspace {
   container-type: inline-size;
   --incident-gutter: clamp(20px, 3.2vw, 44px);
+  /* Semantic tones: red = blocked / needs a human, amber = active / caution,
+     green = done / healthy, neutral = metadata. Keep each to one meaning. */
+  --tone-danger: var(--color-danger);
+  --tone-danger-ink: #8a2f35;
+  --tone-danger-soft: #fbf1f1;
+  --tone-danger-line: #efd2d3;
+  --tone-warning: var(--color-amber);
+  --tone-warning-ink: #7b541d;
+  --tone-warning-soft: #fbf5ea;
+  --tone-warning-line: #ecdbbd;
+  --tone-success: var(--color-success);
+  --tone-success-ink: #165a41;
+  --tone-success-soft: #ecf5f0;
+  --tone-success-line: #c8e2d4;
+  --tone-neutral: var(--color-muted);
+  --tone-neutral-soft: #f2f5f3;
+  --tone-neutral-line: #dce2de;
   background: var(--color-canvas);
   min-height: 100vh;
 }
@@ -43,9 +60,8 @@
   height: 2px;
   background: linear-gradient(90deg, transparent 20%, #c1893e 50%, transparent 80%);
   background-size: 180% 100%;
-  opacity: 0.85;
+  opacity: 0.6;
   pointer-events: none;
-  animation: incident-accent-drift 8s ease-in-out infinite alternate;
 }
 
 .app-shell .incident-workspace .detail-header::after {
@@ -56,19 +72,7 @@
   width: 30%;
   min-width: 240px;
   background: linear-gradient(105deg, transparent 15%, rgb(193 137 62 / 4%) 48%, transparent 78%);
-  transform: translateX(-110%);
-  pointer-events: none;
-  animation: incident-header-scan 11s ease-in-out infinite;
-}
-
-@keyframes incident-accent-drift {
-  from { background-position: 0 0; }
-  to { background-position: 100% 0; }
-}
-
-@keyframes incident-header-scan {
-  0%, 18% { transform: translateX(-110%); }
-  72%, 100% { transform: translateX(440%); }
+  display: none;
 }
 
 .app-shell .incident-workspace .detail-kicker-row {
@@ -185,8 +189,8 @@
 }
 
 .app-shell .incident-workspace .incident-id-dot.dot-open {
-  background: #c1893e;
-  box-shadow: 0 0 0 2px rgb(193 137 62 / 20%);
+  background: var(--tone-danger);
+  box-shadow: 0 0 0 2px rgb(168 62 68 / 18%);
 }
 
 .app-shell .incident-workspace .incident-id-dot.dot-recovered {
@@ -351,8 +355,8 @@
 }
 
 .incident-status-control .status-control-dot.dot-open {
-  background: #c1893e;
-  box-shadow: 0 0 0 2.5px rgb(193 137 62 / 24%);
+  background: var(--tone-danger);
+  box-shadow: 0 0 0 2.5px rgb(168 62 68 / 20%);
 }
 
 .incident-status-control .status-control-dot.dot-recovered {
@@ -496,11 +500,30 @@
   padding: 4px 11px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #1b6348;
-  background: #eaf3ec;
-  border: 1px solid #c7ded0;
+  --state-ink: var(--tone-success-ink);
+  --state-dot: var(--tone-success);
+  color: var(--state-ink);
+  background: color-mix(in srgb, var(--state-dot) 9%, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--state-dot) 26%, #ffffff);
   border-radius: 999px;
   text-transform: capitalize;
+}
+
+.remediation-state-label.is-action,
+.remediation-state-label.is-recoverable {
+  --state-ink: var(--tone-warning-ink);
+  --state-dot: var(--tone-warning);
+}
+
+.remediation-state-label.is-blocked,
+.remediation-state-label.is-terminal {
+  --state-ink: var(--tone-danger-ink);
+  --state-dot: var(--tone-danger);
+}
+
+.remediation-state-label.is-unstarted {
+  --state-ink: var(--tone-neutral);
+  --state-dot: var(--tone-neutral);
 }
 
 .remediation-state-label::before {
@@ -508,7 +531,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #c1893e;
+  background: var(--state-dot);
 }
 
 .remediation-summary-bar .remediation-actions {
@@ -587,9 +610,7 @@
   top: 0;
   left: 20px;
   right: 20px;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #2f7556 50%, transparent);
-  opacity: 0.8;
+  display: none;
 }
 
 .app-shell .remediation-focused .remediation-block-heading {
@@ -636,15 +657,27 @@
   padding: 0 9px;
   font-size: 11px;
   font-weight: 650;
-  color: #146c43;
-  background: #edf7f0;
-  border: 1px solid #bbf7d0;
+  color: var(--tone-neutral);
+  background: var(--tone-neutral-soft);
+  border: 1px solid var(--tone-neutral-line);
   border-radius: 999px;
   text-transform: capitalize;
 }
 
+.app-shell .remediation-focused .remediation-block-heading .diagnosis-fixability-badge.is-success {
+  color: var(--tone-success-ink);
+  background: var(--tone-success-soft);
+  border-color: var(--tone-success-line);
+}
+
+.app-shell .remediation-focused .remediation-block-heading .diagnosis-fixability-badge.is-warning {
+  color: var(--tone-warning-ink);
+  background: var(--tone-warning-soft);
+  border-color: var(--tone-warning-line);
+}
+
 .diagnosis-fixability-badge svg {
-  color: #15803d;
+  color: currentColor;
 }
 
 .diagnosis-ai-badge {
@@ -755,10 +788,14 @@
 
 .kpi-bar-fill {
   height: 100%;
-  background: #15803d;
+  background: var(--tone-success);
   border-radius: 999px;
   transition: width 300ms ease;
 }
+
+.diagnosis-kpi-card.is-confidence-medium .kpi-bar-fill { background: var(--tone-warning); }
+.diagnosis-kpi-card.is-confidence-low .kpi-bar-fill { background: var(--tone-danger); }
+.diagnosis-kpi-card.is-confidence-low .kpi-number { color: var(--tone-danger-ink); }
 
 /* Recommended Next Step Box */
 .app-shell .remediation-focused .remediation-next-step {
@@ -1471,9 +1508,9 @@
   height: 20px;
   border-radius: 50%;
   background: #17281f;
-  color: #dfb579;
+  color: #ffffff;
   border: 2px solid #ffffff;
-  box-shadow: 0 0 0 1px #c1893e;
+  box-shadow: 0 0 0 1px #cbd5ce;
 }
 
 .attempt-heading {
@@ -1504,7 +1541,7 @@
 .attempt-state {
   display: inline-block;
   font-size: 11px;
-  color: #1b6348;
+  color: #52665a;
   font-weight: 550;
 }
 
@@ -1926,10 +1963,10 @@
 
 .remediation-handoff.is-blocked,
 .remediation-handoff.is-terminal {
-  --handoff-accent: #b42318;
-  --handoff-ink: #8a1c13;
-  --handoff-soft: #fef4f3;
-  --handoff-line: #f1cdc9;
+  --handoff-accent: var(--tone-danger);
+  --handoff-ink: var(--tone-danger-ink);
+  --handoff-soft: var(--tone-danger-soft);
+  --handoff-line: var(--tone-danger-line);
 }
 
 .remediation-handoff-head {
@@ -2033,7 +2070,7 @@
 }
 
 .remediation-handoff-steps .is-next {
-  background: color-mix(in srgb, var(--handoff-soft) 55%, #ffffff);
+  background: color-mix(in srgb, var(--handoff-soft) 35%, #ffffff);
 }
 
 .remediation-handoff-steps .is-next .handoff-step-label {
