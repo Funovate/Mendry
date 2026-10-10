@@ -92,7 +92,8 @@ SELECT e.id AS environment_id, e.environment_key, e.name AS environment_name, e.
        t.ingress_token_hash, t.ingress_token_ciphertext, t.ingress_token_nonce,
        l.id AS llm_id, l.provider AS llm_provider, l.base_url AS llm_base_url,
        l.credential_secret_id AS llm_credential_secret_id, l.model AS llm_model,
-       l.api_mode AS llm_api_mode, l.version AS llm_version
+       l.api_mode AS llm_api_mode, l.reasoning_effort AS llm_reasoning_effort,
+       l.version AS llm_version
 FROM project_environments AS e
 JOIN project_repositories AS r ON r.project_id = e.project_id
 JOIN project_sources AS s ON s.project_id = e.project_id AND s.environment_id = e.id
@@ -204,11 +205,11 @@ WITH changed_environment AS (
               ingress_token_hash, ingress_token_ciphertext, ingress_token_nonce
 ), changed_llm AS (
     INSERT INTO project_llm_providers (
-        id, project_id, provider, base_url, credential_secret_id, model, api_mode
+        id, project_id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort
     ) VALUES (
         sqlc.arg(llm_id), sqlc.arg(project_id), sqlc.arg(llm_provider),
         sqlc.arg(llm_base_url), sqlc.arg(llm_credential_secret_id), sqlc.arg(llm_model),
-        sqlc.arg(llm_api_mode)
+        sqlc.arg(llm_api_mode), sqlc.arg(llm_reasoning_effort)
     )
     ON CONFLICT (project_id) DO UPDATE
     SET provider = EXCLUDED.provider,
@@ -216,9 +217,10 @@ WITH changed_environment AS (
         credential_secret_id = EXCLUDED.credential_secret_id,
         model = EXCLUDED.model,
         api_mode = EXCLUDED.api_mode,
+        reasoning_effort = EXCLUDED.reasoning_effort,
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, version
+    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort, version
 )
 SELECT changed_environment.id AS environment_id,
        changed_environment.environment_key, changed_environment.name AS environment_name,
@@ -241,6 +243,7 @@ SELECT changed_environment.id AS environment_id,
        changed_llm.base_url AS llm_base_url,
        changed_llm.credential_secret_id AS llm_credential_secret_id,
        changed_llm.model AS llm_model, changed_llm.api_mode AS llm_api_mode,
+       changed_llm.reasoning_effort AS llm_reasoning_effort,
        changed_llm.version AS llm_version
 FROM changed_environment, changed_repository, changed_source, changed_trigger, changed_llm;
 
@@ -300,7 +303,7 @@ WHERE project_id = sqlc.arg(project_id)
 LIMIT 1;
 
 -- name: GetProjectLLMProvider :one
-SELECT id, provider, base_url, credential_secret_id, model, api_mode, version
+SELECT id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort, version
 FROM project_llm_providers
 WHERE project_id = sqlc.arg(project_id)
 LIMIT 1;
@@ -400,11 +403,11 @@ FROM changed_trigger;
 -- name: UpsertProjectLLMProvider :one
 WITH changed_llm AS (
     INSERT INTO project_llm_providers (
-        id, project_id, provider, base_url, credential_secret_id, model, api_mode
+        id, project_id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort
     ) VALUES (
         sqlc.arg(llm_id), sqlc.arg(project_id), sqlc.arg(llm_provider),
         sqlc.arg(llm_base_url), sqlc.arg(llm_credential_secret_id), sqlc.arg(llm_model),
-        sqlc.arg(llm_api_mode)
+        sqlc.arg(llm_api_mode), sqlc.arg(llm_reasoning_effort)
     )
     ON CONFLICT (project_id) DO UPDATE
     SET provider = EXCLUDED.provider,
@@ -412,9 +415,10 @@ WITH changed_llm AS (
         credential_secret_id = EXCLUDED.credential_secret_id,
         model = EXCLUDED.model,
         api_mode = EXCLUDED.api_mode,
+        reasoning_effort = EXCLUDED.reasoning_effort,
         version = project_llm_providers.version + 1,
         updated_at = clock_timestamp()
-    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, version
+    RETURNING id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort, version
 )
-SELECT id, provider, base_url, credential_secret_id, model, api_mode, version
+SELECT id, provider, base_url, credential_secret_id, model, api_mode, reasoning_effort, version
 FROM changed_llm;

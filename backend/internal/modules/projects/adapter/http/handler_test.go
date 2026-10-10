@@ -21,16 +21,17 @@ import (
 )
 
 type fakeService struct {
-	project       domain.Project
-	secret        domain.Secret
-	projectKey    string
-	secretID      string
-	secretName    string
-	secretValue   []byte
-	inboundURL    string
-	configuration domain.Configuration
-	updateErr     error
-	probeAPIMode  domain.LLMAPIMode
+	project              domain.Project
+	secret               domain.Secret
+	projectKey           string
+	secretID             string
+	secretName           string
+	secretValue          []byte
+	inboundURL           string
+	configuration        domain.Configuration
+	updateErr            error
+	probeAPIMode         domain.LLMAPIMode
+	probeReasoningEffort domain.LLMReasoningEffort
 }
 
 func (f *fakeService) CreateProject(context.Context, authdomain.User, string, string, string) (domain.Project, error) {
@@ -183,8 +184,9 @@ func (f *fakeService) ProbeLLMModels(_ context.Context, _ authdomain.User, _, _,
 	f.probeAPIMode = apiMode
 	return projectapplication.LLMModels{Models: []string{"gpt-4.1", "gpt-5.6"}}, nil
 }
-func (f *fakeService) ProbeLLMChat(_ context.Context, _ authdomain.User, _, _, _, _ string, apiMode domain.LLMAPIMode) error {
+func (f *fakeService) ProbeLLMChat(_ context.Context, _ authdomain.User, _, _, _, _ string, apiMode domain.LLMAPIMode, reasoningEffort domain.LLMReasoningEffort) error {
 	f.probeAPIMode = apiMode
+	f.probeReasoningEffort = reasoningEffort
 	return nil
 }
 
@@ -554,13 +556,14 @@ func TestProbeLLMDerivesAPIModeFromProvider(t *testing.T) {
 		path, body string
 		status     int
 		want       domain.LLMAPIMode
+		wantEffort domain.LLMReasoningEffort
 	}{
-		{"llm/models", `{"baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeChatCompletions},
-		{"llm/models", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeMessages},
-		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5"}`, nethttp.StatusOK, domain.LLMAPIModeMessages},
-		{"llm/chat", `{"provider":"openai","baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"gpt-5.6","apiMode":"responses"}`, nethttp.StatusOK, domain.LLMAPIModeResponses},
-		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5","apiMode":"responses"}`, nethttp.StatusBadRequest, ""},
-		{"llm/models", `{"provider":"gemini","baseUrl":"https://example.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusBadRequest, ""},
+		{"llm/models", `{"baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeChatCompletions, ""},
+		{"llm/models", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusOK, domain.LLMAPIModeMessages, ""},
+		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5"}`, nethttp.StatusOK, domain.LLMAPIModeMessages, ""},
+		{"llm/chat", `{"provider":"openai","baseUrl":"https://api.openai.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"gpt-5.6","apiMode":"responses","reasoningEffort":"high"}`, nethttp.StatusOK, domain.LLMAPIModeResponses, domain.LLMReasoningEffortHigh},
+		{"llm/chat", `{"provider":"anthropic","baseUrl":"https://api.anthropic.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c","model":"claude-sonnet-5","apiMode":"responses"}`, nethttp.StatusBadRequest, "", ""},
+		{"llm/models", `{"provider":"gemini","baseUrl":"https://example.com","credentialSecretId":"019ff544-405c-7d24-9f10-cb3fc579605c"}`, nethttp.StatusBadRequest, "", ""},
 	}
 	for _, test := range cases {
 		service := &fakeService{}
@@ -570,8 +573,8 @@ func TestProbeLLMDerivesAPIModeFromProvider(t *testing.T) {
 		request.AddCookie(sessionCookie())
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != test.status || service.probeAPIMode != test.want {
-			t.Fatalf("%s %s = %d mode %q, want %d mode %q: %s", test.path, test.body, response.Code, service.probeAPIMode, test.status, test.want, response.Body.String())
+		if response.Code != test.status || service.probeAPIMode != test.want || service.probeReasoningEffort != test.wantEffort {
+			t.Fatalf("%s %s = %d mode %q effort %q, want %d mode %q effort %q: %s", test.path, test.body, response.Code, service.probeAPIMode, service.probeReasoningEffort, test.status, test.want, test.wantEffort, response.Body.String())
 		}
 	}
 }

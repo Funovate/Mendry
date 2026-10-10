@@ -16,7 +16,10 @@ import (
 )
 
 const (
-	defaultContainerInventoryCommand = "docker ps -a --no-trunc --format '{{json .}}'"
+	// Select only consumed fields: serializing the entire Docker formatter can
+	// evaluate unrelated fields and make an otherwise fast inventory query slow.
+	dockerInventoryFormat            = `{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"State":{{json .State}},"Status":{{json .Status}}}`
+	defaultContainerInventoryCommand = "docker ps -a --no-trunc --format '" + dockerInventoryFormat + "'"
 	maxContainerInventoryBytes       = 256 << 10
 	maxContainerInventoryEntries     = 100
 )

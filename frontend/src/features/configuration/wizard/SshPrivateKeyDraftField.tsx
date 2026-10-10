@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { FileKey2, Upload } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import {
   composeSshPrivateKeyValue,
   inspectSshPrivateKeyDraft,
@@ -25,6 +26,7 @@ export function SshPrivateKeyDraftField({
 }) {
   const [fileName, setFileName] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  const fileInputId = useId();
   const importGeneration = useRef(0);
 
   useEffect(() => () => {
@@ -73,10 +75,27 @@ export function SshPrivateKeyDraftField({
         onChange(event.target.value);
       }} />
     </label>
-    <label className="ssh-key-file"><span>{fileLabel}</span>
-      <input aria-label={fileLabel} type="file" accept=".pem,.key,text/plain" onChange={(event) => void importFile(event)} />
-    </label>
-    {fileName !== "" && <p className="ssh-key-file-name">{fileName}</p>}
+    <div className="ssh-key-file">
+      <span className="ssh-key-file-label">{fileLabel}</span>
+      <div className={`ssh-key-file-control ${fileName ? "has-file" : ""}`}>
+        <FileKey2 size={18} aria-hidden="true" />
+        <span className="ssh-key-file-status" title={fileName || undefined}>
+          {fileName || "No key file selected"}
+        </span>
+        <label className="ssh-key-file-button" htmlFor={fileInputId}>
+          <Upload size={15} aria-hidden="true" />
+          <span>Choose key file</span>
+        </label>
+        <input
+          id={fileInputId}
+          className="ssh-key-file-input"
+          aria-label={fileLabel}
+          type="file"
+          accept=".pem,.key,text/plain"
+          onChange={(event) => void importFile(event)}
+        />
+      </div>
+    </div>
     {importError !== null && <p className="credential-field-error">{importError}</p>}
   </div>;
 }

@@ -1,5 +1,5 @@
 import { BrainCircuit, Check, LoaderCircle } from "lucide-react";
-import type { LLMAPIMode, LLMProviderName, ProjectSecret } from "../../../api";
+import type { LLMAPIMode, LLMProviderName, LLMReasoningEffort, ProjectSecret } from "../../../api";
 import { messageFromError } from "../../../api";
 import { CredentialField } from "./CredentialField";
 
@@ -19,6 +19,7 @@ export const LLM_DEFAULT_API_MODE: Record<LLMProviderName, LLMAPIMode> = {
 
 export function LLMStep({
   provider, setProvider, baseUrl, setBaseUrl, credentialId, setCredentialId, model, setModel, apiMode, setAPIMode,
+  reasoningEffort, setReasoningEffort,
   models, onLoadModels, loadingModels, loadModelsError,
   onTestChat, testingChat, testChatError, chatReady,
   onSave, saving = false, canSave = false, saveError,
@@ -35,6 +36,8 @@ export function LLMStep({
   setModel: (value: string) => void;
   apiMode: LLMAPIMode;
   setAPIMode: (value: LLMAPIMode) => void;
+  reasoningEffort: LLMReasoningEffort;
+  setReasoningEffort: (value: LLMReasoningEffort) => void;
   models: string[];
   onLoadModels: () => void;
   loadingModels: boolean;
@@ -79,6 +82,15 @@ export function LLMStep({
         <button type="button" className={apiMode === "responses" ? "active" : ""} aria-pressed={apiMode === "responses"} onClick={() => setAPIMode("responses")}>Responses</button>
       </div>
     </label>}
+    <label>
+      Reasoning effort
+      <select aria-label="LLM reasoning effort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as LLMReasoningEffort)}>
+        <option value="default">Provider default</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+      </select>
+    </label>
     <label>Base URL<input aria-label="LLM base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={LLM_DEFAULT_BASE_URL[provider]} /></label>
     <CredentialField
       label="API key credential" value={credentialId} onChange={setCredentialId} secrets={bearerSecrets}

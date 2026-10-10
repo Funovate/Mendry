@@ -523,6 +523,10 @@ func writeTempKey(credential []byte) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("create ssh key directory: %w", err)
 	}
+	if err := protectKeyDirectory(directory); err != nil {
+		_ = os.RemoveAll(directory)
+		return "", nil, fmt.Errorf("protect ssh key directory: %w", err)
+	}
 	pathName := filepath.Join(directory, "id")
 	if err := os.WriteFile(pathName, privateKeyBytes(credential), 0o600); err != nil {
 		_ = os.RemoveAll(directory)

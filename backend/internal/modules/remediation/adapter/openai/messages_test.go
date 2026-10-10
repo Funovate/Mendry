@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	projectdomain "mendry/backend/internal/modules/projects/domain"
 	"mendry/backend/internal/modules/remediation/adapter/openai"
 	"mendry/backend/internal/modules/remediation/domain"
 	"mendry/backend/internal/platform/observability"
@@ -34,6 +35,10 @@ func TestCompleteSendsAnthropicMessagesAndParsesToolUse(t *testing.T) {
 			}
 			if payload["max_tokens"] != float64(128) || payload["temperature"] != nil || payload["response_format"] != nil {
 				t.Fatalf("sampling fields = %#v", payload)
+			}
+			outputConfig := payload["output_config"].(map[string]any)
+			if outputConfig["effort"] != "medium" {
+				t.Fatalf("output_config = %#v", outputConfig)
 			}
 			system := payload["system"].([]any)[0].(map[string]any)
 			if !strings.HasPrefix(system["text"].(string), "sys\n\n") || !strings.Contains(system["text"].(string), "single JSON object") || system["cache_control"] == nil {
@@ -61,8 +66,9 @@ func TestCompleteSendsAnthropicMessagesAndParsesToolUse(t *testing.T) {
 			}
 			return anthropicResponse(request, http.StatusOK, `{"stop_reason":"tool_use","content":[{"type":"text","text":"Let me read it."},{"type":"tool_use","id":"toolu_1","name":"repository_read_file","input":{"path":"main.go"}}],"usage":{"input_tokens":5,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":1}}`), nil
 		})},
-		StaticAPIKey: testAPIKey,
-		APIMode:      openai.APIModeMessages,
+		StaticAPIKey:    testAPIKey,
+		APIMode:         openai.APIModeMessages,
+		ReasoningEffort: projectdomain.LLMReasoningEffortMedium,
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)

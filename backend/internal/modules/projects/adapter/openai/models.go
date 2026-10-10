@@ -108,10 +108,11 @@ func (l *Lister) ListModels(ctx context.Context, baseURL string, apiKey []byte, 
 }
 
 type chatProbeRequest struct {
-	Model       string              `json:"model"`
-	MaxTokens   int                 `json:"max_tokens"`
-	Temperature float64             `json:"temperature"`
-	Messages    []map[string]string `json:"messages"`
+	Model           string                     `json:"model"`
+	MaxTokens       int                        `json:"max_tokens"`
+	Temperature     float64                    `json:"temperature"`
+	ReasoningEffort *domain.LLMReasoningEffort `json:"reasoning_effort,omitempty"`
+	Messages        []map[string]string        `json:"messages"`
 }
 
 type chatProbeResponse struct {
@@ -126,15 +127,33 @@ type responsesRequest struct {
 	Model           string              `json:"model"`
 	MaxOutputTokens int                 `json:"max_output_tokens"`
 	Input           []map[string]string `json:"input"`
+	Reasoning       *reasoningConfig    `json:"reasoning,omitempty"`
+}
+
+type reasoningConfig struct {
+	Effort domain.LLMReasoningEffort `json:"effort"`
+}
+
+type messagesOutputConfig struct {
+	Effort domain.LLMReasoningEffort `json:"effort"`
 }
 
 // messagesRequest 是 Anthropic Messages API 请求；system 为顶层字段而非消息。
 // 不发送 temperature：较新的 Claude 模型拒绝非默认采样参数。
 type messagesRequest struct {
-	Model     string              `json:"model"`
-	MaxTokens int                 `json:"max_tokens"`
-	System    string              `json:"system,omitempty"`
-	Messages  []map[string]string `json:"messages"`
+	Model        string                `json:"model"`
+	MaxTokens    int                   `json:"max_tokens"`
+	System       string                `json:"system,omitempty"`
+	Messages     []map[string]string   `json:"messages"`
+	OutputConfig *messagesOutputConfig `json:"output_config,omitempty"`
+}
+
+func explicitReasoningEffort(effort domain.LLMReasoningEffort) *domain.LLMReasoningEffort {
+	effort = domain.NormalizeLLMReasoningEffort(effort)
+	if effort == domain.LLMReasoningEffortDefault {
+		return nil
+	}
+	return &effort
 }
 
 type messagesResponse struct {
@@ -156,22 +175,24 @@ type responsesResponse struct {
 
 // ProbeChat 用固定 hi 探测已选模型能否通过配置的生成接口返回文本。
 // 不回传模型文本、响应体或 API key。
-func (l *Lister) ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode) error {
+func (l *Lister) ProbeChat(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode, reasoningEffort domain.LLMReasoningEffort) error {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	endpoint := baseURL + "/v1/chat/completions"
 	operation := opChatProbe
 	var requestPayload any = chatProbeRequest{
-		Model:       strings.TrimSpace(model),
-		MaxTokens:   chatProbeMaxTokens,
-		Temperature: 0,
-		Messages:    []map[string]string{{"role": "user", "content": "hi"}},
+		Model:           strings.TrimSpace(model),
+		MaxTokens:       chatProbeMaxTokens,
+		Temperature:     0,
+		ReasoningEffort: explicitReasoningEffort(reasoningEffort),
+		Messages:        []map[string]string{{"role": "user", "content": "hi"}},
 	}
 	if apiMode == domain.LLMAPIModeResponses {
 		endpoint = baseURL + "/v1/responses"
 		operation = opResponsesProbe
 		requestPayload = responsesRequest{
 			Model: strings.TrimSpace(model), MaxOutputTokens: chatProbeMaxTokens,
-			Input: []map[string]string{{"role": "user", "content": "hi"}},
+			Input:     []map[string]string{{"role": "user", "content": "hi"}},
+			Reasoning: reasoningConfigFor(reasoningEffort),
 		}
 	}
 	if apiMode == domain.LLMAPIModeMessages {
@@ -179,7 +200,8 @@ func (l *Lister) ProbeChat(ctx context.Context, baseURL string, apiKey []byte, m
 		operation = opMessagesProbe
 		requestPayload = messagesRequest{
 			Model: strings.TrimSpace(model), MaxTokens: chatProbeMaxTokens,
-			Messages: []map[string]string{{"role": "user", "content": "hi"}},
+			Messages:     []map[string]string{{"role": "user", "content": "hi"}},
+			OutputConfig: messagesOutputConfigFor(reasoningEffort),
 		}
 	}
 	payload, err := json.Marshal(requestPayload)
@@ -212,7 +234,23 @@ func (l *Lister) ProbeChat(ctx context.Context, baseURL string, apiKey []byte, m
 	return nil
 }
 
-func (l *Lister) GenerateLogRule(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode, intent, sample string) (domain.CustomRule, error) {
+func reasoningConfigFor(effort domain.LLMReasoningEffort) *reasoningConfig {
+	explicit := explicitReasoningEffort(effort)
+	if explicit == nil {
+		return nil
+	}
+	return &reasoningConfig{Effort: *explicit}
+}
+
+func messagesOutputConfigFor(effort domain.LLMReasoningEffort) *messagesOutputConfig {
+	explicit := explicitReasoningEffort(effort)
+	if explicit == nil {
+		return nil
+	}
+	return &messagesOutputConfig{Effort: *explicit}
+}
+
+func (l *Lister) GenerateLogRule(ctx context.Context, baseURL string, apiKey []byte, model string, apiMode domain.LLMAPIMode, reasoningEffort domain.LLMReasoningEffort, intent, sample string) (domain.CustomRule, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	endpoint := baseURL + "/v1/chat/completions"
 	prompt := `Return exactly one compact JSON object for a deterministic log monitoring rule. ` +
@@ -222,17 +260,18 @@ func (l *Lister) GenerateLogRule(ctx context.Context, baseURL string, apiKey []b
 	const system = "You design bounded deterministic production log rules."
 	inputs := []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": prompt}}
 	var requestPayload any = chatProbeRequest{
-		Model: strings.TrimSpace(model), MaxTokens: 700, Temperature: 0, Messages: inputs,
+		Model: strings.TrimSpace(model), MaxTokens: 700, Temperature: 0, ReasoningEffort: explicitReasoningEffort(reasoningEffort), Messages: inputs,
 	}
 	if apiMode == domain.LLMAPIModeResponses {
 		endpoint = baseURL + "/v1/responses"
-		requestPayload = responsesRequest{Model: strings.TrimSpace(model), MaxOutputTokens: 700, Input: inputs}
+		requestPayload = responsesRequest{Model: strings.TrimSpace(model), MaxOutputTokens: 700, Input: inputs, Reasoning: reasoningConfigFor(reasoningEffort)}
 	}
 	if apiMode == domain.LLMAPIModeMessages {
 		endpoint = baseURL + "/v1/messages"
 		requestPayload = messagesRequest{
 			Model: strings.TrimSpace(model), MaxTokens: 700, System: system,
-			Messages: []map[string]string{{"role": "user", "content": prompt}},
+			Messages:     []map[string]string{{"role": "user", "content": prompt}},
+			OutputConfig: messagesOutputConfigFor(reasoningEffort),
 		}
 	}
 	payload, err := json.Marshal(requestPayload)

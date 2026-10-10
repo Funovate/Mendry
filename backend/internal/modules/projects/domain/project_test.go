@@ -299,4 +299,12 @@ func TestValidateLLMProviderPairsProviderWithAPIMode(t *testing.T) {
 	if NormalizeLLMAPIMode("anthropic", "") != LLMAPIModeMessages || NormalizeLLMAPIMode("openai", "") != LLMAPIModeChatCompletions {
 		t.Fatal("NormalizeLLMAPIMode() default modes are wrong")
 	}
+	provider := base
+	provider.Provider, provider.ReasoningEffort = LLMProviderOpenAI, "extreme"
+	if err := ValidateLLMProvider(provider); err == nil {
+		t.Fatal("ValidateLLMProvider() accepted an unknown reasoning effort")
+	}
+	if NormalizeLLMReasoningEffort("") != LLMReasoningEffortDefault {
+		t.Fatal("NormalizeLLMReasoningEffort() did not preserve the backward-compatible default")
+	}
 }

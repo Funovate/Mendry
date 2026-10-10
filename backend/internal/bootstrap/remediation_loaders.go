@@ -140,6 +140,7 @@ func (l *projectRuntimeLoaders) LoadLLMProvider(ctx context.Context, projectID s
 		Model:              configuration.LLM.Model,
 		CredentialSecretID: configuration.LLM.CredentialSecretID,
 		APIMode:            remediationopenai.APIMode(configuration.LLM.APIMode),
+		ReasoningEffort:    configuration.LLM.ReasoningEffort,
 	}, nil
 }
 

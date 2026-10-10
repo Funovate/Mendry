@@ -283,7 +283,7 @@ func (r *Reader) openDocker(ctx context.Context, scope domain.EvidenceScope) (So
 func (r *Reader) resolveDockerContainer(ctx context.Context, cfg SourceConfig) (domain.DockerContainerIdentity, error) {
 	configuredName := strings.TrimSpace(cfg.Deployment.ContainerName)
 	filter := "^/" + regexp.QuoteMeta(configuredName) + "$"
-	remoteCommand := "docker ps -a --no-trunc --filter name=" + shellQuote(filter) + " --format '{{json .}}'"
+	remoteCommand := "docker ps -a --no-trunc --filter name=" + shellQuote(filter) + " --format " + shellQuote(dockerInventoryFormat)
 	stdout, _, truncated, err := r.runDockerCommand(ctx, cfg, remoteCommand, maxDockerRuntimeBytes)
 	if err != nil {
 		return domain.DockerContainerIdentity{}, err

@@ -16,7 +16,7 @@ export function RepositoryStep({
   remoteUrl, setRemoteUrl, scmProvider, setScmProvider, transport, setTransport,
   repositorySecretId, setRepositorySecretId, productionBranch, deployedCommit, branches,
   onSelectBranch, onReadRemote, readingRemote, readRemoteError,
-  onSave, saving = false, canSave = false, saveError,
+  onSave, saving = false, canSave = false, saved = false, saveError,
   knownSecrets, createCredential, creatingCredential, createCredentialError,
   updateCredential, updatingCredential = false, updateCredentialError,
 }: {
@@ -38,6 +38,7 @@ export function RepositoryStep({
   onSave: () => void;
   saving?: boolean;
   canSave?: boolean;
+  saved?: boolean;
   saveError?: unknown;
   knownSecrets: ProjectSecret[];
   createCredential: (input: { name: string; kind: ProjectSecret["kind"]; value: string }) => Promise<ProjectSecret>;
@@ -104,6 +105,7 @@ export function RepositoryStep({
       <button className="primary-button" type="button" disabled={saving || !canSave} onClick={onSave}>
         {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}Save Git repository
       </button>
+      {saved && <p className="setup-footer-saved" role="status">Git repository saved.</p>}
       {saveError !== undefined && saveError !== null && <p className="credential-field-error" role="alert">{messageFromError(saveError)}</p>}
     </div>
   </section>;

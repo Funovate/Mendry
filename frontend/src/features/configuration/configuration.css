@@ -708,16 +708,106 @@
   gap: 10px;
 }
 
-.ssh-key-file input[type="file"] {
-  height: auto;
-  min-height: 37px;
-  padding: 7px 10px;
+.ssh-key-file {
+  display: grid;
+  gap: 7px;
 }
 
-.ssh-key-file-name {
-  margin: 0;
-  color: #4b6571;
-  font-size: 11px;
+.ssh-key-file-label {
+  color: var(--color-heading);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ssh-key-file-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 5px 5px 5px 12px;
+  color: var(--color-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.ssh-key-file-control:hover,
+.ssh-key-file-control:focus-within {
+  border-color: var(--color-accent);
+}
+
+.ssh-key-file-control:focus-within {
+  box-shadow: 0 0 0 3px rgba(23, 109, 82, 0.12);
+}
+
+.ssh-key-file-control.has-file > svg {
+  color: var(--color-accent);
+}
+
+.ssh-key-file-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssh-key-file-control.has-file .ssh-key-file-status {
+  color: var(--color-heading);
+  font-weight: 600;
+}
+
+.ssh-key-file-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 7px !important;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--color-heading) !important;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.ssh-key-file-button:hover {
+  background: var(--color-accent-soft);
+  border-color: #b5cec2;
+}
+
+.ssh-key-file-input {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  margin: -1px;
+  padding: 0 !important;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0 !important;
+}
+
+@media (max-width: 520px) {
+  .ssh-key-file-control {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 9px 10px;
+  }
+
+  .ssh-key-file-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
 }
 
 /* Configuration Page Redesign */

@@ -12,11 +12,19 @@ import (
 	"time"
 )
 
+const slackWebhook = "https://hooks.slack.com/services/T0000000/B0000000/abcdefghijklmnopqrstuvwx"
+const discordWebhook = "https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+
+var whatsappCredentials = domain.Credentials{BotToken: "EAAabcdefghijklmnopqrstuvwxyz", PhoneNumberID: "1234567890", ChatID: "+15551234567"}
+
 func TestValidateRejectsUnsafeDestinations(t *testing.T) {
 	good := map[string]domain.Credentials{
 		"telegram": {BotToken: "123456:abcdefghijklmnop", ChatID: "-100123456789"},
 		"feishu":   {WebhookURL: "https://open.feishu.cn/open-apis/bot/v2/hook/abcdefghijklmnop"},
 		"wecom":    {WebhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcdefghijklmnop"},
+		"slack":    {WebhookURL: slackWebhook},
+		"discord":  {WebhookURL: discordWebhook},
+		"whatsapp": whatsappCredentials,
 	}
 	for platform, c := range good {
 		if err := Validate(platform, c); err != nil {
@@ -40,6 +48,16 @@ func TestValidateRejectsUnsafeDestinations(t *testing.T) {
 	if Validate("telegram", domain.Credentials{BotToken: "1:abc/../../other", ChatID: "123"}) == nil {
 		t.Fatal("token path injection accepted")
 	}
+	for platform, c := range map[string]domain.Credentials{
+		"slack":    {WebhookURL: "https://hooks.slack.com.evil.test/services/T0000000/B0000000/abcdefghijklmnopqrstuvwx"},
+		"discord":  {WebhookURL: discordWebhook + "?wait=true"},
+		"whatsapp": {BotToken: whatsappCredentials.BotToken, PhoneNumberID: "123/../456", ChatID: whatsappCredentials.ChatID},
+		"telegram": {BotToken: "123456:abcdefghijklmnop", ChatID: "-100123456789", PhoneNumberID: "1234567"},
+	} {
+		if Validate(platform, c) == nil {
+			t.Errorf("accepted unsafe %s credentials", platform)
+		}
+	}
 	if Validate("wecom", domain.Credentials{WebhookURL: good["wecom"].WebhookURL + "&key=abcdefghijklmnop"}) == nil {
 		t.Fatal("duplicate key accepted")
 	}
@@ -61,6 +79,11 @@ func TestSenderPayloadAndPlatformAcknowledgement(t *testing.T) {
 		{"feishu", domain.Credentials{WebhookURL: "https://open.feishu.cn/open-apis/bot/v2/hook/abcdefghijklmnop"}, `{"StatusCode":0}`, true},
 		{"wecom", domain.Credentials{WebhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcdefghijklmnop"}, `{"errcode":0}`, true},
 		{"wecom", domain.Credentials{WebhookURL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcdefghijklmnop"}, `{}`, false},
+		{"slack", domain.Credentials{WebhookURL: slackWebhook}, `ok`, true},
+		{"slack", domain.Credentials{WebhookURL: slackWebhook}, `invalid_payload`, false},
+		{"discord", domain.Credentials{WebhookURL: discordWebhook}, ``, true},
+		{"whatsapp", whatsappCredentials, `{"messages":[{"id":"wamid.abc"}]}`, true},
+		{"whatsapp", whatsappCredentials, `{"messages":[]}`, false},
 	}
 	for _, tt := range cases {
 		t.Run(tt.platform+tt.response, func(t *testing.T) {

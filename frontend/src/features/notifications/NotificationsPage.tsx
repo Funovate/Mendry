@@ -7,13 +7,69 @@ import { useCurrentProject } from "../../app/context";
 import { ErrorNotice, LoadingState, PageError } from "../../shared/ui";
 import "./notifications.css";
 
-const platforms = { telegram: "Telegram", feishu: "Feishu", wecom: "WeCom" } as const;
+const platforms = {
+  telegram: "Telegram",
+  feishu: "Feishu",
+  wecom: "WeCom",
+  slack: "Slack",
+  discord: "Discord",
+  whatsapp: "WhatsApp",
+} as const;
+
+const platformDetails: Record<keyof typeof platforms, { namePlaceholder: string; hint: string; webhookPlaceholder?: string }> = {
+  telegram: { namePlaceholder: "e.g. SRE Telegram Channel", hint: "Telegram Bot API: requires Bot Token and target Chat ID." },
+  feishu: {
+    namePlaceholder: "e.g. On-Call Feishu Group",
+    hint: "Feishu Group Bot: incoming webhook URL with optional signing secret.",
+    webhookPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/...",
+  },
+  wecom: {
+    namePlaceholder: "e.g. WeCom Incident Room",
+    hint: "WeCom Group Robot: incoming webhook URL for WeChat Work.",
+    webhookPlaceholder: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
+  },
+  slack: {
+    namePlaceholder: "e.g. #incidents Slack",
+    hint: "Slack Incoming Webhook: webhook URL from your Slack app.",
+    webhookPlaceholder: "https://hooks.slack.com/services/T.../B.../...",
+  },
+  discord: {
+    namePlaceholder: "e.g. Discord On-Call",
+    hint: "Discord Webhook: webhook URL from the channel's Integrations settings.",
+    webhookPlaceholder: "https://discord.com/api/webhooks/.../...",
+  },
+  whatsapp: {
+    namePlaceholder: "e.g. On-Call WhatsApp",
+    hint: "WhatsApp Cloud API: requires access token, phone number ID, and recipient number.",
+  },
+};
 
 function PlatformIcon({ platform, size = 15 }: { platform: keyof typeof platforms; size?: number }) {
   if (platform === "telegram") {
     return (
       <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="platform-icon-svg">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .36z" />
+      </svg>
+    );
+  }
+  if (platform === "slack") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="platform-icon-svg">
+        <path d="M5.04 15.17a2.53 2.53 0 11-2.52-2.53h2.52v2.53zm1.27 0a2.53 2.53 0 015.05 0v6.31a2.53 2.53 0 11-5.05 0v-6.31zM8.83 5.04a2.53 2.53 0 112.53-2.52v2.52H8.83zm0 1.27a2.53 2.53 0 010 5.05H2.52a2.53 2.53 0 010-5.05h6.31zm10.13 2.52a2.53 2.53 0 112.52 2.53h-2.52V8.83zm-1.27 0a2.53 2.53 0 01-5.05 0V2.52a2.53 2.53 0 115.05 0v6.31zm-2.52 10.13a2.53 2.53 0 11-2.53 2.52v-2.52h2.53zm0-1.27a2.53 2.53 0 010-5.05h6.31a2.53 2.53 0 010 5.05h-6.31z" />
+      </svg>
+    );
+  }
+  if (platform === "discord") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="platform-icon-svg">
+        <path d="M20.32 4.37A19.8 19.8 0 0015.39 2.8a.07.07 0 00-.08.04c-.21.38-.45.87-.61 1.25a18.27 18.27 0 00-5.49 0 12.6 12.6 0 00-.62-1.25.08.08 0 00-.08-.04 19.74 19.74 0 00-4.92 1.53.07.07 0 00-.03.03C.53 9.05-.32 13.58.1 18.06a.08.08 0 00.03.06 19.9 19.9 0 006 3.03.08.08 0 00.08-.03c.46-.63.87-1.3 1.23-2a.08.08 0 00-.04-.11 13.1 13.1 0 01-1.87-.89.08.08 0 01-.01-.13l.37-.29a.07.07 0 01.08-.01c3.93 1.79 8.18 1.79 12.06 0a.07.07 0 01.08.01l.37.29a.08.08 0 01-.01.13c-.6.35-1.22.65-1.87.89a.08.08 0 00-.04.11c.36.7.78 1.36 1.23 2a.08.08 0 00.08.03 19.84 19.84 0 006.01-3.03.08.08 0 00.03-.05c.5-5.18-.84-9.67-3.55-13.66a.06.06 0 00-.03-.03zM8.02 15.33c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.96 2.42-2.16 2.42zm7.97 0c-1.18 0-2.16-1.09-2.16-2.42s.96-2.42 2.16-2.42c1.21 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.42-2.16 2.42z" />
+      </svg>
+    );
+  }
+  if (platform === "whatsapp") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="platform-icon-svg">
+        <path d="M17.47 14.38c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.16-.17.2-.35.22-.64.07-.3-.15-1.26-.46-2.39-1.47-.88-.79-1.48-1.76-1.65-2.06-.17-.3-.02-.46.13-.6.13-.14.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.03-.52-.07-.15-.67-1.62-.92-2.21-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.88 1.21 3.07c.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.63.71.22 1.36.19 1.87.12.57-.09 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35zM12.05 21.5h-.01a9.87 9.87 0 01-5.03-1.38l-.36-.21-3.74.98 1-3.65-.24-.37a9.86 9.86 0 01-1.51-5.26c0-5.45 4.44-9.88 9.89-9.88a9.82 9.82 0 016.99 2.9 9.82 9.82 0 012.89 6.99c0 5.45-4.44 9.88-9.88 9.88zm8.41-18.3A11.81 11.81 0 0012.05 0C5.5 0 .16 5.34.16 11.89c0 2.1.55 4.14 1.59 5.95L.06 24l6.3-1.65a11.88 11.88 0 005.68 1.45h.01c6.55 0 11.89-5.34 11.89-11.89a11.82 11.82 0 00-3.48-8.41z" />
       </svg>
     );
   }
@@ -141,7 +197,7 @@ function NotificationSettings({ projectKey }: { projectKey: string }) {
           </div>
           <div className="notification-overview-meta">
             <label>Supported Platforms</label>
-            <strong>Telegram · Feishu · WeCom</strong>
+            <strong>{Object.values(platforms).join(" · ")}</strong>
             <small>Bot tokens & incoming webhooks</small>
           </div>
         </div>
@@ -463,6 +519,7 @@ function ChannelEditor({
   const [chatId, setChatId] = useState("");
   const [webhook, setWebhook] = useState("");
   const [signing, setSigning] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -475,7 +532,9 @@ function ChannelEditor({
             credentials:
               platform === "telegram"
                 ? { botToken: token.trim(), chatId: chatId.trim() }
-                : { webhookUrl: webhook.trim(), ...(platform === "feishu" ? { signingSecret: signing } : {}) },
+                : platform === "whatsapp"
+                  ? { botToken: token.trim(), phoneNumberId: phoneNumberId.trim(), chatId: chatId.trim() }
+                  : { webhookUrl: webhook.trim(), ...(platform === "feishu" ? { signingSecret: signing } : {}) },
           }
         : {}),
     });
@@ -517,13 +576,7 @@ function ChannelEditor({
             <input
               required
               maxLength={100}
-              placeholder={
-                platform === "telegram"
-                  ? "e.g. SRE Telegram Channel"
-                  : platform === "feishu"
-                    ? "e.g. On-Call Feishu Group"
-                    : "e.g. WeCom Incident Room"
-              }
+              placeholder={platformDetails[platform].namePlaceholder}
               value={name}
               disabled={busy}
               onChange={e => setName(e.target.value)}
@@ -545,6 +598,7 @@ function ChannelEditor({
                 setChatId("");
                 setWebhook("");
                 setSigning("");
+                setPhoneNumberId("");
               }}
             >
               {Object.entries(platforms).map(([value, label]) => (
@@ -554,13 +608,7 @@ function ChannelEditor({
               ))}
             </select>
           </label>
-          <span className="field-hint">
-            {platform === "telegram"
-              ? "Telegram Bot API: requires Bot Token and target Chat ID."
-              : platform === "feishu"
-                ? "Feishu Group Bot: incoming webhook URL with optional signing secret."
-                : "WeCom Group Robot: incoming webhook URL for WeChat Work."}
-          </span>
+          <span className="field-hint">{platformDetails[platform].hint}</span>
         </div>
 
         {/* Checkbox Options */}
@@ -619,6 +667,53 @@ function ChannelEditor({
                     <span className="field-hint">Target group or channel chat ID.</span>
                   </div>
                 </>
+              ) : platform === "whatsapp" ? (
+                <>
+                  <div className="field-group full-width">
+                    <label>
+                      Access token
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        required
+                        maxLength={1000}
+                        disabled={busy}
+                        value={token}
+                        placeholder="EAAG..."
+                        onChange={e => setToken(e.target.value)}
+                      />
+                    </label>
+                    <span className="field-hint">Permanent system-user token with the whatsapp_business_messaging permission.</span>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Phone number ID
+                      <input
+                        required
+                        maxLength={30}
+                        disabled={busy}
+                        value={phoneNumberId}
+                        placeholder="e.g. 106540352242922"
+                        onChange={e => setPhoneNumberId(e.target.value)}
+                      />
+                    </label>
+                    <span className="field-hint">Sender phone number ID from WhatsApp Manager / API Setup.</span>
+                  </div>
+                  <div className="field-group">
+                    <label>
+                      Recipient number
+                      <input
+                        required
+                        maxLength={16}
+                        disabled={busy}
+                        value={chatId}
+                        placeholder="e.g. +15551234567"
+                        onChange={e => setChatId(e.target.value)}
+                      />
+                    </label>
+                    <span className="field-hint">E.164 number. Free-form text only arrives within 24h of the recipient's last message.</span>
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="field-group full-width">
@@ -631,11 +726,7 @@ function ChannelEditor({
                         maxLength={1000}
                         disabled={busy}
                         value={webhook}
-                        placeholder={
-                          platform === "feishu"
-                            ? "https://open.feishu.cn/open-apis/bot/v2/hook/..."
-                            : "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
-                        }
+                        placeholder={platformDetails[platform].webhookPlaceholder}
                         onChange={e => setWebhook(e.target.value)}
                       />
                     </label>

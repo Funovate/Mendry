@@ -14,6 +14,7 @@ type Credentials struct {
 	ChatID        string `json:"chatId,omitempty"`
 	WebhookURL    string `json:"webhookUrl,omitempty"`
 	SigningSecret string `json:"signingSecret,omitempty"`
+	PhoneNumberID string `json:"phoneNumberId,omitempty"`
 }
 
 type Channel struct {

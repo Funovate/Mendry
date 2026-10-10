@@ -485,26 +485,27 @@
 }
 
 .remediation-manual-suggestion {
-  padding: 14px 16px;
-  color: #5f3b12;
-  background: #fff8e8;
-  border: 1px solid #e4bd76;
-  border-left: 4px solid #bd6e1e;
+  padding: 16px 20px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-amber);
   border-radius: var(--radius-control);
+  box-shadow: var(--shadow-sm);
   overflow-wrap: anywhere;
 }
 
 .remediation-manual-suggestion h3 {
-  margin: 0 0 7px;
-  color: #8b4f13;
+  margin: 0 0 8px;
+  color: var(--color-heading);
   font-size: 14px;
 }
 
 .remediation-manual-suggestion p {
   max-width: 76ch;
   margin: 0;
-  color: #5f3b12;
-  font-size: 12px;
+  color: var(--color-text);
+  font-size: 12.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -512,24 +513,30 @@
 .remediation-missing-evidence {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid #efd39f;
+  border-top: 1px solid var(--color-border-soft);
 }
 
 .remediation-missing-evidence h4 {
-  margin: 0 0 5px;
-  color: #8b4f13;
+  margin: 0 0 6px;
+  color: #7b541d;
   font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .remediation-missing-evidence ul {
   margin: 0;
   padding-left: 18px;
-  color: #6f4a20;
+  color: var(--color-text);
   font-size: 12px;
 }
 
 .remediation-missing-evidence li {
   margin: 3px 0;
+}
+
+.remediation-missing-evidence li::marker {
+  color: var(--color-amber);
 }
 
 .remediation-action-success {

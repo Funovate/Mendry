@@ -45,7 +45,7 @@ func TestProbeChatAcceptsHiReply(t *testing.T) {
 			http.Error(writer, "bad json", http.StatusBadRequest)
 			return
 		}
-		if payload["model"] != "gpt-5.6" {
+		if payload["model"] != "gpt-5.6" || payload["reasoning_effort"] != "low" {
 			http.Error(writer, "bad model", http.StatusBadRequest)
 			return
 		}
@@ -60,7 +60,7 @@ func TestProbeChatAcceptsHiReply(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions); err != nil {
+	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, domain.LLMReasoningEffortLow); err != nil {
 		t.Fatalf("ProbeChat() error = %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestProbeResponsesAcceptsOutputText(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 			return
 		}
-		if payload.Model != "gpt-5.6" || payload.MaxOutputTokens != chatProbeMaxTokens || len(payload.Input) != 1 || payload.Input[0]["content"] != "hi" {
+		if payload.Model != "gpt-5.6" || payload.MaxOutputTokens != chatProbeMaxTokens || len(payload.Input) != 1 || payload.Input[0]["content"] != "hi" || payload.Reasoning == nil || payload.Reasoning.Effort != domain.LLMReasoningEffortHigh {
 			t.Errorf("responses request = %+v", payload)
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]any{
@@ -84,7 +84,7 @@ func TestProbeResponsesAcceptsOutputText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses); err != nil {
+	if err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses, domain.LLMReasoningEffortHigh); err != nil {
 		t.Fatalf("ProbeChat() error = %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestProbeChatHidesNonOKBodies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions)
+	err := NewLister(server.Client(), nil).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, domain.LLMReasoningEffortDefault)
 	if err == nil || strings.Contains(err.Error(), "sk-secret") || strings.Contains(err.Error(), "sk-test") {
 		t.Fatalf("error = %v", err)
 	}
@@ -128,7 +128,7 @@ func TestProbeChatLogsBoundedFailure(t *testing.T) {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
 
-	probeErr := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions)
+	probeErr := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, domain.LLMReasoningEffortDefault)
 	if probeErr == nil {
 		t.Fatal("expected probe error")
 	}
@@ -233,7 +233,7 @@ func TestGenerateLogRuleReturnsStructuredRuleWithoutLoggingSample(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := NewLister(server.Client(), logger).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, "alert on repeated payment failures", sample)
+	rule, err := NewLister(server.Client(), logger).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeChatCompletions, domain.LLMReasoningEffortDefault, "alert on repeated payment failures", sample)
 	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 3 {
 		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
 	}
@@ -260,7 +260,7 @@ func TestGenerateLogRuleWithResponses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses, "payment failures", "declined")
+	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-test"), "gpt-5.6", domain.LLMAPIModeResponses, domain.LLMReasoningEffortDefault, "payment failures", "declined")
 	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 2 {
 		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
 	}
@@ -309,8 +309,13 @@ func TestProbeMessagesAcceptsTextContent(t *testing.T) {
 		if request.URL.Path != "/v1/messages" || request.Header.Get("x-api-key") != "sk-ant" {
 			t.Errorf("request = %s headers=%v", request.URL.Path, request.Header)
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload["max_tokens"] != float64(chatProbeMaxTokens) || payload["temperature"] != nil {
-			t.Errorf("messages request = %+v error=%v", payload, err)
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Errorf("decode messages request: %v", err)
+			return
+		}
+		outputConfig, _ := payload["output_config"].(map[string]any)
+		if payload["max_tokens"] != float64(chatProbeMaxTokens) || payload["temperature"] != nil || outputConfig["effort"] != "medium" {
+			t.Errorf("messages request = %+v", payload)
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"stop_reason": "end_turn",
@@ -319,7 +324,7 @@ func TestProbeMessagesAcceptsTextContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages); err != nil {
+	if err := NewLister(server.Client(), logger).ProbeChat(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages, domain.LLMReasoningEffortMedium); err != nil {
 		t.Fatalf("ProbeChat() error = %v", err)
 	}
 	record := lastJSONRecord(t, output.Bytes())
@@ -346,7 +351,7 @@ func TestGenerateLogRuleWithAnthropicMessages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages, "payment failures", "declined")
+	rule, err := NewLister(server.Client(), nil).GenerateLogRule(context.Background(), server.URL, []byte("sk-ant"), "claude-sonnet-5", domain.LLMAPIModeMessages, domain.LLMReasoningEffortDefault, "payment failures", "declined")
 	if err != nil || rule.ID != "payment-errors" || rule.Threshold != 2 {
 		t.Fatalf("GenerateLogRule() = %#v error=%v", rule, err)
 	}

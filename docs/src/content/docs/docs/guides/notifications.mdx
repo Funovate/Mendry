@@ -1,6 +1,6 @@
 ---
 title: Project notifications
-description: Configure Telegram, Feishu, and WeCom channels for incident triggers and AI results, and inspect delivery failures.
+description: Configure Telegram, Feishu, WeCom, Slack, Discord, and WhatsApp channels for incident triggers and AI results, and inspect delivery failures.
 availability: available
 translationKey: notifications
 sources:
@@ -16,7 +16,8 @@ sources:
 **Availability: available**
 
 The incident application sends project-scoped notifications to Telegram bots,
-Feishu custom bots, and WeCom group bots. A project can have multiple channels,
+Feishu custom bots, WeCom group bots, Slack incoming webhooks, Discord webhooks,
+and WhatsApp (Meta Cloud API). A project can have multiple channels,
 including multiple Telegram bot/chat pairs. This capability runs in the existing
 API process and does not establish a general-purpose Harness task queue.
 
@@ -32,9 +33,14 @@ API process and does not establish a general-purpose Harness task queue.
 | Telegram (`telegram`) | Bot token (`botToken`) and chat ID (`chatId`) | None                             |
 | Feishu (`feishu`)     | Custom bot webhook URL (`webhookUrl`)         | Signing secret (`signingSecret`) |
 | WeCom (`wecom`)       | Group bot webhook URL (`webhookUrl`)          | None                             |
+| Slack (`slack`)       | Incoming webhook URL (`webhookUrl`)           | None                             |
+| Discord (`discord`)   | Channel webhook URL (`webhookUrl`)            | None                             |
+| WhatsApp (`whatsapp`) | Access token (`botToken`), phone number ID (`phoneNumberId`), recipient E.164 number (`chatId`) | None |
 
-Only HTTPS endpoints on `api.telegram.org`, `open.feishu.cn`, and
-`qyapi.weixin.qq.com` are supported. Feishu and WeCom URLs must use the platform's
+Only HTTPS endpoints on `api.telegram.org`, `open.feishu.cn`,
+`qyapi.weixin.qq.com`, `hooks.slack.com`, `discord.com`, and `graph.facebook.com`
+are supported. WhatsApp free-form text messages are only delivered within 24 hours
+of the recipient's last message to your business number. Feishu and WeCom URLs must use the platform's
 bot endpoint. Custom hosts, explicit ports, redirects, and proxies are unsupported.
 
 The platform cannot be changed after creation. Editing a channel can retain its

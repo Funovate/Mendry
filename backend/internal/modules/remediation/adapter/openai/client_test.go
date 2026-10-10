@@ -75,7 +75,7 @@ func (staticCipher) DecryptWebhookToken(string, string, []byte, []byte) ([]byte,
 
 func TestCompleteMapsChatCompletion(t *testing.T) {
 	keyHash := sha256.Sum256([]byte(testAPIKey))
-	var sawModel, sawJSON bool
+	var sawModel, sawJSON, sawReasoning bool
 	var authHash string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/chat/completions" {
@@ -91,6 +91,9 @@ func TestCompleteMapsChatCompletion(t *testing.T) {
 		if payload["model"] == openai.ModelID {
 			sawModel = true
 		}
+		if payload["reasoning_effort"] == "low" {
+			sawReasoning = true
+		}
 		if format, _ := payload["response_format"].(map[string]any); format["type"] == "json_object" {
 			sawJSON = true
 		}
@@ -102,9 +105,10 @@ func TestCompleteMapsChatCompletion(t *testing.T) {
 	defer server.Close()
 
 	client, err := openai.NewClient(openai.Options{
-		HTTPClient:   server.Client(),
-		BaseURL:      server.URL,
-		StaticAPIKey: testAPIKey,
+		HTTPClient:      server.Client(),
+		BaseURL:         server.URL,
+		StaticAPIKey:    testAPIKey,
+		ReasoningEffort: projectdomain.LLMReasoningEffortLow,
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -118,8 +122,8 @@ func TestCompleteMapsChatCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	if !sawModel || !sawJSON {
-		t.Fatal("request did not use gpt-5.6 json_object")
+	if !sawModel || !sawJSON || !sawReasoning {
+		t.Fatal("request did not use gpt-5.6, json_object, and low reasoning effort")
 	}
 	if authHash != hex.EncodeToString(keyHash[:]) {
 		t.Fatal("authorization header did not match injected key hash")
@@ -248,6 +252,10 @@ func TestCompleteSendsResponsesToolsAndParsesFunctionCalls(t *testing.T) {
 			if payload["max_output_tokens"] != float64(128) {
 				t.Fatalf("max_output_tokens = %#v", payload["max_output_tokens"])
 			}
+			reasoning := payload["reasoning"].(map[string]interface{})
+			if reasoning["effort"] != "high" {
+				t.Fatalf("reasoning = %#v", reasoning)
+			}
 			text := payload["text"].(map[string]interface{})
 			format := text["format"].(map[string]interface{})
 			if format["type"] != "json_object" {
@@ -265,8 +273,9 @@ func TestCompleteSendsResponsesToolsAndParsesFunctionCalls(t *testing.T) {
 			responseBody := `{"status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"repository_read_file","arguments":"{\"path\":\"main.go\"}"}],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10,"input_tokens_details":{"cached_tokens":3}}}`
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responseBody)), Request: request}, nil
 		})},
-		StaticAPIKey: testAPIKey,
-		APIMode:      openai.APIModeResponses,
+		StaticAPIKey:    testAPIKey,
+		APIMode:         openai.APIModeResponses,
+		ReasoningEffort: projectdomain.LLMReasoningEffortHigh,
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)

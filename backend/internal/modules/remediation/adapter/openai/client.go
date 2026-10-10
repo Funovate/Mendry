@@ -71,6 +71,7 @@ type ProviderConfig struct {
 	Model              string
 	CredentialSecretID string
 	APIMode            APIMode
+	ReasoningEffort    projectdomain.LLMReasoningEffort
 }
 
 // ConfigLoader 按项目加载已保存的 LLM 接入点。
@@ -85,30 +86,32 @@ type SecretLoader interface {
 
 // Options 构造 OpenAI 适配器。StaticAPIKey / BaseURL / Model 仅供测试。
 type Options struct {
-	Configs      ConfigLoader
-	Secrets      SecretLoader
-	Cipher       projectapplication.Cipher
-	HTTPClient   *http.Client
-	Logger       *slog.Logger
-	Timeout      time.Duration
-	BaseURL      string
-	Model        string
-	StaticAPIKey string
-	APIMode      APIMode
+	Configs         ConfigLoader
+	Secrets         SecretLoader
+	Cipher          projectapplication.Cipher
+	HTTPClient      *http.Client
+	Logger          *slog.Logger
+	Timeout         time.Duration
+	BaseURL         string
+	Model           string
+	StaticAPIKey    string
+	APIMode         APIMode
+	ReasoningEffort projectdomain.LLMReasoningEffort
 }
 
 // Client 用净 HTTP 调用 Chat Completions，不导出 SDK 类型。
 type Client struct {
-	configs      ConfigLoader
-	secrets      SecretLoader
-	cipher       projectapplication.Cipher
-	http         *http.Client
-	logger       *slog.Logger
-	timeout      time.Duration
-	baseURL      string
-	model        string
-	staticAPIKey string
-	apiMode      APIMode
+	configs         ConfigLoader
+	secrets         SecretLoader
+	cipher          projectapplication.Cipher
+	http            *http.Client
+	logger          *slog.Logger
+	timeout         time.Duration
+	baseURL         string
+	model           string
+	staticAPIKey    string
+	apiMode         APIMode
+	reasoningEffort projectdomain.LLMReasoningEffort
 }
 
 // NewClient 验证依赖并构造 LLM 适配器。
@@ -131,28 +134,30 @@ func NewClient(options Options) (*Client, error) {
 		timeout = defaultTimeout
 	}
 	return &Client{
-		configs:      options.Configs,
-		secrets:      options.Secrets,
-		cipher:       options.Cipher,
-		http:         client,
-		logger:       options.Logger,
-		timeout:      timeout,
-		baseURL:      strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
-		model:        strings.TrimSpace(options.Model),
-		staticAPIKey: options.StaticAPIKey,
-		apiMode:      options.APIMode,
+		configs:         options.Configs,
+		secrets:         options.Secrets,
+		cipher:          options.Cipher,
+		http:            client,
+		logger:          options.Logger,
+		timeout:         timeout,
+		baseURL:         strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
+		model:           strings.TrimSpace(options.Model),
+		staticAPIKey:    options.StaticAPIKey,
+		apiMode:         options.APIMode,
+		reasoningEffort: options.ReasoningEffort,
 	}, nil
 }
 
 var _ domain.LLMProviderPort = (*Client)(nil)
 
 type chatRequest struct {
-	Model          string            `json:"model"`
-	Temperature    float64           `json:"temperature"`
-	MaxTokens      int               `json:"max_tokens,omitempty"`
-	ResponseFormat map[string]string `json:"response_format"`
-	Messages       []chatMessage     `json:"messages"`
-	Tools          []chatTool        `json:"tools,omitempty"`
+	Model           string                            `json:"model"`
+	Temperature     float64                           `json:"temperature"`
+	MaxTokens       int                               `json:"max_tokens,omitempty"`
+	ResponseFormat  map[string]string                 `json:"response_format"`
+	ReasoningEffort *projectdomain.LLMReasoningEffort `json:"reasoning_effort,omitempty"`
+	Messages        []chatMessage                     `json:"messages"`
+	Tools           []chatTool                        `json:"tools,omitempty"`
 }
 
 type responsesRequest struct {
@@ -161,6 +166,11 @@ type responsesRequest struct {
 	Input           []responsesInputItem `json:"input"`
 	Tools           []responsesTool      `json:"tools,omitempty"`
 	Text            *responsesText       `json:"text,omitempty"`
+	Reasoning       *reasoningConfig     `json:"reasoning,omitempty"`
+}
+
+type reasoningConfig struct {
+	Effort projectdomain.LLMReasoningEffort `json:"effort"`
 }
 
 type responsesInputItem struct {
@@ -436,18 +446,20 @@ func (c *Client) completeWithTokens(
 		ToolCount: len(tools), ToolSchemaBytes: toolSchemaBytes,
 	}
 	var requestPayload any = chatRequest{
-		Model:          session.model,
-		Temperature:    req.Temperature,
-		MaxTokens:      maxTokens,
-		ResponseFormat: map[string]string{"type": "json_object"},
-		Messages:       messages,
-		Tools:          tools,
+		Model:           session.model,
+		Temperature:     req.Temperature,
+		MaxTokens:       maxTokens,
+		ResponseFormat:  map[string]string{"type": "json_object"},
+		ReasoningEffort: explicitReasoningEffort(session.reasoningEffort),
+		Messages:        messages,
+		Tools:           tools,
 	}
 	if session.apiMode == APIModeResponses {
 		responses, buildErr := buildResponsesRequest(session.model, maxTokens, messages, tools)
 		if buildErr != nil {
 			return result, buildErr
 		}
+		responses.Reasoning = reasoningConfigFor(session.reasoningEffort)
 		requestPayload = responses
 	}
 	if session.apiMode == APIModeMessages {
@@ -455,6 +467,7 @@ func (c *Client) completeWithTokens(
 		if buildErr != nil {
 			return result, buildErr
 		}
+		anthropic.OutputConfig = messagesOutputConfigFor(session.reasoningEffort)
 		requestPayload = anthropic
 	}
 	payload, err := json.Marshal(requestPayload)
@@ -1003,10 +1016,11 @@ func (c *Client) logRequest(ctx context.Context, provider, endpoint, model strin
 }
 
 type llmSession struct {
-	baseURL string
-	model   string
-	apiKey  []byte
-	apiMode APIMode
+	baseURL         string
+	model           string
+	apiKey          []byte
+	apiMode         APIMode
+	reasoningEffort projectdomain.LLMReasoningEffort
 }
 
 func (s llmSession) endpoint() string {
@@ -1058,8 +1072,11 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 		if !validAPIMode(apiMode) {
 			return llmSession{}, fmt.Errorf("openai API mode is invalid")
 		}
+		if !projectdomain.ValidLLMReasoningEffort(c.reasoningEffort) {
+			return llmSession{}, fmt.Errorf("llm reasoning effort is invalid")
+		}
 		key := []byte(c.staticAPIKey)
-		return llmSession{baseURL: baseURL, model: model, apiKey: key, apiMode: apiMode}, nil
+		return llmSession{baseURL: baseURL, model: model, apiKey: key, apiMode: apiMode, reasoningEffort: projectdomain.NormalizeLLMReasoningEffort(c.reasoningEffort)}, nil
 	}
 	if strings.TrimSpace(projectID) == "" {
 		return llmSession{}, fmt.Errorf("openai config requires a project id")
@@ -1101,7 +1118,35 @@ func (c *Client) resolveSession(ctx context.Context, projectID string) (llmSessi
 		clearBytes(plaintext)
 		return llmSession{}, fmt.Errorf("llm API mode is invalid")
 	}
-	return llmSession{baseURL: baseURL, model: model, apiKey: plaintext, apiMode: apiMode}, nil
+	if !projectdomain.ValidLLMReasoningEffort(cfg.ReasoningEffort) {
+		clearBytes(plaintext)
+		return llmSession{}, fmt.Errorf("llm reasoning effort is invalid")
+	}
+	return llmSession{baseURL: baseURL, model: model, apiKey: plaintext, apiMode: apiMode, reasoningEffort: projectdomain.NormalizeLLMReasoningEffort(cfg.ReasoningEffort)}, nil
+}
+
+func explicitReasoningEffort(effort projectdomain.LLMReasoningEffort) *projectdomain.LLMReasoningEffort {
+	effort = projectdomain.NormalizeLLMReasoningEffort(effort)
+	if effort == projectdomain.LLMReasoningEffortDefault {
+		return nil
+	}
+	return &effort
+}
+
+func reasoningConfigFor(effort projectdomain.LLMReasoningEffort) *reasoningConfig {
+	explicit := explicitReasoningEffort(effort)
+	if explicit == nil {
+		return nil
+	}
+	return &reasoningConfig{Effort: *explicit}
+}
+
+func messagesOutputConfigFor(effort projectdomain.LLMReasoningEffort) *messagesOutputConfig {
+	explicit := explicitReasoningEffort(effort)
+	if explicit == nil {
+		return nil
+	}
+	return &messagesOutputConfig{Effort: *explicit}
 }
 
 func clearBytes(value []byte) {
